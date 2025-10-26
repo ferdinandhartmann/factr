@@ -1,12 +1,15 @@
 
-input_path: ../factr_teleop/raw_data/test
-output_path: processed_data/test
+input_path: /home/ferdinand/factr/process_data/raw_data/20251024
+output_path: /home/ferdinand/factr/process_data/processed_data/20251024
 
 cameras_topics:
-- /zed/front/im_left
+- /realsense/arm/im
 obs_topics:
-- /franka/right/obs_franka_torque
-- /gripper/right/obs_gripper_pos
+# - /franka/right/obs_franka_torque
+# - /gripper/right/obs_gripper_pos
+  - /franka/right/obs_franka_state
+#  - /franka/right/obs_franka_torque
 action_config:
-  /factr_teleop/right/cmd_franka_pos: 7
-  /factr_teleop/right/cmd_gripper_pos: 1
+  # /factr_teleop/right/cmd_franka_pos: 7
+  /joint_impedance_command_controller/joint_trajectory: 7
+  # /factr_teleop/right/cmd_gripper_pos: 1

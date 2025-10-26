@@ -94,8 +94,25 @@ def process_decoded_image(img):
     return img
         
 def process_image(img_enc):
+
+    ###################
+    """Handle both raw RGB list images and encoded JPEG images."""
+    # Case 1 – Your raw RGB dictionary (list of ints)
+    if isinstance(img_enc, dict) and "data" in img_enc:
+        arr = np.array(img_enc["data"], dtype=np.uint8)
+        h, w = img_enc.get("height", 480), img_enc.get("width", 640)
+        if len(arr) != h * w * 3:
+            raise ValueError(f"Unexpected image length {len(arr)} for {h}x{w}")
+        decoded_image = arr.reshape((h, w, 3))
+    else:
+        # Case 2 – FACTR's normal encoded bytes path
+        if not isinstance(img_enc, np.ndarray):
+            img_enc = np.frombuffer(img_enc, np.uint8)
+        decoded_image = cv2.imdecode(img_enc, cv2.IMREAD_COLOR)
+
+
     # decode, process, and encode
-    decoded_image = cv2.imdecode(img_enc, cv2.IMREAD_COLOR)    
+    # decoded_image = cv2.imdecode(img_enc, cv2.IMREAD_COLOR)    
     decoded_image = process_decoded_image(decoded_image)
     encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 50]
     _, compressed_image = cv2.imencode('.jpg', decoded_image, encode_param)

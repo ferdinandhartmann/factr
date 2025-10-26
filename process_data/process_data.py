@@ -65,12 +65,74 @@ def main(cfg: DictConfig):
         traj = {}
         num_steps = len(traj_data[action_topics[0]])
         traj['num_steps'] = num_steps
-        traj['states'] = np.concatenate([np.array(traj_data[topic]) for topic in state_obs_topics], axis=-1)
+        # traj['states'] = np.concatenate([np.array(traj_data[topic]) for topic in state_obs_topics], axis=-1)
+        # Flatten each dict in state topics into numeric arrays
+        ##########################
+        # Flatten each dict in state topics into numeric arrays
+        # Flatten each dict in state topics into numeric arrays (robust)
+        state_arrays = []
+        for topic in state_obs_topics:
+            topic_data = []
+            max_len = 0
+
+            # First pass — convert each message to numeric vector
+            for msg in traj_data[topic]:
+                if isinstance(msg, dict):
+                    parts = []
+                    for key in ["position"]:
+                        if key in msg and len(msg[key]) > 0:
+                            parts.append(np.array(msg[key], dtype=float))
+                    if parts:
+                        vec = np.concatenate(parts)
+                    else:
+                        vec = np.zeros(1, dtype=float)
+                else:
+                    vec = np.array(msg, dtype=float).flatten()
+                topic_data.append(vec)
+                max_len = max(max_len, len(vec))
+
+            # Second pass — pad all to same length
+            topic_padded = []
+            for vec in topic_data:
+                if len(vec) < max_len:
+                    vec = np.pad(vec, (0, max_len - len(vec)))
+                topic_padded.append(vec)
+
+            topic_array = np.stack(topic_padded, axis=0)  # (num_steps, max_len)
+            state_arrays.append(topic_array)
+
+        # Concatenate all topics along feature dimension
+        traj["states"] = np.concatenate(state_arrays, axis=-1)
+
+        action_list = []
+        # for topic in action_topics:
+        #     actions = np.array(traj_data[topic])
+        #     action_list.append(actions)
+
+        # Flatten each action dict into numeric arrays (position + velocity + effort)
         action_list = []
         for topic in action_topics:
-            actions = np.array(traj_data[topic])
-            action_list.append(actions)
-        traj['actions'] = np.concatenate(action_list, axis=-1)
+            topic_data = []
+            for msg in traj_data[topic]:
+                if isinstance(msg, dict):
+                    parts = []
+                    for key in ["position"]:
+                        if key in msg and len(msg[key]) > 0:
+                            parts.append(np.array(msg[key], dtype=float))
+                    if parts:
+                        vec = np.concatenate(parts)
+                    else:
+                        vec = np.zeros(1, dtype=float)
+                else:
+                    vec = np.array(msg, dtype=float).flatten()
+                topic_data.append(vec)
+
+            topic_array = np.stack(topic_data, axis=0)  # shape (num_steps, 7)
+            action_list.append(topic_array)
+
+
+        traj["actions"] = np.concatenate(action_list, axis=-1)
+
         
         all_states.append(traj['states'])
         all_actions.append(traj["actions"])

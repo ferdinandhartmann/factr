@@ -16,3 +16,11 @@ outputs/
 visual_features/
 processed_data/
 checkpoints/
+
+### Ferdinand
+Miniforge3-Linux-x86_64.sh
+*.pkl
+data_to_process/
+raw_data/
+backup_data/
+converted_pkls_for_test/
