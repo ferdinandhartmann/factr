@@ -13,6 +13,7 @@ from hydra.utils import instantiate
 from omegaconf import OmegaConf
 from tqdm import tqdm
 import os
+import yaml
 
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -21,21 +22,21 @@ warnings.filterwarnings("ignore", message=".*torch.load.*weights_only.*")
 
 
 # ---------- CONFIG ----------
-CKPT_PATH = Path("scripts/checkpoints/test/rollout/latest_ckpt.ckpt")
-EXP_CFG_PATH = Path("scripts/checkpoints/test/rollout/exp_config_offline.yaml")
+model_name = "20251024_ak_25hz_obstorque_traj_optimized_log_otake"
+CKPT_PATH = Path(f"scripts/checkpoints/{model_name}/rollout/latest_ckpt.ckpt")
+EXP_CFG_PATH = Path(f"scripts/checkpoints/{model_name}/rollout/exp_config.yaml")
+ROLLOUT_CFG_PATH = Path(f"scripts/checkpoints/{model_name}/rollout/rollout_config.yaml") 
 
-base_name = "ep_38"
+base_name = "ep_20"
 DATA_PATH = Path(f"/home/ferdinand/factr/process_data/converted_pkls_for_test/converted_{base_name}/")
 image_file = DATA_PATH / f"{base_name}_image_obs.npy"
-state_file = DATA_PATH / f"{base_name}_state_obs.npy"
+torque_file = DATA_PATH / f"{base_name}_torque_obs.npy"
 actions_file = DATA_PATH / f"{base_name}_actions.npy"
 
-if not image_file.exists() or not state_file.exists() or not actions_file.exists():
+if not image_file.exists() or not torque_file.exists() or not actions_file.exists():
     raise FileNotFoundError("One or more required .npy files are missing. Please check the DATA_PATH and base_name.")
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-
-number_of_last_pred_toshow = 100
 
 # ----------------------------
 
@@ -77,11 +78,31 @@ policy.to(DEVICE)
 print(f"✅ Loaded policy from {CKPT_PATH}, step {ckpt['global_step']}")
 policy = torch.compile(policy)
 
+# --- 3. Load Normalization Stats (NEW SECTION) ---
+try:
+    with open(ROLLOUT_CFG_PATH, 'r') as f:
+        rollout_config = yaml.safe_load(f)
+
+    # Torque is the 'obs' observation
+    obs_mean = torch.tensor(rollout_config['norm_stats']['obs']['mean']).float().to(DEVICE)
+    obs_std = torch.tensor(rollout_config['norm_stats']['obs']['std']).float().to(DEVICE)
+
+    # Policy output (action) denormalization
+    action_mean = torch.tensor(rollout_config['norm_stats']['action']['mean']).float().to(DEVICE)
+    action_std = torch.tensor(rollout_config['norm_stats']['action']['std']).float().to(DEVICE)
+    print(f"✅ Loaded normalization stats from {ROLLOUT_CFG_PATH}")
+
+except Exception as e:
+    print(f"⚠️ Warning: Could not load normalization stats from {ROLLOUT_CFG_PATH}. Running inference with unnormalized torque/actions. Error: {e}")
+    # Define identity stats if loading fails to prevent script crash
+    obs_mean, obs_std = 0., 1.
+    action_mean, action_std = 0., 1.
+
 # Load arrays
 image_obs = np.load(image_file, allow_pickle=True)
-state_obs = np.load(state_file)
+torque_obs = np.load(torque_file)
 true_action = np.load(actions_file)
-print(f"✅ Loaded image_obs: {len(image_obs)} | state_obs: {state_obs.shape} | actions: {true_action.shape}")
+print(f"✅ Loaded image_obs: {len(image_obs)} | torque_obs: {torque_obs.shape} | actions: {true_action.shape}")
 
 # --- 4. Preprocess image helper ---
 def preprocess_image(img):
@@ -90,9 +111,9 @@ def preprocess_image(img):
         img = np.repeat(img[..., None], 3, axis=-1)
     img = cv2.resize(img, (224, 224))
     img_tensor = torch.from_numpy(img).float().permute(2, 0, 1)[None] / 255.
-    mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
+    mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1) 
     std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
-    img_tensor = (img_tensor - mean) / std
+    img_tensor = (img_tensor - mean) / std # with standard normalization
     return img_tensor.to(DEVICE)
 
 # -----------------------------
@@ -100,18 +121,25 @@ def preprocess_image(img):
 # -----------------------------
 pred_actions = []
 
-N = min(len(true_action), len(state_obs), len(image_obs))
+N = min(len(true_action), len(torque_obs), len(image_obs))
 print(f"🚀 Running inference on {N} samples...")
 
 for i in tqdm(range(N)):
     img = image_obs[i]
-    state = state_obs[i]
+    torque = torque_obs[i]
 
     img_tensor = preprocess_image(img)
-    state_tensor = torch.from_numpy(state).float().unsqueeze(0).to(DEVICE)
+
+    # 🚨 FIXED: Normalize Torque Observation
+    torque_tensor = torch.from_numpy(torque).float().to(DEVICE)
+    torque_tensor = (torque_tensor - obs_mean) / obs_std # normalization
+    torque_tensor = torque_tensor.unsqueeze(0) # Add batch dim
+
+    # torque_tensor = torch.from_numpy(torque).float().unsqueeze(0).to(DEVICE)
 
     with torch.no_grad():
-        pred_action = policy.get_actions({"cam0": img_tensor}, state_tensor)
+        pred_action = policy.get_actions({"cam0": img_tensor}, torque_tensor)
+        pred_action = pred_action * action_std + action_mean # <-- Inverse normalization 
         pred_action = pred_action.cpu().numpy()[0]
 
     pred_actions.append(pred_action)
@@ -125,7 +153,7 @@ print(f"Pred shape: {pred_actions.shape}, True shape: {true_action.shape}")
 with torch.no_grad():
     if isinstance(pred_actions, np.ndarray):
         if pred_actions.ndim == 3:
-            pred_action = pred_actions[:, -number_of_last_pred_toshow:, :]
+            pred_action = pred_actions[:, :, :]
         
     print(f"Predicted action shape: {pred_action.shape}")
     print(f"\nLast prediction check - Pred: {pred_action}, True: {true_action[-1]}")
@@ -149,14 +177,15 @@ for i in range (pred_dims):
 plt.figure(figsize=(10, 2 * dof_dims))
 for d in range(dof_dims):
     plt.subplot(dof_dims, 1, d + 1)
-    plt.plot(t, true_action[:, d], label="Ground Truth", linewidth=2)
+    plt.plot(t, true_action[:, d], label="Ground Truth", linewidth=2.5, color="red")
     plt.ylabel(f"Pos. Joint {d+1} [rad]")
     plt.legend(loc="upper right")  
     for i in range (pred_dims):    
-        plt.plot(t, pred_action[:, i, d], "--", label="Predicted", linewidth=2)
+        plt.plot(t + i, pred_action[:, i, d], label="Predicted", linewidth=0.8, alpha=0.3, color="blue")
     if d == 0:
-        plt.title(f"FACTR Policy Prediction vs Ground Truth of {number_of_last_pred_toshow} last prediction (of 100) of episode: {base_name}")
+        plt.title(f"FACTR Policy Prediction vs Ground Truth ({pred_dims} pred. timesteps) of episode: {base_name}")
 plt.xlabel("Frame")
 plt.tight_layout()
-plt.savefig(f"/home/ferdinand/factr/scripts/test_rollout_{base_name}.png")
-print(f"\n✅ Saved plot to /home/ferdinand/factr/scripts/test_rollout_output/test_rollout_{base_name}.png")
+save_path = f"/home/ferdinand/factr/scripts/test_rollout_output/test_rollout_{model_name}_{base_name}.png"
+plt.savefig(save_path)
+print(f"\n✅ Saved plot to {save_path}")
