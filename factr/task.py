@@ -113,7 +113,7 @@ class BCTask(DefaultTask):
                     "eval/task_loss": mean_val_loss,
                     "eval/action_l2": ac_l2,
                     "eval/action_lsig": ac_lsig,
-                    "eval/attention_weights": average_weights,
+                    # "eval/attention_weights": average_weights,
                 },
                 step=global_step,
             )

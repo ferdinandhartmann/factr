@@ -22,7 +22,7 @@ warnings.filterwarnings("ignore", message=".*torch.load.*weights_only.*")
 
 
 # ---------- CONFIG ----------
-model_name = "20251024_ak_25hz_obstorque_traj_optimized_log_otake"
+model_name = "20251024_ak_25hz_obstorque_traj_optimized_long"
 CKPT_PATH = Path(f"scripts/checkpoints/{model_name}/rollout/latest_ckpt.ckpt")
 EXP_CFG_PATH = Path(f"scripts/checkpoints/{model_name}/rollout/exp_config.yaml")
 ROLLOUT_CFG_PATH = Path(f"scripts/checkpoints/{model_name}/rollout/rollout_config.yaml") 

@@ -27,24 +27,24 @@ def extract_factr_data(raw_data):
     Extract image, state, and action data from a FACTR pickle file.
     Handles both 'data' style (rosbag-format) and preprocessed formats.
     """
-    image_obs, state_obs, actions = [], [], []
+    image_obs, torque_obs, actions = [], [], []
 
-    # Case 1: FACTR processed buffer
-    if all(k in raw_data for k in ["image_obs", "state_obs", "actions"]):
-        print("Detected processed FACTR format.")
-        image_obs = np.array(raw_data["image_obs"])
-        state_obs = np.array(raw_data["state_obs"])
-        actions = np.array(raw_data["actions"])
-        return image_obs, state_obs, actions
+
+    ########################### Topic names (customize as needed) ###########################
+    image_topic = "/realsense/arm/im"
+    obs_topic = "/franka_robot_state_broadcaster/external_joint_torques"
+    action_topic = "/joint_impedance_command_controller/joint_trajectory"
+
+
 
     # Case 2: raw teleop data (nested under "data")
-    elif "data" in raw_data:
+    if "data" in raw_data:
         print("Detected raw teleop format.")
         entries = raw_data["data"]
 
         # each topic (e.g. /camera/color/image_raw, /joint_impedance_command_controller/joint_trajectory)
         for topic, values in entries.items():
-            if "/realsense/arm/im" in topic:
+            if image_topic in topic:
                 print(f"Extracting image data from {topic} ({len(values)} frames)")
                 imgs = []
                 for v in values:
@@ -57,27 +57,45 @@ def extract_factr_data(raw_data):
                                 pass
                         imgs.append(img)
                 image_obs.extend(imgs)
-            elif "joint_trajectory" in topic:
+            elif action_topic in topic:
                 print(f"Extracting joint actions from {topic} ({len(values)} commands)")
                 for v in values:
                     if isinstance(v, dict) and "position" in v:
                         actions.append(v["position"])
-            elif "gripper" in topic:
-                print(f"Extracting gripper actions from {topic} ({len(values)} commands)")
+            elif obs_topic in topic:
+                print(f"Extracting observations from {topic} ({len(values)} commands)")
                 for v in values:
-                    if isinstance(v, dict) and "position" in v:
-                        actions.append([v["position"]])
+                    if isinstance(v, dict) and "effort" in v:
+                        torque_obs.append([v["effort"]])
 
         # Create dummy state if not found
-        state_obs = np.zeros((len(actions), 7)) if len(actions) > 0 else np.zeros((len(image_obs), 7))
+        torque_obs = np.zeros((len(actions), 7)) if len(actions) > 0 else np.zeros((len(image_obs), 7))
 
     else:
         raise ValueError("Unknown data structure in .pkl file.")
 
-    return np.array(image_obs), np.array(state_obs), np.array(actions)
+    # Downsample to target rate (25 Hz) if data frequency is higher
+    target_freq = 25.0
+    timestamps = [v["timestamp"] for topic, values in raw_data["data"].items() for v in values if "timestamp" in v]
+    if len(timestamps) > 1:
+        time_diffs = np.diff(sorted(timestamps))
+        avg_freq = 1.0 / np.mean(time_diffs)
+        print(f"Detected average frequency: {avg_freq:.1f} Hz")
+    else:
+        avg_freq = 50  # Default to 50 Hz if timestamps are insufficient
+        print(f"defaulting average frequency to: {avg_freq:.1f} Hz")
+    if avg_freq > target_freq:
+        step = int(np.floor(avg_freq / target_freq))
+        image_obs = image_obs[::step]
+        torque_obs = torque_obs[::step]
+        actions = actions[::step]
+        avg_freq = avg_freq / step
+        print(f"🔻 Downsampled from ~{avg_freq * step:.1f} Hz to ~{avg_freq:.1f} Hz (step={step})")
+
+    return np.array(image_obs), np.array(torque_obs), np.array(actions)
 
 
-def save_arrays(output_dir, base_name, image_obs, state_obs, actions):
+def save_arrays(output_dir, base_name, image_obs, torque_obs, actions):
     """Save numpy arrays to output directory."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -86,9 +104,9 @@ def save_arrays(output_dir, base_name, image_obs, state_obs, actions):
     if len(image_obs) > 0:
         paths["image_obs"] = output_dir / f"{base_name}_image_obs.npy"
         np.save(paths["image_obs"], image_obs)
-    if len(state_obs) > 0:
-        paths["state_obs"] = output_dir / f"{base_name}_state_obs.npy"
-        np.save(paths["state_obs"], state_obs)
+    if len(torque_obs) > 0:
+        paths["torque_obs"] = output_dir / f"{base_name}_torque_obs.npy"
+        np.save(paths["torque_obs"], torque_obs)
     if len(actions) > 0:
         paths["actions"] = output_dir / f"{base_name}_actions.npy"
         np.save(paths["actions"], actions)
@@ -105,8 +123,8 @@ def main():
     args = parser.parse_args()
 
     if not args.input:
-        episode = "ep_38" ######################## SELECT EPISODE HERE ########################
-        args.input = f"/home/ferdinand/factr/process_data/raw_data/20251024/{episode}.pkl"
+        episode = "ep_20" ######################## SELECT EPISODE HERE ########################
+        args.input = f"/home/ferdinand/factr/process_data/raw_data/20251024_train/{episode}.pkl"
         args.output = f"/home/ferdinand/factr/process_data/converted_pkls_for_test/converted_{episode}/"
     
     # Ensure the output directory exists
@@ -118,8 +136,8 @@ def main():
         raise FileNotFoundError(f"File not found: {pkl_path}")
 
     data = load_pkl(pkl_path)
-    image_obs, state_obs, actions = extract_factr_data(data)
-    save_arrays(args.output, pkl_path.stem, image_obs, state_obs, actions)
+    image_obs, torque_obs, actions = extract_factr_data(data)
+    save_arrays(args.output, pkl_path.stem, image_obs, torque_obs, actions)
 
     print("\n✅ Conversion complete.")
     print(f"Output saved in: {args.output}")

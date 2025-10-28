@@ -16,19 +16,19 @@ hydra:
 
 rt: ${hydra:runtime.choices.agent/features}
 
-exp_name: 20251024_ak10_test
-batch_size: 128
-num_workers: 10
+exp_name: 20251024_ak_25hz_obstorque_traj_optimized_long
+batch_size: 32
+num_workers: 4
 lr: 0.0003
-max_iterations: 20000
+max_iterations: 20000 # ~9 epochs = (max_iterations * batch_size) / dataset_size (50 episodes × (600 raw steps / 2 downsample)=15,000)
 eval_freq: 200
-save_freq: 2000
+save_freq: 700
 schedule_freq: 1
 devices: 1
 seed: 42
 
 buffer_path: ./buffer.pkl
-ac_chunk: 10
+ac_chunk: 25
 img_chunk: 1  # number of image timesteps to use (including current one)
 train_transform: medium
 test_transform: preproc
@@ -45,5 +45,5 @@ wandb:
   name: ${exp_name}
   project: factr
   group: bc
-  debug: True
-  entity: WANDB_ENTITY
+  debug: False
+  entity: None

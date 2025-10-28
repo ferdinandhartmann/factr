@@ -107,6 +107,7 @@ def train_bc(cfg: DictConfig):
                 trainer.step_schedule()
 
             if misc.GLOBAL_STEP % cfg.eval_freq == 0:
+                print("Evaluating model...")
                 trainer.set_eval()
                 task.eval(trainer, misc.GLOBAL_STEP)
                 trainer.set_train()

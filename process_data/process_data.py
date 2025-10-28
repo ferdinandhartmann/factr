@@ -62,9 +62,38 @@ def main(cfg: DictConfig):
         traj_data, avg_freq = sync_data_slowest(traj_data, all_topics)
         pbar.set_postfix({'avg_freq': f'{avg_freq:.1f} Hz'})
 
+        # ------------------------------
+        # 🕒 Downsample to target rate (20 Hz)
+        # ------------------------------
+        target_freq = 20.0
+        if avg_freq > target_freq:
+            step = int(np.floor(avg_freq / target_freq))
+            for key in traj_data.keys():
+                if isinstance(traj_data[key], list):
+                    traj_data[key] = traj_data[key][::step]
+            avg_freq = avg_freq / step
+            print(f"🔻 Downsampled from ~{avg_freq * step:.1f} Hz to ~{avg_freq:.1f} Hz (step={step})")
+        # ------------------------------
+
+
+
         traj = {}
-        num_steps = len(traj_data[action_topics[0]])
+        # num_steps = len(traj_data[action_topics[0]])
+        # Get the length of all data lists used in generate_robobuf
+        all_lengths = []
+        all_lengths.append(len(traj_data[action_topics[0]])) # Length of actions
+        # all_lengths.append(len(state_arrays[0]))             # Length of states (assuming all state_arrays have the same length after stacking)
+        for topic in rgb_obs_topics:
+            all_lengths.append(len(traj_data[topic]))        # Length of camera images
+        # Use the minimum length to guarantee no index goes out of range
+        num_steps = np.min(all_lengths)
         traj['num_steps'] = num_steps
+        
+        
+        
+        
+        
+        
         # traj['states'] = np.concatenate([np.array(traj_data[topic]) for topic in state_obs_topics], axis=-1)
         # Flatten each dict in state topics into numeric arrays
         ##########################

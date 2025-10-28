@@ -105,6 +105,7 @@ def plot_joint_data(pkl_data, output_dir):
     topics = {
         'franka_state': '/franka/right/obs_franka_state',
         'external_torques': '/franka_robot_state_broadcaster/external_joint_torques',
+        'external_torques_leader': '/franka/right/obs_franka_torque',
         'impedance_cmd': '/joint_impedance_command_controller/joint_trajectory',
         'measured_joints': '/franka_robot_state_broadcaster/measured_joint_states',
         'gripper_cmd': '/factr_teleop/right/cmd_gripper_pos',
@@ -146,7 +147,7 @@ def plot_joint_data(pkl_data, output_dir):
         plt.close()
     
     # 2. Plot External Joint Torques
-    if 'external_torques' in data_dict:
+    if 'external_torques' in data_dict and 'external_torques_leader' in data_dict:
         print("  Plotting external joint torques...")
         fig, axes = plt.subplots(7, 1, figsize=(12, 14))
         fig.suptitle('External Joint Torques', fontsize=16)
@@ -157,6 +158,16 @@ def plot_joint_data(pkl_data, output_dir):
         for i in range(7):
             axes[i].plot(timestamps, torques[:, i], linewidth=2, color='red')
             axes[i].set_ylabel(f'Joint {i+1} [Nm]', fontsize=10)
+            axes[i].grid(True, alpha=0.3)
+            if i == 6:
+                axes[i].set_xlabel('Time [s]', fontsize=10)
+
+        torques_leader = np.array([d['effort'] for d in data_dict['external_torques_leader']['data']])
+        timestamps_leader = data_dict['external_torques_leader']['timestamps']
+
+        for i in range(7):
+            axes[i].plot(timestamps_leader, torques_leader[:, i], linewidth=2, color='blue')
+            axes[i].set_ylabel(f'Leader? Joint {i+1} [Nm]', fontsize=10)
             axes[i].grid(True, alpha=0.3)
             if i == 6:
                 axes[i].set_xlabel('Time [s]', fontsize=10)
@@ -316,10 +327,8 @@ def visualize_data(data_path, output_dir=None):
     pkl_data = load_data(pkl_path)
     
     # Create GIFs for images
-    create_image_gif(pkl_data, output_dir / 'camera_rgb.mp4', '/realsense/arm/im', fps=50)
-    create_image_gif(pkl_data, output_dir / 'camera_depth.mp4', '/realsense/arm/depth', fps=50)
-    # create_image_gif(pkl_data, output_dir / 'birdseye' / 'rgb_camera.gif', '/realsense/birdseye/im', fps=10)
-    # create_image_gif(pkl_data, output_dir / 'birdseye' / 'depth_camera.gif', '/realsense/birdseye/depth', fps=10)
+    # create_image_gif(pkl_data, output_dir / 'camera_rgb.mp4', '/realsense/arm/im', fps=50)
+    # create_image_gif(pkl_data, output_dir / 'camera_depth.mp4', '/realsense/arm/depth', fps=50)
     # Create plots
     plot_joint_data(pkl_data, output_dir)
     
@@ -330,8 +339,8 @@ def visualize_data(data_path, output_dir=None):
 if __name__ == '__main__':
     import sys
 
-    base_data_dir = Path("/home/ferdinand/factr/process_data/data_to_process/20251024")
-    base_output_dir = Path("/home/ferdinand/factr/process_data/data_to_process/20251024/visualizations")
+    base_data_dir = Path("/home/ferdinand/factr/process_data/data_to_process/20251024/test")
+    base_output_dir = Path("/home/ferdinand/factr/process_data/data_to_process/20251024/test")
 
     # Allow overriding from CLI
     if len(sys.argv) >= 2:
