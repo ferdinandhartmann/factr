@@ -22,12 +22,12 @@ warnings.filterwarnings("ignore", message=".*torch.load.*weights_only.*")
 
 
 # ---------- CONFIG ----------
-model_name = "20251024_ak_25hz_obstorque_traj_optimized_long"
+model_name = "20251024_25hz_60_btorque_traj_othersettings_3"
 CKPT_PATH = Path(f"scripts/checkpoints/{model_name}/rollout/latest_ckpt.ckpt")
 EXP_CFG_PATH = Path(f"scripts/checkpoints/{model_name}/rollout/exp_config.yaml")
 ROLLOUT_CFG_PATH = Path(f"scripts/checkpoints/{model_name}/rollout/rollout_config.yaml") 
 
-base_name = "ep_20"
+base_name = "ep_4"
 DATA_PATH = Path(f"/home/ferdinand/factr/process_data/converted_pkls_for_test/converted_{base_name}/")
 image_file = DATA_PATH / f"{base_name}_image_obs.npy"
 torque_file = DATA_PATH / f"{base_name}_torque_obs.npy"
@@ -155,8 +155,8 @@ with torch.no_grad():
         if pred_actions.ndim == 3:
             pred_action = pred_actions[:, :, :]
         
-    print(f"Predicted action shape: {pred_action.shape}")
-    print(f"\nLast prediction check - Pred: {pred_action}, True: {true_action[-1]}")
+    # print(f"Predicted action shape: {pred_action.shape}")
+    # print(f"\nLast prediction check - Pred: {pred_action}, True: {true_action[-1]}")
 
 # -----------------------------
 # EVALUATION (MSE) and VISUALIZATION
@@ -167,21 +167,22 @@ dof_dims = pred_action.shape[2]
 pred_dims = pred_action.shape[1]
 print(f"Number of Frames: {t.shape[0]}, dof_dims: {dof_dims}, pred_dims: {pred_dims}")
 
-for i in range (pred_dims):
-    mse = np.mean((pred_action[:, i, :] - true_action) ** 2, axis=0)
-    print(f"\n📊 Mean Squared Error per action dimension for pred. {100-i}:, Average {np.mean(mse):.6f}")
-    for j, val in enumerate(mse):
-        print(f"  Joint {j+1}: {val:.6f}")
+# for i in range (pred_dims):
+#     mse = np.mean((pred_action[:, i, :] - true_action) ** 2, axis=0)
+#     print(f"\n📊 Mean Squared Error per action dimension for pred. {100-i}:, Average {np.mean(mse):.6f}")
+    # for j, val in enumerate(mse):
+    #     print(f"  Joint {j+1}: {val:.6f}")
 
 
 plt.figure(figsize=(10, 2 * dof_dims))
 for d in range(dof_dims):
     plt.subplot(dof_dims, 1, d + 1)
-    plt.plot(t, true_action[:, d], label="Ground Truth", linewidth=2.5, color="red")
+    plt.plot(t, true_action[:, d], label="Ground Truth Joint Pos.", linewidth=2.5, color="red")
     plt.ylabel(f"Pos. Joint {d+1} [rad]")
-    plt.legend(loc="upper right")  
     for i in range (pred_dims):    
-        plt.plot(t + i, pred_action[:, i, d], label="Predicted", linewidth=0.8, alpha=0.3, color="blue")
+        plt.plot(t + i, pred_action[:, i, d], label="Predicted Joint Pos.", linewidth=0.8, alpha=0.3, color="blue")
+        if i == 0:
+            plt.legend(loc="upper right")  
     if d == 0:
         plt.title(f"FACTR Policy Prediction vs Ground Truth ({pred_dims} pred. timesteps) of episode: {base_name}")
 plt.xlabel("Frame")

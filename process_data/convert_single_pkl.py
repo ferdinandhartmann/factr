@@ -123,7 +123,7 @@ def main():
     args = parser.parse_args()
 
     if not args.input:
-        episode = "ep_20" ######################## SELECT EPISODE HERE ########################
+        episode = "ep_4" ######################## SELECT EPISODE HERE ########################
         args.input = f"/home/ferdinand/factr/process_data/raw_data/20251024_train/{episode}.pkl"
         args.output = f"/home/ferdinand/factr/process_data/converted_pkls_for_test/converted_{episode}/"
     

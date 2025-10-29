@@ -16,15 +16,15 @@ hydra:
 
 rt: ${hydra:runtime.choices.agent/features}
 
-exp_name: 20251024_ak_25hz_obstorque_traj_optimized_long
+exp_name: 20251024_25hz_60_btorque_traj_othersettings_4
 batch_size: 32
 num_workers: 4
-lr: 0.0003
+lr: 0.005
 max_iterations: 20000 # ~9 epochs = (max_iterations * batch_size) / dataset_size (50 episodes × (600 raw steps / 2 downsample)=15,000)
 eval_freq: 200
-save_freq: 700
+save_freq: 5000
 schedule_freq: 1
-devices: 1
+devices: 2
 seed: 42
 
 buffer_path: ./buffer.pkl
@@ -37,7 +37,7 @@ curriculum:
   space: pixel # pixel, latent
   operator: blur # blur, downsample
   scheduler: linear # no, const, linear, step, exp, cos
-  start_scale: 5
+  start_scale: 3
   stop_scale: 0
   max_step: ${max_iterations}
 
