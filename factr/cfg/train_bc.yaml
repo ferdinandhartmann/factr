@@ -16,11 +16,11 @@ hydra:
 
 rt: ${hydra:runtime.choices.agent/features}
 
-exp_name: 20251024_25hz_60_btorque_traj_othersettings_4
-batch_size: 32
+exp_name: 20251024_25hz_60_btorque_traj_lowerbatch
+batch_size: 16
 num_workers: 4
-lr: 0.005
-max_iterations: 20000 # ~9 epochs = (max_iterations * batch_size) / dataset_size (50 episodes × (600 raw steps / 2 downsample)=15,000)
+lr: 0.0003
+max_iterations: 15000 # ~9 epochs = (max_iterations * batch_size) / dataset_size (50 episodes × (600 raw steps / 2 downsample)=15,000)
 eval_freq: 200
 save_freq: 5000
 schedule_freq: 1

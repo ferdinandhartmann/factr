@@ -149,7 +149,15 @@ def plot_all_traj_in_one_plot(data_path, output_dir, step=1):
         print("⚠️ No usable data to plot.")
         return
 
-    # ------------------------------
+    # Determine y-axis limits based on the min and max of obs_pos and cmd_pos for each joint
+    y_min_pos = []
+    y_max_pos = []
+
+    for j in range(7):
+        all_obs_pos_j = np.concatenate([e['obs_pos'][:, j] for e in entries if e['obs_pos'] is not None], axis=0)
+        all_cmd_pos_j = np.concatenate([e['cmd_pos'][:, j] for e in entries if e['cmd_pos'] is not None], axis=0)
+        y_min_pos.append(min(all_obs_pos_j.min(), all_cmd_pos_j.min()) - 0.1)
+        y_max_pos.append(max(all_obs_pos_j.max(), all_cmd_pos_j.max()) + 0.1)
     # Overlay plot: Positions
     # ------------------------------
     fig, axes = plt.subplots(7, 1, figsize=(12, 14), sharex=True)
@@ -162,6 +170,7 @@ def plot_all_traj_in_one_plot(data_path, output_dir, step=1):
                 continue
             if e['obs_pos'] is not None:
                 ax.plot(e['x_pos'], e['obs_pos'][:, j],   alpha=0.3, linewidth=1.0, color='blue', label=f"{e['name']} obs")
+                ax.set_ylim(y_min_pos[j], y_max_pos[j])
         ax.set_ylabel(f"J{j+1} [rad]")
         ax.grid(True, alpha=0.3)
         # if j == 0:
@@ -184,10 +193,9 @@ def plot_all_traj_in_one_plot(data_path, output_dir, step=1):
         for e in entries:
             if e['x_pos'] is None: 
                 continue
-            # if e['meas_pos'] is not None:
-            #     ax.plot(e['x_pos'], e['meas_pos'][:, j],  alpha=0.3, linewidth=1.0, color='red', label=f"{e['name']} meas")
             if e['cmd_pos'] is not None:
                 ax.plot(e['x_pos'], e['cmd_pos'][:, j],   alpha=0.3, linewidth=1.0, color='red', label=f"{e['name']} cmd")
+                ax.set_ylim(y_min_pos[j], y_max_pos[j])
         ax.set_ylabel(f"J{j+1} [rad]")
         ax.grid(True, alpha=0.3)
     axes[-1].set_xlabel("Dataset Index")
@@ -196,6 +204,28 @@ def plot_all_traj_in_one_plot(data_path, output_dir, step=1):
     plt.savefig(out_pos, dpi=150)
     plt.close(fig)
     print(f"✅ Saved {out_pos}")
+
+    fig, axes = plt.subplots(7, 1, figsize=(12, 14), sharex=True)
+    fig.suptitle(f"All Joint Positions of /traj and /obs topic of {dataset_name} dataset", fontsize=16, y=0.96)
+
+    for j in range(7):
+        ax = axes[j]
+        for e in entries[:20]:
+            if e['x_pos'] is None: 
+                continue
+            if e['cmd_pos'] is not None:
+                ax.plot(e['x_pos'], e['cmd_pos'][:, j],   alpha=0.5, linewidth=1.8, color='red', label=f"{e['name']} cmd")
+            if e['obs_pos'] is not None:
+                ax.plot(e['x_pos'], e['obs_pos'][:, j],   alpha=0.5, linewidth=1.8, color='blue', label=f"{e['name']} obs")
+        ax.set_ylabel(f"J{j+1} [rad]")
+        ax.grid(True, alpha=0.3)
+    axes[-1].set_xlabel("Dataset Index")
+    plt.tight_layout(rect=[0.03, 0.03, 0.97, 0.96])
+    out_pos = output_dir / f"allplot_{dataset_name}_positions_traj_obs.png"
+    plt.savefig(out_pos, dpi=150)
+    plt.close(fig)
+    print(f"✅ Saved {out_pos}")
+
 
     # ------------------------------
     # Overlay plot: Torques

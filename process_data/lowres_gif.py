@@ -73,8 +73,8 @@ def main():
     data_fps = 50
     gif_fps = 10
     scale_factor = 0.4
-    pkl_path = Path(f"/home/ferdinand/factr/process_data/data_to_process/20251024/{episode}.pkl")
-    output_dir = Path("/home/ferdinand/factr/process_data/data_to_process/20251024/gifs")
+    pkl_path = Path(f"/home/ferdinand/factr/process_data/data_to_process/20251024/data/{episode}.pkl")
+    output_dir = Path("/home/ferdinand/factr/process_data/data_to_process/20251024/visualizations/a_gifs")
     output_dir.mkdir(exist_ok=True, parents=True)
 
     print(f"📁 Loading {pkl_path}")
