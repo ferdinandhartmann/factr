@@ -140,5 +140,16 @@ class BaseTrainer(ABC):
         if global_step % log_freq == 0 and wandb.run is not None:
             wandb.log({key: tracker.mean}, step=global_step)
 
+
+    # def set_device(self, device_id):
+    #     self.model = self.model.to(device_id)
+
     def set_device(self, device_id):
+        # Move model to device
         self.model = self.model.to(device_id)
+
+        # Enable multi-GPU if available
+        if torch.cuda.device_count() > 1:
+            print(f"Using {torch.cuda.device_count()} GPUs with DataParallel")
+            self.model = torch.nn.DataParallel(self.model)
+

@@ -2,20 +2,20 @@
 #!/bin/bash
 
 # cuda id
-CUDA_DEVICE_ID=0
+CUDA_DEVICE_ID=0,1,2
 
 # task configuration, setup under cfg/task/
 task_config=single_franka
 
-# path to dataset buffer
-buffer_path=/home/ferdinand/factr/process_data/processed_data/20251024_train/buf.pkl
+# # path to dataset buffer
+buffer_path=/home/ferdinand/factr/process_data/processed_data/20251024_train_60_filtered/buf.pkl
 
-# curriculum parameters
-space_config=pixel # pixel, latent
-scheduler_config=linear # no, const, linear, step, exp, cos
-operator_config=blur  # blur, downsample 
-start_scale=5
-stop_scale=0
+# # curriculum parameters
+# space_config=pixel # pixel, latent
+# scheduler_config=linear # no, const, linear, step, exp, cos
+# operator_config=blur  # blur, downsample 
+# start_scale=5
+# stop_scale=0
 
 # pretrained visual features
 feature_path=/home/ferdinand/factr/scripts/visual_features/vit_base/SOUP_1M_DH.pth

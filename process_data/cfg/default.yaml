@@ -1,6 +1,6 @@
 
 input_path: /home/ferdinand/factr/process_data/raw_data/20251024_train_60
-output_path: /home/ferdinand/factr/process_data/processed_data/20251024_train_60
+output_path: /home/ferdinand/factr/process_data/processed_data/20251024_train_60_filtered
 
 cameras_topics:
 - /realsense/arm/im

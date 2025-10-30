@@ -80,12 +80,20 @@ class BCTask(DefaultTask):
                 ar.to(trainer.device_id) for ar in (obs, actions, mask)
             ]
 
+            # with torch.no_grad():
+            #     loss = trainer.training_step(batch, global_step)
+            #     losses.append(loss.item())
             with torch.no_grad():
                 loss = trainer.training_step(batch, global_step)
+                # Handle multi-GPU (DataParallel) case
+                if loss.ndim > 0:
+                    loss = loss.mean()
                 losses.append(loss.item())
 
                 # compare predicted actions versus GT
-                pred_actions = trainer.model.get_actions(imgs, obs)
+                # pred_actions = trainer.model.get_actions(imgs, obs)
+                model = trainer.model.module if hasattr(trainer.model, "module") else trainer.model
+                pred_actions = model.get_actions(imgs, obs)
 
                 # calculate l2 loss between pred_action and action
                 l2_delta = torch.square(mask * (pred_actions - actions))

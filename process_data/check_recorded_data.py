@@ -11,6 +11,7 @@ import torch
 import torch.nn.functional as F
 import math
 import sys
+from scipy.signal import butter, filtfilt
 
 
 def load_data(data_path):
@@ -100,7 +101,7 @@ def plot_joint_data(pkl_data, output_dir):
     if all(k in data_dict for k in required_keys_1):
         print("  Plotting Combined Joint Position Plot...")
         fig, axes = plt.subplots(7, 1, figsize=(12, 14), sharex=True)
-        fig.suptitle('Combined Joint Data: Commanded Pos, Measured Pos, and Broadcaster Torque', fontsize=16)
+        fig.suptitle('Combined Joint Data: Commanded Pos, Measured Pos, and Broadcaster Torque', fontsize=16, y=0.96)
 
         # Get data
         broadcaster_states =  safe_extract_7d_data(data_dict['measured_joints']['data'], 'position')
@@ -116,10 +117,10 @@ def plot_joint_data(pkl_data, output_dir):
             ax1 = axes[i]
             # Plot Positions/Commands on left Y-axis (ax1)
             line1, = ax1.plot(broadcaster_ts, broadcaster_states[:, i], linewidth=3, label='/franka_robot_state_broadcaster/measured_joint_states [rad]', alpha=0.7, color='blue')
-            line2, = ax1.plot(commanded_ts, commanded_pos[:, i], linewidth=2, label='Commanded Pos to controller (joint_trajectory) [rad]', alpha=0.7, color='cyan')
+            line2, = ax1.plot(commanded_ts, commanded_pos[:, i], linewidth=2, label='Commanded Pos to controller (joint_trajectory) [rad]', alpha=0.7, color='lightgreen')
             line3, = ax1.plot(observed_ts, observed_states[:, i], linewidth=2, label='/franka/right/obs_franka_state [rad]', alpha=0.7, color='red')
-            ax1.set_ylabel(f'J{i+1} Pos [rad]', fontsize=10, color='blue')
-            ax1.tick_params(axis='y', labelcolor='blue')
+            ax1.set_ylabel(f'J{i+1} Pos [rad]', fontsize=10)
+            ax1.tick_params(axis='y')
             ax1.grid(True, alpha=0.3)
 
             if i == 0:
@@ -130,7 +131,7 @@ def plot_joint_data(pkl_data, output_dir):
             if i == 6:
                 ax1.set_xlabel('Time [s]', fontsize=10)
         
-        plt.tight_layout()
+        plt.tight_layout(rect=[0.03, 0.03, 0.97, 0.96])
         output_path = output_dir / 'combined_pos.png'
         plt.savefig(output_path, dpi=150, bbox_inches='tight')
         print(f"  ✅ Saved to {output_path}")
@@ -146,7 +147,7 @@ def plot_joint_data(pkl_data, output_dir):
     if all(k in data_dict for k in required_keys_2):
         print("  Plotting Combined Joint Torque Plot...")
         fig, axes = plt.subplots(7, 1, figsize=(12, 14), sharex=True)
-        fig.suptitle('FACTR Observation Comparison: State Position vs. Observed Torque', fontsize=16)
+        fig.suptitle('FACTR Observation Comparison: State Position vs. Observed Torque', fontsize=16, y=0.96)
 
         # Get data
         broadcaster_torques = safe_extract_7d_data(data_dict['external_torques_broadcaster']['data'], 'effort')
@@ -159,8 +160,8 @@ def plot_joint_data(pkl_data, output_dir):
             ax1 = axes[i]
             line1, = ax1.plot(broadcaster_ts, broadcaster_torques[:, i], linewidth=2, label='Broadcasted Torque [Nm]', alpha=0.7, color='darkgreen')
             line2, = ax1.plot(franka_leader_ts, franka_leader_torques[:, i], linewidth=2, label='Observed Torque [Nm]', alpha=0.7, color='orange')
-            ax1.set_ylabel(f'J{i+1} Torque [Nm]', fontsize=10, color='orange')
-            ax1.tick_params(axis='y', labelcolor='orange')
+            ax1.set_ylabel(f'J{i+1} Torque [Nm]', fontsize=10)
+            ax1.tick_params(axis='y')
 
             if i == 0:
                 lines = [line1, line2]
@@ -170,7 +171,7 @@ def plot_joint_data(pkl_data, output_dir):
             if i == 6:
                 ax1.set_xlabel('Time [s]', fontsize=10)
         
-        plt.tight_layout()
+        plt.tight_layout(rect=[0.03, 0.03, 0.97, 0.96])
         output_path = output_dir / 'combined_torque.png'
         plt.savefig(output_path, dpi=150, bbox_inches='tight')
         print(f"  ✅ Saved to {output_path}")
@@ -178,6 +179,99 @@ def plot_joint_data(pkl_data, output_dir):
     else:
         print("  ⚠️ Skipping Plot 2: Missing one or more required topics for FACTR Observation Comparison.")
     
+    # ----------------------------------------------------------------------
+    # 2. PLOT: Torque smoothing
+    # ----------------------------------------------------------------------
+    required_keys_2 = ['external_torques_broadcaster']
+    if all(k in data_dict for k in required_keys_2):
+        print("  Plotting Combined Joint Torque Plot...")
+        fig, axes = plt.subplots(7, 1, figsize=(12, 14), sharex=True)
+        fig.suptitle('Broadcasted External Torque Smoothing', fontsize=16, y=0.96)
+
+        # Get data
+        # broadcaster_torques = safe_extract_7d_data(data_dict['external_torques_broadcaster']['data'], 'effort')
+        # broadcaster_ts = data_dict['franka_state']['timestamps']
+
+        # Smoothing
+        fs = 50.0  # Sampling frequency
+        cutoff = 10.0  # Desired cutoff frequency of the filter, Hz
+        b, a = butter(N=2, Wn=cutoff/(fs/2), btype='low')
+        broadcaster_torques_filtered = filtfilt(b, a, np.array(broadcaster_torques).T, axis=1).T
+
+        for i in range(7):
+            ax1 = axes[i]
+            line1, = ax1.plot(broadcaster_ts, broadcaster_torques[:, i], linewidth=1, label='Broadcasted Torque [Nm]', alpha=1.0, color='red')
+            line2, = ax1.plot(broadcaster_ts, broadcaster_torques_filtered[:, i], linewidth=1, label='Broadcasted Torque Filtered [Nm]', alpha=1.0, color='blue')
+            ax1.set_ylabel(f'J{i+1} Torque [Nm]', fontsize=10)
+            ax1.tick_params(axis='y')
+
+            lines = [line1, line2]
+            labels = [l.get_label() for l in lines]
+            ax1.legend(lines, labels, loc='upper right', fontsize=8)
+
+            if i == 6:
+                ax1.set_xlabel('Time [s]', fontsize=10)
+        
+        plt.tight_layout(rect=[0.03, 0.03, 0.97, 0.96])
+        output_path = output_dir / 'smoothed_torque.png'
+        plt.savefig(output_path, dpi=200, bbox_inches='tight')
+        print(f"  ✅ Saved to {output_path}")
+        plt.close()
+    else:
+        print("  ⚠️ Skipping Plot 2: Missing one or more required topics for FACTR Observation Comparison.")
+
+
+    # ----------------------------------------------------------------------
+    # 1. PLOT: Position Smoothing 
+    # ----------------------------------------------------------------------
+    required_keys_1 = ['measured_joints', 'impedance_cmd', 'franka_state']
+    if all(k in data_dict for k in required_keys_1):
+        print("  Plotting Combined Joint Position Plot...")
+        fig, axes = plt.subplots(7, 1, figsize=(12, 14), sharex=True)
+        fig.suptitle('Commanded Torque Smoothing', fontsize=16, y=0.96)
+
+        # Get data
+        # broadcaster_states =  safe_extract_7d_data(data_dict['measured_joints']['data'], 'position')
+        # broadcaster_ts = data_dict['measured_joints']['timestamps']
+        
+        # commanded_pos = safe_extract_7d_data(data_dict['impedance_cmd']['data'], 'position')
+        # commanded_ts = data_dict['impedance_cmd']['timestamps']
+        
+        # observed_states = safe_extract_7d_data(data_dict['franka_state']['data'], 'position')
+        observed_ts = data_dict['franka_state']['timestamps']
+
+        # Smoothing
+        fs = 50.0  # Sampling frequency
+        cutoff = 8.0  # Desired cutoff frequency of the filter, Hz
+        b, a = butter(N=2, Wn=cutoff/(fs/2), btype='low')
+        commanded_pos_filtered = filtfilt(b, a, np.array(commanded_pos).T, axis=1).T
+
+        for i in range(7):
+            ax1 = axes[i]
+            # Plot Positions/Commands on left Y-axis (ax1)
+            line1, = ax1.plot(broadcaster_ts, broadcaster_states[:, i], linewidth=1.5, label='/franka_robot_state_broadcaster/measured_joint_states [rad]', alpha=1, color='blue')
+            line2, = ax1.plot(commanded_ts, commanded_pos[:, i], linewidth=1, label='Commanded Pos to controller (joint_trajectory) [rad]', alpha=1, color='darkgreen')
+            line3, = ax1.plot(observed_ts, observed_states[:, i], linewidth=1.5, label='/franka/right/obs_franka_state [rad]', alpha=1, color='red')
+            line4, = ax1.plot(commanded_ts, commanded_pos_filtered[:, i], linewidth=1, label='Commanded Pos to controller smoothed (joint_trajectory) [rad]', alpha=1.0, color='lightgreen')
+            ax1.set_ylabel(f'J{i+1} Pos [rad]', fontsize=10)
+            ax1.tick_params(axis='y')
+            ax1.grid(True, alpha=0.3)
+
+            if i == 0:
+                lines = [line1, line2, line3, line4]
+                labels = [l.get_label() for l in lines]
+                ax1.legend(lines, labels, loc='lower right', fontsize=7)
+
+            if i == 6:
+                ax1.set_xlabel('Time [s]', fontsize=10)
+        
+        plt.tight_layout(rect=[0.03, 0.03, 0.97, 0.96])
+        output_path = output_dir / 'smoothed_position.png'
+        plt.savefig(output_path, dpi=200, bbox_inches='tight')
+        print(f"  ✅ Saved to {output_path}")
+        plt.close()
+    else:
+        print("  ⚠️ Skipping Plot 1: Missing one or more required topics for Combined Pos/Cmd/Torque.")
 
 
 
@@ -307,7 +401,7 @@ if __name__ == '__main__':
 
     ################# Single File Visualization #################
 
-    episode_name = "ep_4"  ## SELECT EPISODE HERE ####
+    episode_name = "ep_7"  ## SELECT EPISODE HERE ####
     pkl_path = Path(f"/home/ferdinand/factr/process_data/data_to_process/20251024/data/{episode_name}.pkl")
         
     base_dir = pkl_path.parent.parent / "visualizations"
@@ -328,12 +422,11 @@ if __name__ == '__main__':
     if not pkl_path.exists():
         print(f"❌ PKL file not found: {pkl_path}")
         sys.exit(1)
-    try:
-        pkl_data = load_data(pkl_path)
-        plot_joint_data(pkl_data, output_dir)
-        visualize_curriculum_steps(pkl_data, output_dir, topic_name='/realsense/arm/im')
-    except Exception as e:
-        print(f"❌ Error processing {pkl_path.name}: {e}")
+
+    pkl_data = load_data(pkl_path)
+    plot_joint_data(pkl_data, output_dir)
+    visualize_curriculum_steps(pkl_data, output_dir, topic_name='/realsense/arm/im')
+
 
     print(f"🎯 Single file visualization complete!")
 

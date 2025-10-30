@@ -97,6 +97,8 @@ def train_bc(cfg: DictConfig):
         
             trainer.optim.zero_grad()
             loss = trainer.training_step(batch, misc.GLOBAL_STEP)
+            if loss.ndim > 0:
+                loss = loss.mean()
             loss.backward()
             trainer.optim.step()
 

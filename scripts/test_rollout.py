@@ -22,7 +22,7 @@ warnings.filterwarnings("ignore", message=".*torch.load.*weights_only.*")
 
 
 # ---------- CONFIG ----------
-model_name = "20251024_25hz_60_btorque_traj_othersettings_3"
+model_name = "20251024_25hz_60_batch128"
 CKPT_PATH = Path(f"scripts/checkpoints/{model_name}/rollout/latest_ckpt.ckpt")
 EXP_CFG_PATH = Path(f"scripts/checkpoints/{model_name}/rollout/exp_config.yaml")
 ROLLOUT_CFG_PATH = Path(f"scripts/checkpoints/{model_name}/rollout/rollout_config.yaml") 

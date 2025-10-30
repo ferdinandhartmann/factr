@@ -16,7 +16,12 @@ class BehaviorCloning(BaseTrainer):
         ac_flat = actions.reshape((actions.shape[0], -1))
         mask_flat = mask.reshape((mask.shape[0], -1))
         loss = self.model(imgs, obs, ac_flat, mask_flat)
-        self.log("bc_loss", global_step, loss.item())
+        # self.log("bc_loss", global_step, loss.item())
+        if loss.ndim > 0:
+            loss_scalar = loss.mean()
+        else:
+            loss_scalar = loss
+        self.log("bc_loss", global_step, loss_scalar.item())
         if self.is_train:
             self.log("lr", global_step, self.lr)
         return loss
