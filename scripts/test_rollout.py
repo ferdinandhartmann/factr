@@ -16,16 +16,18 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", message=".*torch.load.*weights_only.*")
 
 # ---------- CONFIG ----------
-model_name = "20251024_25hz_60_btorque_traj_othersettings_3" # <--- SELECT MODEL NAME HERE
-CKPT_PATH = Path(f"scripts/checkpoints/old/{model_name}/rollout/latest_ckpt.ckpt")
-EXP_CFG_PATH = Path(f"scripts/checkpoints/old/{model_name}/rollout/exp_config.yaml")
+model_name = "20251024_60_25hz_b64_lr25" # <--- SELECT MODEL NAME HERE
+CKPT_PATH = Path(f"scripts/checkpoints/{model_name}/rollout/latest_ckpt.ckpt")
+EXP_CFG_PATH = Path(f"scripts/checkpoints/{model_name}/rollout/exp_config.yaml")
 # CKPT_PATH = Path(f"scripts/checkpoints/{model_name}/ckpt_015000.ckpt")
-ROLLOUT_CFG_PATH = Path(f"scripts/checkpoints/old/{model_name}/rollout/rollout_config.yaml")
+ROLLOUT_CFG_PATH = Path(f"scripts/checkpoints/{model_name}/rollout/rollout_config.yaml")
 
-episode_name = "ep_22" # <--- SELECT EPISODE NAME HERE
-RAW_DATA_PATH = Path(f"/home/ferdinand/factr/process_data/raw_data_train/20251024_60/{episode_name}.pkl") 
+episode_name = "ep_63" # <--- SELECT EPISODE NAME HERE
+RAW_DATA_PATH = Path(f"/home/ferdinand/factr/process_data/raw_data_train/20251024_60/{episode_name}.pkl")
 if not RAW_DATA_PATH.exists():
-    raise FileNotFoundError(f"Required PKL file not found: {RAW_DATA_PATH}. Please run the conversion script first.")
+    RAW_DATA_PATH = Path(f"/home/ferdinand/factr/process_data/raw_data_eval/20251024_4/{episode_name}.pkl")
+if not RAW_DATA_PATH.exists():
+    raise FileNotFoundError(f"Required PKL file not found: {RAW_DATA_PATH}.")
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -250,10 +252,17 @@ dof_dims = pred_action.shape[2]
 pred_dims = pred_action.shape[1]
 print(f"Number of Frames: {t.shape[0]}, dof_dims: {dof_dims}, pred_dims: {pred_dims}")
 
+max_mins = []
 # MSE per joint over all predictions and the whole trajectory
 for d in range(dof_dims):  # Use dof_dims for joint dimensions
     mse = np.mean((pred_action[:, :, d] - true_action[:, d, None]) ** 2)  # Compute MSE over all predictions and trajectory
     print(f"MSE Joint {d+1} over all predictions and whole trajectory: {mse:.6f}")
+    # Get max and min of each joint dimension
+    max_val = np.max(pred_action[:, :, d])
+    min_val = np.min(pred_action[:, :, d])
+    max_mins.append((max_val, min_val))
+
+max_y_diff = max(np.abs(m[0] - m[1]) for m in max_mins)
 
 # # Calculate L2 Loss
 # l2_loss = np.mean(np.linalg.norm(pred_action.reshape(-1, dof_dims) - true_action, axis=1))
@@ -265,14 +274,18 @@ for d in range(dof_dims):
     plt.subplot(dof_dims, 1, d + 1)
     plt.plot(t, true_action[:, d], label="Ground Truth Joint Pos.", linewidth=2.5, color="red")
     plt.ylabel(f"Pos. Joint {d+1} [rad]")
+    # every subplot should have same abs difference between y-limits
+    mid = (max_mins[d][0] + max_mins[d][1]) / 2.0
+    plt.ylim(mid - max_y_diff/2 - 0.04*max_y_diff, mid + max_y_diff/2 + 0.04*max_y_diff)
     for i in range (pred_dims):    
         plt.plot(t + i, pred_action[:, i, d], label="Predicted Joint Pos.", linewidth=0.8, alpha=0.3, color="blue")
         if i == 0:
             plt.legend(loc="upper right")  
     if d == 0:
-        plt.title(f"FACTR Policy Prediction vs Ground Truth ({pred_dims} pred. timesteps) of episode: {episode_name}")
+        plt.title(f"FACTR Prediction vs Ground Truth of {episode_name}")
+    plt.grid(True, alpha=0.4)
 plt.xlabel("Frame")
 plt.tight_layout()
 save_path = f"/home/ferdinand/factr/scripts/test_rollout_output/test_rollout_{model_name}_{episode_name}.png"
 plt.savefig(save_path)
-print(f"\n✅ Saved plot to {save_path}")
+print(f"✅ Saved plot to {save_path}")

@@ -16,11 +16,11 @@ hydra:
 
 rt: ${hydra:runtime.choices.agent/features}
 
-exp_name: 20251024_60_25hz_b64_lr25
+exp_name: 20251024_60_25hz_b64_lr30_7
 batch_size: 64
 num_workers: 8
-lr: 0.00025
-max_iterations: 10000 # 20/50 epochs good mazbe, (batch_size*max_iterations) / dataset_size , datasetsize=(54 episodes × (300 raw steps)=16,200)
+lr: 0.0003
+max_iterations: 7000 # 20/50 epochs good mazbe, (batch_size*max_iterations) / dataset_size , datasetsize=(54 episodes × (300 raw steps)=16,200)
 eval_freq: 250
 save_freq: 2500
 schedule_freq: 1

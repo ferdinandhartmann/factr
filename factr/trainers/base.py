@@ -71,7 +71,7 @@ class BaseTrainer(ABC):
             return
         self.schedule.step()
 
-    def save_checkpoint(self, global_step, top_k=2):
+    def save_checkpoint(self, global_step, top_k=3):
         model = self.model
         model_weights = (
             model.module.state_dict() if isinstance(model, DDP) else model.state_dict()
