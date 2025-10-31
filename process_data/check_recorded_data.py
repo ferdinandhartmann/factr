@@ -242,7 +242,7 @@ def plot_joint_data(pkl_data, output_dir):
 
         # Smoothing
         fs = 50.0  # Sampling frequency
-        cutoff = 8.0  # Desired cutoff frequency of the filter, Hz
+        cutoff = 10.0  # Desired cutoff frequency of the filter, Hz
         b, a = butter(N=2, Wn=cutoff/(fs/2), btype='low')
         commanded_pos_filtered = filtfilt(b, a, np.array(commanded_pos).T, axis=1).T
 

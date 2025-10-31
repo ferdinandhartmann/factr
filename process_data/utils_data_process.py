@@ -20,6 +20,7 @@
 import cv2
 import numpy as np
 from robobuf.buffers import ObsWrapper, Transition, ReplayBuffer
+from scipy.signal import butter, filtfilt
 
 def gaussian_norm(list_of_array):
     data_array = np.concatenate(list_of_array, axis=0)
@@ -117,3 +118,70 @@ def process_image(img_enc):
     encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 50]
     _, compressed_image = cv2.imencode('.jpg', decoded_image, encode_param)
     return compressed_image
+
+
+def lowpass_filter(traj_data, topic_name, cutoff_freq, fs, key_options=("effort", "position", "data"), vector_size=7):
+    """
+    Apply a low-pass Butterworth filter to a numeric topic inside traj_data.
+
+    Args:
+        traj_data (dict): the trajectory dict with topic data
+        topic_name (str): topic key, e.g. '/franka_robot_state_broadcaster/external_joint_torques'
+        cutoff_freq (float): cutoff frequency (Hz)
+        fs (float): sampling frequency (Hz)
+        key_options (tuple): possible field names to extract data from (default: ('effort','position','data'))
+        vector_size (int): fallback vector length if missing (default: 7)
+    Returns:
+        np.ndarray: filtered data (num_steps, vector_size)
+    """
+    if topic_name not in traj_data:
+        print(f"⚠️ Topic {topic_name} not found — skipping filter.")
+        return None
+
+    topic_data = traj_data[topic_name]
+
+    # Design filter
+    b, a = butter(N=2, Wn=cutoff_freq / (fs / 2), btype="low")
+
+    # Collect numeric arrays
+    rows = []
+    for msg in topic_data:
+        if isinstance(msg, dict):
+            found = False
+            for k in key_options:
+                if k in msg:
+                    rows.append(np.array(msg[k], dtype=float))
+                    found = True
+                    break
+            if not found:
+                rows.append(np.zeros(vector_size, dtype=float))
+        else:
+            rows.append(np.array(msg, dtype=float).flatten())
+
+    # Stack and filter
+    arr = np.stack(rows, axis=0)
+    filtered = filtfilt(b, a, arr, axis=0)
+
+    traj_data[topic_name] = filtered.tolist()
+    print(f"  🔉 Applied low-pass filter to {topic_name} with cutoff {cutoff_freq} Hz")
+    return filtered
+
+
+def downsample_data(traj_data, avg_freq, target_downsampling_freq):
+    """
+    Downsample traj_data by a given step for all specified topics.
+
+    Args:
+        traj_data (dict): the trajectory dict with topic data
+        step (int): downsampling step size
+    Returns:
+        dict: downsampled traj_data
+    """
+    step = max(1, round(avg_freq / target_downsampling_freq))
+    for key in traj_data.keys():
+        if isinstance(traj_data[key], list):
+            traj_data[key] = traj_data[key][::step]
+    avg_freq = avg_freq / step
+    print(f"🔻 Downsampled from ~{avg_freq * step:.1f} Hz to ~{avg_freq:.1f} Hz (step={step})")
+
+    return traj_data, avg_freq

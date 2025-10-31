@@ -24,7 +24,7 @@ from tqdm import tqdm
 from pathlib import Path
 from omegaconf import DictConfig
 
-from utils_data_process import sync_data_slowest, process_image, gaussian_norm, generate_robobuf
+from utils_data_process import sync_data_slowest, process_image, gaussian_norm, generate_robobuf, lowpass_filter, downsample_data
 
 from scipy.signal import butter, filtfilt
 
@@ -33,6 +33,7 @@ def main(cfg: DictConfig):
 
     input_path = cfg.input_path
     output_path = cfg.output_path
+    downsample = cfg.get("downsample", False)
     data_frequency = cfg.get("data_frequency", 50.0)
     target_downsampling_freq = cfg.get("target_downsampling_freq", 50.0)
     filter_torque = cfg.get("filter_torque", False)
@@ -64,73 +65,43 @@ def main(cfg: DictConfig):
     all_states = []
     all_actions = []
     pbar = tqdm(all_episodes)
+
+    
     for episode_pkl in pbar:
         with open(episode_pkl, 'rb') as f:
             traj_data = pickle.load(f)
         traj_data, avg_freq = sync_data_slowest(traj_data, all_topics)
         pbar.set_postfix({'avg_freq': f'{avg_freq:.1f} Hz'})
 
-        # ------------------------------
+        print("\n")
+
         # Apply low-pass filter to torque sensor data and position
-        # ------------------------------
         if filter_torque:
-            b, a = butter(N=2, Wn=cutoff_freq_torque / (data_frequency / 2), btype="low")
-
-            # Extract numeric torque arrays
-            raw_torques = []
-            for msg in traj_data["/franka_robot_state_broadcaster/external_joint_torques"]:
-                if isinstance(msg, dict):
-                    if "effort" in msg:
-                        raw_torques.append(np.array(msg["effort"], dtype=float))
-                    elif "data" in msg:
-                        raw_torques.append(np.array(msg["data"], dtype=float))
-                    else:
-                        # fallback if the dict doesn’t have those keys
-                        raw_torques.append(np.zeros(7, dtype=float))
-                else:
-                    raw_torques.append(np.array(msg, dtype=float).flatten())
-
-            torque_data = np.stack(raw_torques, axis=0)  # shape (num_steps, 7)
-            # Apply low-pass filter along the time axis
-            filtered_torques = filtfilt(b, a, torque_data, axis=0)
-            traj_data["/franka_robot_state_broadcaster/external_joint_torques"] = filtered_torques.tolist()
-            print(f"  🔉 Applied low-pass filter to external_joint_torques with cutoff {cutoff_freq_torque} Hz")
-
+            lowpass_filter(
+                traj_data,
+                "/franka_robot_state_broadcaster/external_joint_torques",
+                cutoff_freq_torque,
+                data_frequency,
+                key_options=("effort", "data"),
+            )
 
         if filter_position:
-            b, a = butter(N=2, Wn=cutoff_freq_position / (data_frequency / 2), btype="low")
-
-            raw_positions = [] 
-            for msg in traj_data["/joint_impedance_command_controller/joint_trajectory"]:
-                if isinstance(msg, dict):
-                    if "position" in msg:
-                        raw_positions.append(np.array(msg["position"], dtype=float))
-                    elif "data" in msg:
-                        raw_positions.append(np.array(msg["data"], dtype=float))
-                    else:
-                        # fallback if the dict doesn’t have those keys
-                        raw_positions.append(np.zeros(7, dtype=float))
-                else:
-                    raw_positions.append(np.array(msg, dtype=float).flatten())
-                
-            position_data = np.stack(raw_positions, axis=0)  # shape (num_steps, 7)
-            filtered_positions = filtfilt(b, a, position_data, axis=0)
-            traj_data["/joint_impedance_command_controller/joint_trajectory"] = filtered_positions.tolist()
-            print(f"  🔉 Applied low-pass filter to joint_trajectory positions with cutoff {cutoff_freq_position} Hz")
+            lowpass_filter(
+                traj_data,
+                "/joint_impedance_command_controller/joint_trajectory",
+                cutoff_freq_position,
+                data_frequency,
+                key_options=("position", "data"),
+            )
 
 
-        # ------------------------------
-        # 🕒 Downsample to target rate (25 Hz)
-        # ------------------------------#
-        if avg_freq > target_downsampling_freq - 0.1:
-            step = int(np.floor(avg_freq / target_downsampling_freq))
-            for key in traj_data.keys():
-                if isinstance(traj_data[key], list):
-                    traj_data[key] = traj_data[key][::step]
-            avg_freq = avg_freq / step
-            print(f"🔻 Downsampled from ~{avg_freq * step:.1f} Hz to ~{avg_freq:.1f} Hz (step={step})")
+        # 🕒 Downsample to target rate 
+        print(f"Original lengths:", [len(traj_data[key]) for key in traj_data.keys()])
+        if downsample:
+            traj_data, avg_freq = downsample_data(traj_data, avg_freq, target_downsampling_freq)
+            print("lengths after downsampling:", [len(traj_data[key]) for key in traj_data.keys()])
         else:
-            print(f"Not downsampling, data frequency: {avg_freq:.1f} Hz, target frequency: {target_downsampling_freq:.1f} Hz")
+            print(f"Not downsampling, data frequency: {avg_freq:.1f} Hz")
 
 
         # ------------------------------
@@ -151,7 +122,6 @@ def main(cfg: DictConfig):
         # traj['states'] = np.concatenate([np.array(traj_data[topic]) for topic in state_obs_topics], axis=-1)
         # Flatten each dict in state topics into numeric arrays
         ##########################
-        # Flatten each dict in state topics into numeric arrays
         # Flatten each dict in state topics into numeric arrays (robust)
         state_arrays = []
         for topic in state_obs_topics:
@@ -243,11 +213,22 @@ def main(cfg: DictConfig):
         'state_topics': state_obs_topics,
         'camera_topics': rgb_obs_topics,
     }
+    processing_config = {
+        'filter_torque': filter_torque,
+        'cutoff_freq_torque': cutoff_freq_torque,
+        'filter_position': filter_position,
+        'cutoff_freq_position': cutoff_freq_position,
+        'downsample': downsample,
+        'data_frequency': data_frequency,
+        'target_downsampling_freq': target_downsampling_freq
+    }
     rollout_config = {
         'obs_config': obs_config,
         'action_config': action_config,
-        'norm_stats': norm_stats
+        'norm_stats': norm_stats,
+        'processing_config': processing_config
     }
+
     with open(output_dir / "rollout_config.yaml", "w") as f:
         yaml.dump(rollout_config, f, sort_keys=False)
         

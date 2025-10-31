@@ -25,3 +25,6 @@ raw_data/
 backup_data/
 converted_pkls_for_test/
 test_rollout_output/
+training_data/
+raw_data_train/
+raw_data_eval/

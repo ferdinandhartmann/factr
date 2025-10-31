@@ -17,7 +17,7 @@ def load_buffer(buf_path):
         raise FileNotFoundError(f"❌ Buffer file not found: {buf_path}")
     with open(buf_path, "rb") as f:
         buf = pickle.load(f)
-    print(f"✅ Loaded buffer with {len(buf)} trajectories")
+    print(f"Loaded buffer with {len(buf)} trajectories")
     return buf
 
 def save_camera_images(buffer, output_dir, plot_index=20):
@@ -56,13 +56,16 @@ def save_camera_images(buffer, output_dir, plot_index=20):
 
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
-            filename = output_dir / f"traj{traj_idx:03d}_frame{step_idx:04d}.jpg"
+            filename = output_dir / f"traj{traj_idx:02d}_frame{step_idx:03d}.jpg"
             cv2.imwrite(str(filename), img)
             saved += 1
 
     print(f"✅ Saved {saved} images to: {output_dir}")
 
 def plot_buffer(buf_path, output_dir=None, step=1):
+    dataset_name = buf_path.split("/")[-2]
+    print(f"Checking buffer from {dataset_name}")
+    
     buf_path = Path(buf_path)
     buffer = load_buffer(buf_path)
 
@@ -112,10 +115,10 @@ def plot_buffer(buf_path, output_dir=None, step=1):
     t = np.arange(len(states))
 
     # -------------------------
+
     # Plot: States
-    # -------------------------
     fig, axes = plt.subplots(7, 1, figsize=(12, 14), sharex=True)
-    fig.suptitle("All States (Proprioception / Torques)", fontsize=16, y=0.96)
+    fig.suptitle(f"All States (Ext. Torques) from Buffer of {dataset_name}", fontsize=16, y=0.96)
     for j in range(min(7, states.shape[1])):
         ax = axes[j]
         ax.plot(t, states[:, j], color="blue", linewidth=1.0, alpha=0.7)
@@ -123,16 +126,14 @@ def plot_buffer(buf_path, output_dir=None, step=1):
         ax.grid(True, alpha=0.3)
     axes[-1].set_xlabel("Frame index")
     plt.tight_layout(rect=[0.03, 0.03, 0.97, 0.96])
-    out_state = output_dir / "buffer_states.png"
+    out_state = output_dir / f"{dataset_name}_buffer_states.png"
     plt.savefig(out_state, dpi=150)
     plt.close(fig)
     print(f"✅ Saved {out_state}")
 
-    # -------------------------
     # Plot: Actions
-    # -------------------------
     fig, axes = plt.subplots(7, 1, figsize=(12, 14), sharex=True)
-    fig.suptitle("All Actions (Joint Angles)", fontsize=16, y=0.96)
+    fig.suptitle(f"All Actions (Joint Angles) from Buffer of {dataset_name}", fontsize=16, y=0.96)
     for j in range(min(7, actions.shape[1])):
         ax = axes[j]
         ax.plot(t, actions[:, j], color="red", linewidth=1.0, alpha=0.7)
@@ -140,10 +141,42 @@ def plot_buffer(buf_path, output_dir=None, step=1):
         ax.grid(True, alpha=0.3)
     axes[-1].set_xlabel("Frame index")
     plt.tight_layout(rect=[0.03, 0.03, 0.97, 0.96])
-    out_act = output_dir / "buffer_actions.png"
+    out_act = output_dir / f"{dataset_name}_buffer_actions.png"
     plt.savefig(out_act, dpi=150)
     plt.close(fig)
     print(f"✅ Saved {out_act}")
+
+    # Plot: States zoomed in
+    only_first_datapoints = 900
+    fig, axes = plt.subplots(7, 1, figsize=(12, 14), sharex=True)
+    fig.suptitle(f"All States (Ext. Torques) from Buffer of {dataset_name} (first {only_first_datapoints} datapoints)", fontsize=16, y=0.96)
+    for j in range(min(7, states.shape[1])):
+        ax = axes[j]
+        ax.plot(t[:only_first_datapoints], states[:only_first_datapoints, j], color="blue", linewidth=1.0, alpha=0.7)
+        ax.set_ylabel(f"State {j+1}")
+        ax.grid(True, alpha=0.3)
+    axes[-1].set_xlabel("Frame index")
+    plt.tight_layout(rect=[0.03, 0.03, 0.97, 0.96])
+    out_state = output_dir / f"{dataset_name}_buffer_states_zoomed.png"
+    plt.savefig(out_state, dpi=150)
+    plt.close(fig)
+    print(f"✅ Saved {out_state}")
+
+    # Plot: Actions zoomed in
+    only_first_datapoints = 900
+    fig, axes = plt.subplots(7, 1, figsize=(12, 14), sharex=True)
+    fig.suptitle(f"All Actions (Joint Angles) from Buffer of {dataset_name} (first {only_first_datapoints} datapoints)", fontsize=16, y=0.96)
+    for j in range(min(7, actions.shape[1])):
+        ax = axes[j]
+        ax.plot(t[:only_first_datapoints], actions[:only_first_datapoints, j], color="red", linewidth=1.0, alpha=0.7)
+        ax.set_ylabel(f"Act {j+1} [rad]")
+        ax.grid(True, alpha=0.3)
+    axes[-1].set_xlabel("Frame index")
+    plt.tight_layout(rect=[0.03, 0.03, 0.97, 0.96])
+    out_state = output_dir / f"{dataset_name}_buffer_actions_zoomed.png"
+    plt.savefig(out_state, dpi=150)
+    plt.close(fig)
+    print(f"✅ Saved {out_state}")
 
 
     save_camera_images(buffer, output_dir / "camera_images")
@@ -152,6 +185,6 @@ def plot_buffer(buf_path, output_dir=None, step=1):
 
 if __name__ == "__main__":
 
-    buf_path = "/home/ferdinand/factr/process_data/processed_data/20251024_train_60_25hz/buf.pkl"
+    buf_path = "/home/ferdinand/factr/process_data/training_data/20251024_60_25hz_filt/buf.pkl"
 
     plot_buffer(buf_path)

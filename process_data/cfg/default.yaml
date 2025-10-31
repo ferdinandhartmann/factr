@@ -1,24 +1,24 @@
 
-input_path: /home/ferdinand/factr/process_data/raw_data/20251024_train_60
-output_path: /home/ferdinand/factr/process_data/processed_data/20251024_train_60_25hz
+input_path: /home/ferdinand/factr/process_data/raw_data_train/20251024_60
+output_path: /home/ferdinand/factr/process_data/training_data/20251024_60_25hz_filt
 
-
-filter_torque: False
-filter_position: False
+filter_torque: True
 cutoff_freq_torque: 10.0
-cutoff_freq_position: 8.0
+filter_position: False
+cutoff_freq_position: 10.0
 
+downsample: True
 data_frequency: 50.0
 target_downsampling_freq: 25.0
 
 
 cameras_topics:
-- /realsense/arm/im
+  - /realsense/arm/im
 
 obs_topics:
 # - /franka/right/obs_franka_torque
   - /franka_robot_state_broadcaster/external_joint_torques
 
 action_config:
-  #/factr_teleop/right/cmd_franka_pos: 7
+# /factr_teleop/right/cmd_franka_pos: 7
   /joint_impedance_command_controller/joint_trajectory: 7
