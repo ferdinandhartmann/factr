@@ -74,8 +74,8 @@ def extract_factr_data(raw_data):
     else:
         raise ValueError("Unknown data structure in .pkl file.")
 
-    # Downsample to target rate (25 Hz) if data frequency is higher
-    target_freq = 25.0
+    # Downsample to target rate (50 Hz) if data frequency is higher
+    target_freq = 50.0
     timestamps = [v["timestamp"] for topic, values in raw_data["data"].items() for v in values if "timestamp" in v]
     if len(timestamps) > 1:
         time_diffs = np.diff(sorted(timestamps))
@@ -123,8 +123,9 @@ def main():
     args = parser.parse_args()
 
     if not args.input:
-        episode = "ep_4" ######################## SELECT EPISODE HERE ########################
-        args.input = f"/home/ferdinand/factr/process_data/raw_data/20251024_train/{episode}.pkl"
+        episode = "ep_61" ######################## SELECT EPISODE HERE ########################
+        # args.input = f"/home/ferdinand/factr/process_data/raw_data/20251024_train/{episode}.pkl"
+        args.input = f"/home/ferdinand/factr/process_data/raw_data_evaluation/20251024/{episode}.pkl"
         args.output = f"/home/ferdinand/factr/process_data/converted_pkls_for_test/converted_{episode}/"
     
     # Ensure the output directory exists

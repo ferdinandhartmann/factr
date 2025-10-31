@@ -16,7 +16,6 @@
 # limitations under the License.
 # ---------------------------------------------------------------------------
 
-
 import yaml
 import hydra
 import pickle
@@ -34,15 +33,22 @@ def main(cfg: DictConfig):
 
     input_path = cfg.input_path
     output_path = cfg.output_path
-    
+    data_frequency = cfg.get("data_frequency", 50.0)
+    target_downsampling_freq = cfg.get("target_downsampling_freq", 50.0)
+    filter_torque = cfg.get("filter_torque", False)
+    filter_position = cfg.get("filter_position", False)
+    cutoff_freq_torque = cfg.get("cutoff_freq_torque", None)
+    cutoff_freq_position = cfg.get("cutoff_freq_position", None)
+
     rgb_obs_topics = list(cfg.cameras_topics)
     state_obs_topics = list(cfg.obs_topics)
     action_config = dict(cfg.action_config)
     action_topics = list(action_config.keys())
-    
+
     assert len(state_obs_topics) > 0, "Require low-dim observation topics"
     assert len(rgb_obs_topics) > 0, "Require visual observation topics"
     assert len(action_topics) > 0, "Require visual observation topics"
+    assert target_downsampling_freq > 0, "Require positive target frequency"
     
     
     data_folder = Path(input_path)
@@ -64,72 +70,67 @@ def main(cfg: DictConfig):
         traj_data, avg_freq = sync_data_slowest(traj_data, all_topics)
         pbar.set_postfix({'avg_freq': f'{avg_freq:.1f} Hz'})
 
-
-
         # ------------------------------
         # Apply low-pass filter to torque sensor data and position
         # ------------------------------
-        fs = 50.0  # sampling frequency (Hz)
-        cutoff = 10.0  # cutoff frequency (Hz)
-        b, a = butter(N=2, Wn=cutoff / (fs / 2), btype="low")
+        if filter_torque:
+            b, a = butter(N=2, Wn=cutoff_freq_torque / (data_frequency / 2), btype="low")
 
-        # Extract numeric torque arrays
-        raw_torques = []
-        for msg in traj_data["/franka_robot_state_broadcaster/external_joint_torques"]:
-            if isinstance(msg, dict):
-                if "effort" in msg:
-                    raw_torques.append(np.array(msg["effort"], dtype=float))
-                elif "data" in msg:
-                    raw_torques.append(np.array(msg["data"], dtype=float))
+            # Extract numeric torque arrays
+            raw_torques = []
+            for msg in traj_data["/franka_robot_state_broadcaster/external_joint_torques"]:
+                if isinstance(msg, dict):
+                    if "effort" in msg:
+                        raw_torques.append(np.array(msg["effort"], dtype=float))
+                    elif "data" in msg:
+                        raw_torques.append(np.array(msg["data"], dtype=float))
+                    else:
+                        # fallback if the dict doesn’t have those keys
+                        raw_torques.append(np.zeros(7, dtype=float))
                 else:
-                    # fallback if the dict doesn’t have those keys
-                    raw_torques.append(np.zeros(7, dtype=float))
-            else:
-                raw_torques.append(np.array(msg, dtype=float).flatten())
+                    raw_torques.append(np.array(msg, dtype=float).flatten())
 
-        torque_data = np.stack(raw_torques, axis=0)  # shape (num_steps, 7)
-        # Apply low-pass filter along the time axis
-        filtered_torques = filtfilt(b, a, torque_data, axis=0)
-        traj_data["/franka_robot_state_broadcaster/external_joint_torques"] = filtered_torques.tolist()
-        print(f"  🔉 Applied low-pass filter to external_joint_torques with cutoff {cutoff} Hz")
+            torque_data = np.stack(raw_torques, axis=0)  # shape (num_steps, 7)
+            # Apply low-pass filter along the time axis
+            filtered_torques = filtfilt(b, a, torque_data, axis=0)
+            traj_data["/franka_robot_state_broadcaster/external_joint_torques"] = filtered_torques.tolist()
+            print(f"  🔉 Applied low-pass filter to external_joint_torques with cutoff {cutoff_freq_torque} Hz")
 
 
+        if filter_position:
+            b, a = butter(N=2, Wn=cutoff_freq_position / (data_frequency / 2), btype="low")
 
-        fs = 50.0  # sampling frequency (Hz)
-        cutoff = 8.0  # cutoff frequency (Hz)
-        b, a = butter(N=2, Wn=cutoff / (fs / 2), btype="low")
-
-        raw_positions = [] 
-        for msg in traj_data["/joint_impedance_command_controller/joint_trajectory"]:
-            if isinstance(msg, dict):
-                if "position" in msg:
-                    raw_positions.append(np.array(msg["position"], dtype=float))
-                elif "data" in msg:
-                    raw_positions.append(np.array(msg["data"], dtype=float))
+            raw_positions = [] 
+            for msg in traj_data["/joint_impedance_command_controller/joint_trajectory"]:
+                if isinstance(msg, dict):
+                    if "position" in msg:
+                        raw_positions.append(np.array(msg["position"], dtype=float))
+                    elif "data" in msg:
+                        raw_positions.append(np.array(msg["data"], dtype=float))
+                    else:
+                        # fallback if the dict doesn’t have those keys
+                        raw_positions.append(np.zeros(7, dtype=float))
                 else:
-                    # fallback if the dict doesn’t have those keys
-                    raw_positions.append(np.zeros(7, dtype=float))
-            else:
-                raw_positions.append(np.array(msg, dtype=float).flatten())
-            
-        position_data = np.stack(raw_positions, axis=0)  # shape (num_steps, 7)
-        filtered_positions = filtfilt(b, a, position_data, axis=0)
-        traj_data["/joint_impedance_command_controller/joint_trajectory"] = filtered_positions.tolist()
-        print(f"  🔉 Applied low-pass filter to joint_trajectory positions with cutoff {cutoff} Hz")
+                    raw_positions.append(np.array(msg, dtype=float).flatten())
+                
+            position_data = np.stack(raw_positions, axis=0)  # shape (num_steps, 7)
+            filtered_positions = filtfilt(b, a, position_data, axis=0)
+            traj_data["/joint_impedance_command_controller/joint_trajectory"] = filtered_positions.tolist()
+            print(f"  🔉 Applied low-pass filter to joint_trajectory positions with cutoff {cutoff_freq_position} Hz")
 
 
         # ------------------------------
         # 🕒 Downsample to target rate (25 Hz)
-        # ------------------------------
-        target_freq = 25.0
-        if avg_freq > target_freq:
-            step = int(np.floor(avg_freq / target_freq))
+        # ------------------------------#
+        if avg_freq > target_downsampling_freq - 0.1:
+            step = int(np.floor(avg_freq / target_downsampling_freq))
             for key in traj_data.keys():
                 if isinstance(traj_data[key], list):
                     traj_data[key] = traj_data[key][::step]
             avg_freq = avg_freq / step
             print(f"🔻 Downsampled from ~{avg_freq * step:.1f} Hz to ~{avg_freq:.1f} Hz (step={step})")
-
+        else:
+            print(f"Not downsampling, data frequency: {avg_freq:.1f} Hz, target frequency: {target_downsampling_freq:.1f} Hz")
 
 
         # ------------------------------
@@ -161,7 +162,7 @@ def main(cfg: DictConfig):
             for msg in traj_data[topic]:
                 if isinstance(msg, dict):
                     parts = []
-                    for key in ["position"]:
+                    for key in ["effort"]:
                         if key in msg and len(msg[key]) > 0:
                             parts.append(np.array(msg[key], dtype=float))
                     if parts:
@@ -219,6 +220,7 @@ def main(cfg: DictConfig):
         all_states.append(traj['states'])
         all_actions.append(traj["actions"])
         
+        # Process and store images
         for cam_ind, topic in enumerate(rgb_obs_topics):
             enc_images = traj_data[topic]
             processed_images = [process_image(img_enc) for img_enc in enc_images]

@@ -8,7 +8,7 @@ CUDA_DEVICE_ID=0,1,2
 task_config=single_franka
 
 # # path to dataset buffer
-buffer_path=/home/ferdinand/factr/process_data/processed_data/20251024_train_60_filtered/buf.pkl
+buffer_path=/home/ferdinand/factr/process_data/processed_data/20251024_train_60_50hz/buf.pkl
 
 # # curriculum parameters
 # space_config=pixel # pixel, latent
@@ -27,9 +27,9 @@ CUDA_VISIBLE_DEVICES=$CUDA_DEVICE_ID python /home/ferdinand/factr/factr/train_bc
 agent.features.restore_path=$feature_path \
 buffer_path=$buffer_path \
 task=$task_config \
-curriculum.space=$space_config \
-curriculum.operator=$operator_config \
-curriculum.scheduler=$scheduler_config \
-curriculum.start_scale=$start_scale \
-curriculum.stop_scale=$stop_scale \
+# curriculum.space=$space_config \
+# curriculum.operator=$operator_config \
+# curriculum.scheduler=$scheduler_config \
+# curriculum.start_scale=$start_scale \
+# curriculum.stop_scale=$stop_scale \
 wandb.entity=$wandb_entity

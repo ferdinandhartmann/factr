@@ -22,12 +22,14 @@ warnings.filterwarnings("ignore", message=".*torch.load.*weights_only.*")
 
 
 # ---------- CONFIG ----------
-model_name = "20251024_25hz_60_batch128"
-CKPT_PATH = Path(f"scripts/checkpoints/{model_name}/rollout/latest_ckpt.ckpt")
+model_name = "20251024_50hz_60_batch64_lr2e4"
+# CKPT_PATH = Path(f"scripts/checkpoints/{model_name}/rollout/latest_ckpt.ckpt")
 EXP_CFG_PATH = Path(f"scripts/checkpoints/{model_name}/rollout/exp_config.yaml")
+CKPT_PATH = Path(f"scripts/checkpoints/{model_name}/ckpt_005000.ckpt")
+# EXP_CFG_PATH = Path(f"scripts/checkpoints/{model_name}/exp_config.yaml")
 ROLLOUT_CFG_PATH = Path(f"scripts/checkpoints/{model_name}/rollout/rollout_config.yaml") 
 
-base_name = "ep_4"
+base_name = "ep_64"
 DATA_PATH = Path(f"/home/ferdinand/factr/process_data/converted_pkls_for_test/converted_{base_name}/")
 image_file = DATA_PATH / f"{base_name}_image_obs.npy"
 torque_file = DATA_PATH / f"{base_name}_torque_obs.npy"
@@ -71,12 +73,22 @@ policy = instantiate(agent_cfg)
 
 # --- 2. Load checkpoint ---
 ckpt = torch.load(CKPT_PATH, map_location=DEVICE)
-policy.load_state_dict(ckpt["model"])
+state_dict = ckpt["model"]
+
+# 🩹 Remove 'module.' prefix if present (for DataParallel checkpoints)
+new_state_dict = {k.replace("module.", ""): v for k, v in state_dict.items()}
+
+missing, unexpected = policy.load_state_dict(new_state_dict, strict=False)
+print(f"✅ Loaded policy from {CKPT_PATH}, step {ckpt['global_step']}")
+if len(missing) > 0 or len(unexpected) > 0:
+    print(f"⚠️ Missing keys: {len(missing)}, Unexpected keys: {len(unexpected)}")
+
 policy.eval()
 policy.to(DEVICE)
+policy = torch.compile(policy)
 
 print(f"✅ Loaded policy from {CKPT_PATH}, step {ckpt['global_step']}")
-policy = torch.compile(policy)
+
 
 # --- 3. Load Normalization Stats (NEW SECTION) ---
 try:
@@ -84,8 +96,8 @@ try:
         rollout_config = yaml.safe_load(f)
 
     # Torque is the 'obs' observation
-    obs_mean = torch.tensor(rollout_config['norm_stats']['obs']['mean']).float().to(DEVICE)
-    obs_std = torch.tensor(rollout_config['norm_stats']['obs']['std']).float().to(DEVICE)
+    obs_mean = torch.tensor(rollout_config['norm_stats']['state']['mean']).float().to(DEVICE)
+    obs_std = torch.tensor(rollout_config['norm_stats']['state']['std']).float().to(DEVICE)
 
     # Policy output (action) denormalization
     action_mean = torch.tensor(rollout_config['norm_stats']['action']['mean']).float().to(DEVICE)
