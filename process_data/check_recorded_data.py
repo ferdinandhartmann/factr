@@ -11,8 +11,8 @@ import torch
 import torch.nn.functional as F
 import math
 import sys
-from scipy.signal import butter, filtfilt
-
+from scipy.signal import butter, filtfilt, medfilt
+from utils_data_process import lowpass_filter, medianfilter, downsample_data
 
 def load_data(data_path):
     """Load data from pkl file."""
@@ -57,7 +57,11 @@ def safe_extract_7d_data(data_list: List[Any], key: str) -> np.ndarray:
     # Convert to NumPy array with float dtype to allow NaNs
     return np.array(processed_data, dtype=np.float32)
 
-def plot_joint_data(pkl_data, output_dir):
+def plot_joint_data(pkl_data, output_dir, median_filter_torque=True, median_filter_kernel_size_torque=3,
+                    median_filter_position=True, median_filter_kernel_size_position=7,
+                    filter_torque=True, cutoff_freq_torque=10.0,
+                    filter_position=True, cutoff_freq_position=5.0, 
+                    downsample=False, target_downsampling_freq=25.0, data_frequency=50.0):
     """
     Creates the two requested combined plots from a single PKL file:
     1. Commanded Position, Measured Position, and Broadcaster Torques.
@@ -173,7 +177,7 @@ def plot_joint_data(pkl_data, output_dir):
         
         plt.tight_layout(rect=[0.03, 0.03, 0.97, 0.96])
         output_path = output_dir / 'combined_torque.png'
-        plt.savefig(output_path, dpi=150, bbox_inches='tight')
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
         print(f"  ✅ Saved to {output_path}")
         plt.close()
     else:
@@ -188,20 +192,25 @@ def plot_joint_data(pkl_data, output_dir):
         fig, axes = plt.subplots(7, 1, figsize=(12, 14), sharex=True)
         fig.suptitle('Broadcasted External Torque Smoothing', fontsize=16, y=0.96)
 
-        # Get data
-        # broadcaster_torques = safe_extract_7d_data(data_dict['external_torques_broadcaster']['data'], 'effort')
-        # broadcaster_ts = data_dict['franka_state']['timestamps']
-
-        # Smoothing
-        fs = 50.0  # Sampling frequency
-        cutoff = 10.0  # Desired cutoff frequency of the filter, Hz
-        b, a = butter(N=2, Wn=cutoff/(fs/2), btype='low')
-        broadcaster_torques_filtered = filtfilt(b, a, np.array(broadcaster_torques).T, axis=1).T
+        if median_filter_torque:
+            broadcaster_torques_med_filt = medianfilter(broadcaster_torques, kernel_size=median_filter_kernel_size_torque)
+        else:
+            broadcaster_torques_med_filt = broadcaster_torques
+        if filter_torque:
+            broadcaster_torques_filtered = lowpass_filter(np.array(broadcaster_torques_med_filt), cutoff_freq=10.0, fs=50.0)
+        else:
+            broadcaster_torques_filtered = broadcaster_torques_med_filt
+        if downsample:
+            broadcaster_torques_filtered, _ = downsample_data(broadcaster_torques_filtered, data_frequency, target_downsampling_freq)
+            broadcaster_ts_downsampled, _ = downsample_data(broadcaster_ts, data_frequency, target_downsampling_freq)
 
         for i in range(7):
             ax1 = axes[i]
             line1, = ax1.plot(broadcaster_ts, broadcaster_torques[:, i], linewidth=1, label='Broadcasted Torque [Nm]', alpha=1.0, color='red')
-            line2, = ax1.plot(broadcaster_ts, broadcaster_torques_filtered[:, i], linewidth=1, label='Broadcasted Torque Filtered [Nm]', alpha=1.0, color='blue')
+            if downsample:
+                line2, = ax1.plot(broadcaster_ts_downsampled, broadcaster_torques_filtered[:, i], linewidth=1, label='Broadcasted Torque Filtered [Nm]', alpha=1.0, color='blue')
+            else:
+                line2, = ax1.plot(broadcaster_ts, broadcaster_torques_filtered[:, i], linewidth=1, label='Broadcasted Torque Filtered [Nm]', alpha=1.0, color='blue')
             ax1.set_ylabel(f'J{i+1} Torque [Nm]', fontsize=10)
             ax1.tick_params(axis='y')
 
@@ -214,7 +223,7 @@ def plot_joint_data(pkl_data, output_dir):
         
         plt.tight_layout(rect=[0.03, 0.03, 0.97, 0.96])
         output_path = output_dir / 'smoothed_torque.png'
-        plt.savefig(output_path, dpi=200, bbox_inches='tight')
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
         print(f"  ✅ Saved to {output_path}")
         plt.close()
     else:
@@ -230,29 +239,28 @@ def plot_joint_data(pkl_data, output_dir):
         fig, axes = plt.subplots(7, 1, figsize=(12, 14), sharex=True)
         fig.suptitle('Commanded Torque Smoothing', fontsize=16, y=0.96)
 
-        # Get data
-        # broadcaster_states =  safe_extract_7d_data(data_dict['measured_joints']['data'], 'position')
-        # broadcaster_ts = data_dict['measured_joints']['timestamps']
-        
-        # commanded_pos = safe_extract_7d_data(data_dict['impedance_cmd']['data'], 'position')
-        # commanded_ts = data_dict['impedance_cmd']['timestamps']
-        
-        # observed_states = safe_extract_7d_data(data_dict['franka_state']['data'], 'position')
-        observed_ts = data_dict['franka_state']['timestamps']
-
-        # Smoothing
-        fs = 50.0  # Sampling frequency
-        cutoff = 10.0  # Desired cutoff frequency of the filter, Hz
-        b, a = butter(N=2, Wn=cutoff/(fs/2), btype='low')
-        commanded_pos_filtered = filtfilt(b, a, np.array(commanded_pos).T, axis=1).T
+        if median_filter_position:
+            commanded_pos_medfilt = medianfilter(commanded_pos, kernel_size=median_filter_kernel_size_position)
+        else:
+            commanded_pos_medfilt = commanded_pos
+        if filter_position:
+            commanded_pos_filtered = lowpass_filter(np.array(commanded_pos_medfilt), cutoff_freq=cutoff_freq_position, fs=data_frequency)
+        else:
+            commanded_pos_filtered = commanded_pos_medfilt
+        if downsample:
+            commanded_pos_filtered, _ = downsample_data(commanded_pos_filtered, data_frequency, target_downsampling_freq)
+            commanded_ts_downsampled, _ = downsample_data(commanded_ts, data_frequency, target_downsampling_freq)
 
         for i in range(7):
             ax1 = axes[i]
             # Plot Positions/Commands on left Y-axis (ax1)
-            line1, = ax1.plot(broadcaster_ts, broadcaster_states[:, i], linewidth=1.5, label='/franka_robot_state_broadcaster/measured_joint_states [rad]', alpha=1, color='blue')
-            line2, = ax1.plot(commanded_ts, commanded_pos[:, i], linewidth=1, label='Commanded Pos to controller (joint_trajectory) [rad]', alpha=1, color='darkgreen')
-            line3, = ax1.plot(observed_ts, observed_states[:, i], linewidth=1.5, label='/franka/right/obs_franka_state [rad]', alpha=1, color='red')
-            line4, = ax1.plot(commanded_ts, commanded_pos_filtered[:, i], linewidth=1, label='Commanded Pos to controller smoothed (joint_trajectory) [rad]', alpha=1.0, color='lightgreen')
+            line1, = ax1.plot(broadcaster_ts, broadcaster_states[:, i], linewidth=1.5, label='/franka_robot_state_broadcaster/measured_joint_states [rad]', alpha=1, color='darkgreen')
+            line2, = ax1.plot(commanded_ts, commanded_pos[:, i], linewidth=1, label='Commanded Pos to controller (joint_trajectory) [rad]', alpha=1, color='blue')
+            line3, = ax1.plot(observed_ts, observed_states[:, i], linewidth=1.5, label='/franka/right/obs_franka_state [rad]', alpha=1, color='orange')
+            if downsample:
+                line4, = ax1.plot(commanded_ts_downsampled, commanded_pos_filtered[:, i], linewidth=1, label='Commanded Pos to controller smoothed (joint_trajectory) [rad]', alpha=1.0, color='red')
+            else :
+                line4, = ax1.plot(commanded_ts, commanded_pos_filtered[:, i], linewidth=1, label='Commanded Pos to controller smoothed (joint_trajectory) [rad]', alpha=1.0, color='red')
             ax1.set_ylabel(f'J{i+1} Pos [rad]', fontsize=10)
             ax1.tick_params(axis='y')
             ax1.grid(True, alpha=0.3)
@@ -401,9 +409,22 @@ if __name__ == '__main__':
 
     ################# Single File Visualization #################
 
-    episode_name = "ep_7"  ## SELECT EPISODE HERE ####
+    episode_name = "ep_6"  ## SELECT EPISODE HERE ####
     pkl_path = Path(f"/home/ferdinand/factr/process_data/data_to_process/20251024/data/{episode_name}.pkl")
-        
+
+    median_filter_torque = True
+    median_filter_kernel_size_torque = 3
+    median_filter_position = True
+    median_filter_kernel_size_position = 7
+    filter_torque = True
+    cutoff_freq_torque = 10.0
+    filter_position = False
+    cutoff_freq_position = 10.0
+
+    downsample = True
+    data_frequency = 50.0
+    target_downsampling_freq = 25.0
+
     base_dir = pkl_path.parent.parent / "visualizations"
     base_dir.mkdir(parents=True, exist_ok=True)
     
@@ -424,7 +445,11 @@ if __name__ == '__main__':
         sys.exit(1)
 
     pkl_data = load_data(pkl_path)
-    plot_joint_data(pkl_data, output_dir)
+    plot_joint_data(pkl_data, output_dir, median_filter_torque=median_filter_torque, median_filter_kernel_size_torque=median_filter_kernel_size_torque,
+                    median_filter_position=median_filter_position, median_filter_kernel_size_position=median_filter_kernel_size_position,
+                    filter_torque=filter_torque, cutoff_freq_torque=cutoff_freq_torque,
+                    filter_position=filter_position, cutoff_freq_position=cutoff_freq_position, downsample=downsample,
+                    data_frequency=data_frequency, target_downsampling_freq=target_downsampling_freq)
     visualize_curriculum_steps(pkl_data, output_dir, topic_name='/realsense/arm/im')
 
 
