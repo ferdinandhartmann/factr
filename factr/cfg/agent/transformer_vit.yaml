@@ -11,7 +11,7 @@ _target_: factr.models.action_transformer.TransformerAgent
 odim: ${task.obs_dim}
 n_cams: ${task.n_cams}
 use_obs: add_token
-dropout: 0.1
+dropout: 0.12
 img_dropout: 0
 ac_dim: ${task.ac_dim}
 ac_chunk: ${ac_chunk}

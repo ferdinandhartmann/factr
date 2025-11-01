@@ -15,14 +15,20 @@ warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", message=".*torch.load.*weights_only.*")
 
-# ---------- CONFIG ----------
-model_name = "20251024_60_25hz_b64_lr25" # <--- SELECT MODEL NAME HERE
-CKPT_PATH = Path(f"scripts/checkpoints/{model_name}/rollout/latest_ckpt.ckpt")
+# ---------- CONFIG ---------- # Select model, checkpoint, and episode here
+model_name = "20251024_60_25hz_b64_lr25_d12_10"
+checkpoint = "ckpt_007500"
+episode_name = "ep_61" 
+
+# ---------- PATHS & DEVICE ----------
+CKPT_PATH = None
+if checkpoint == "latest_ckpt" or checkpoint == "latest":
+    CKPT_PATH = Path(f"scripts/checkpoints/{model_name}/rollout/latest_ckpt.ckpt")
+else:
+    CKPT_PATH = Path(f"scripts/checkpoints/{model_name}/{checkpoint}.ckpt")
 EXP_CFG_PATH = Path(f"scripts/checkpoints/{model_name}/rollout/exp_config.yaml")
-# CKPT_PATH = Path(f"scripts/checkpoints/{model_name}/ckpt_015000.ckpt")
 ROLLOUT_CFG_PATH = Path(f"scripts/checkpoints/{model_name}/rollout/rollout_config.yaml")
 
-episode_name = "ep_63" # <--- SELECT EPISODE NAME HERE
 RAW_DATA_PATH = Path(f"/home/ferdinand/factr/process_data/raw_data_train/20251024_60/{episode_name}.pkl")
 if not RAW_DATA_PATH.exists():
     RAW_DATA_PATH = Path(f"/home/ferdinand/factr/process_data/raw_data_eval/20251024_4/{episode_name}.pkl")
@@ -286,6 +292,6 @@ for d in range(dof_dims):
     plt.grid(True, alpha=0.4)
 plt.xlabel("Frame")
 plt.tight_layout()
-save_path = f"/home/ferdinand/factr/scripts/test_rollout_output/test_rollout_{model_name}_{episode_name}.png"
+save_path = f"/home/ferdinand/factr/scripts/test_rollout_output/test_rollout_{model_name}_{checkpoint}_{episode_name}.png"
 plt.savefig(save_path)
 print(f"✅ Saved plot to {save_path}")
