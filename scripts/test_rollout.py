@@ -16,24 +16,24 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", message=".*torch.load.*weights_only.*")
 
 # ---------- CONFIG ---------- # Select model, checkpoint, and episode here
-model_name = "20251024_60_25hz_b64_lr25_d12_10"
-checkpoint = "ckpt_007500"
-episode_name = "ep_61" 
+model_name = "20251024_60_25hz_b64_lr25_d12_6_filt"
+checkpoint = "latest"
+episode_names = ["ep_61", "ep_62", "ep_63", "ep_64"]  # List of episode names to test
 
 # ---------- PATHS & DEVICE ----------
 CKPT_PATH = None
-if checkpoint == "latest_ckpt" or checkpoint == "latest":
+if checkpoint == "latest":
     CKPT_PATH = Path(f"scripts/checkpoints/{model_name}/rollout/latest_ckpt.ckpt")
 else:
     CKPT_PATH = Path(f"scripts/checkpoints/{model_name}/{checkpoint}.ckpt")
 EXP_CFG_PATH = Path(f"scripts/checkpoints/{model_name}/rollout/exp_config.yaml")
 ROLLOUT_CFG_PATH = Path(f"scripts/checkpoints/{model_name}/rollout/rollout_config.yaml")
 
-RAW_DATA_PATH = Path(f"/home/ferdinand/factr/process_data/raw_data_train/20251024_60/{episode_name}.pkl")
-if not RAW_DATA_PATH.exists():
-    RAW_DATA_PATH = Path(f"/home/ferdinand/factr/process_data/raw_data_eval/20251024_4/{episode_name}.pkl")
-if not RAW_DATA_PATH.exists():
-    raise FileNotFoundError(f"Required PKL file not found: {RAW_DATA_PATH}.")
+# RAW_DATA_PATH = Path(f"/home/ferdinand/factr/process_data/raw_data_train/20251024_60/{episode_name}.pkl")
+# if not RAW_DATA_PATH.exists():
+#     RAW_DATA_PATH = Path(f"/home/ferdinand/factr/process_data/raw_data_eval/20251024_4/{episode_name}.pkl")
+# if not RAW_DATA_PATH.exists():
+#     raise FileNotFoundError(f"Required PKL file not found: {RAW_DATA_PATH}.")
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -211,87 +211,96 @@ except Exception as e:
     obs_mean, obs_std = 0., 1.
     action_mean, action_std = 0., 1.
 
+
 # --- Load arrays from PKL file ---
-image_obs, torque_obs, true_action = load_and_extract_raw_data(RAW_DATA_PATH)
+for episode_name in episode_names:
+    RAW_DATA_PATH = Path(f"/home/ferdinand/factr/process_data/raw_data_train/20251024_60/{episode_name}.pkl")
+    if not RAW_DATA_PATH.exists():
+        RAW_DATA_PATH = Path(f"/home/ferdinand/factr/process_data/raw_data_eval/20251024_4/{episode_name}.pkl")
+    if not RAW_DATA_PATH.exists():
+        print(f"Required PKL file not found: {RAW_DATA_PATH}, skipping this episode.")
+        break 
 
-# -----------------------------
-# INFERENCE
-# -----------------------------
-pred_actions = []
+    image_obs, torque_obs, true_action = load_and_extract_raw_data(RAW_DATA_PATH)
 
-N = min(len(true_action), len(torque_obs), len(image_obs))
-print(f"🚀 Running inference on {N} samples...")
+    # -----------------------------
+    # INFERENCE
+    # -----------------------------
+    pred_actions = []
 
-for i in tqdm(range(N)):
-    img = image_obs[i]
-    torque = torque_obs[i]
+    N = min(len(true_action), len(torque_obs), len(image_obs))
+    print(f"🚀 Running inference on {N} samples...")
 
-    img_tensor = preprocess_image(img)
+    for i in tqdm(range(N)):
+        img = image_obs[i]
+        torque = torque_obs[i]
 
-    # Normalize Torque Observation
-    torque_tensor = torch.from_numpy(torque).float().to(DEVICE)
-    torque_tensor = (torque_tensor - obs_mean) / obs_std # normalization
-    torque_tensor = torque_tensor.unsqueeze(0)
+        img_tensor = preprocess_image(img)
+
+        # Normalize Torque Observation
+        torque_tensor = torch.from_numpy(torque).float().to(DEVICE)
+        torque_tensor = (torque_tensor - obs_mean) / obs_std # normalization
+        torque_tensor = torque_tensor.unsqueeze(0)
+
+        with torch.no_grad():
+            pred_action = policy.get_actions({"cam0": img_tensor}, torque_tensor)
+            pred_action = pred_action * action_std + action_mean # Inverse normalization 
+            pred_action = pred_action.cpu().numpy()[0]
+
+        pred_actions.append(pred_action)
+
+    pred_actions = np.array(pred_actions)
+    true_action = true_action[:N]
+
+    print("✅ Finished inference")
+    print(f"Pred shape: {pred_actions.shape}, True shape: {true_action.shape}")
 
     with torch.no_grad():
-        pred_action = policy.get_actions({"cam0": img_tensor}, torque_tensor)
-        pred_action = pred_action * action_std + action_mean # Inverse normalization 
-        pred_action = pred_action.cpu().numpy()[0]
-
-    pred_actions.append(pred_action)
-
-pred_actions = np.array(pred_actions)
-true_action = true_action[:N]
-
-print("✅ Finished inference")
-print(f"Pred shape: {pred_actions.shape}, True shape: {true_action.shape}")
-
-with torch.no_grad():
-    if isinstance(pred_actions, np.ndarray):
-        if pred_actions.ndim == 3:
-            pred_action = pred_actions[:, :, :]
+        if isinstance(pred_actions, np.ndarray):
+            if pred_actions.ndim == 3:
+                pred_action = pred_actions[:, :, :]
 
 
-# EVALUATION (MSE) and VISUALIZATION
-t = np.arange(len(pred_action))  # <-- ensure t matches N
-dof_dims = pred_action.shape[2]
-pred_dims = pred_action.shape[1]
-print(f"Number of Frames: {t.shape[0]}, dof_dims: {dof_dims}, pred_dims: {pred_dims}")
+    # EVALUATION (MSE) and VISUALIZATION
+    t = np.arange(len(pred_action))  # <-- ensure t matches N
+    dof_dims = pred_action.shape[2]
+    pred_dims = pred_action.shape[1]
+    print(f"Number of Frames: {t.shape[0]}, dof_dims: {dof_dims}, pred_dims: {pred_dims}")
 
-max_mins = []
-# MSE per joint over all predictions and the whole trajectory
-for d in range(dof_dims):  # Use dof_dims for joint dimensions
-    mse = np.mean((pred_action[:, :, d] - true_action[:, d, None]) ** 2)  # Compute MSE over all predictions and trajectory
-    print(f"MSE Joint {d+1} over all predictions and whole trajectory: {mse:.6f}")
-    # Get max and min of each joint dimension
-    max_val = np.max(pred_action[:, :, d])
-    min_val = np.min(pred_action[:, :, d])
-    max_mins.append((max_val, min_val))
+    max_mins = []
+    # MSE per joint over all predictions and the whole trajectory
+    for d in range(dof_dims):  # Use dof_dims for joint dimensions
+        mse = np.mean((pred_action[:, :, d] - true_action[:, d, None]) ** 2)  # Compute MSE over all predictions and trajectory
+        print(f"MSE Joint {d+1} over all predictions and whole trajectory: {mse:.6f}")
+        # Get max and min of each joint dimension
+        max_val = np.max(pred_action[:, :, d])
+        min_val = np.min(pred_action[:, :, d])
+        max_mins.append((max_val, min_val))
 
-max_y_diff = max(np.abs(m[0] - m[1]) for m in max_mins)
+    max_y_diff = max(np.abs(m[0] - m[1]) for m in max_mins)
 
-# # Calculate L2 Loss
-# l2_loss = np.mean(np.linalg.norm(pred_action.reshape(-1, dof_dims) - true_action, axis=1))
-# print(f"\nAverage L2 Loss for all joints: {l2_loss:.6f}")
+    # # Calculate L2 Loss
+    # l2_loss = np.mean(np.linalg.norm(pred_action.reshape(-1, dof_dims) - true_action, axis=1))
+    # print(f"\nAverage L2 Loss for all joints: {l2_loss:.6f}")
 
-# Visualization
-plt.figure(figsize=(10, 2 * dof_dims))
-for d in range(dof_dims):
-    plt.subplot(dof_dims, 1, d + 1)
-    plt.plot(t, true_action[:, d], label="Ground Truth Joint Pos.", linewidth=2.5, color="red")
-    plt.ylabel(f"Pos. Joint {d+1} [rad]")
-    # every subplot should have same abs difference between y-limits
-    mid = (max_mins[d][0] + max_mins[d][1]) / 2.0
-    plt.ylim(mid - max_y_diff/2 - 0.04*max_y_diff, mid + max_y_diff/2 + 0.04*max_y_diff)
-    for i in range (pred_dims):    
-        plt.plot(t + i, pred_action[:, i, d], label="Predicted Joint Pos.", linewidth=0.8, alpha=0.3, color="blue")
-        if i == 0:
-            plt.legend(loc="upper right")  
-    if d == 0:
-        plt.title(f"FACTR Prediction vs Ground Truth of {episode_name}")
-    plt.grid(True, alpha=0.4)
-plt.xlabel("Frame")
-plt.tight_layout()
-save_path = f"/home/ferdinand/factr/scripts/test_rollout_output/test_rollout_{model_name}_{checkpoint}_{episode_name}.png"
-plt.savefig(save_path)
-print(f"✅ Saved plot to {save_path}")
+    # Visualization
+    plt.figure(figsize=(10, 2 * dof_dims))
+    for d in range(dof_dims):
+        plt.subplot(dof_dims, 1, d + 1)
+        plt.plot(t, true_action[:, d], label="Ground Truth Joint Pos.", linewidth=2.5, color="red")
+        plt.ylabel(f"Pos. Joint {d+1} [rad]")
+        # every subplot should have same abs difference between y-limits
+        mid = (max_mins[d][0] + max_mins[d][1]) / 2.0
+        plt.ylim(mid - max_y_diff/2 - 0.04*max_y_diff, mid + max_y_diff/2 + 0.04*max_y_diff)
+        for i in range (pred_dims):    
+            plt.plot(t + i, pred_action[:, i, d], label="Predicted Joint Pos.", linewidth=0.8, alpha=0.3, color="blue")
+            if i == 0:
+                plt.legend(loc="upper right")  
+        if d == 0:
+            plt.title(f"FACTR Prediction vs Ground Truth of {episode_name}")
+        plt.grid(True, alpha=0.4)
+    plt.xlabel("Frame")
+    plt.tight_layout()
+    save_path = f"/home/ferdinand/factr/scripts/test_rollout_output/test_rollout_{model_name}_{checkpoint}_{episode_name}.png"
+    plt.savefig(save_path)
+    print(f"✅ Saved plot to {save_path}")
