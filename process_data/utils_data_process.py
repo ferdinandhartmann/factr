@@ -194,9 +194,9 @@ def medianfilter(data_array, kernel_size=3, key=None):
     if isinstance(first_elem, dict):
         if key is None:
             # try to auto-detect the first key that holds numeric data
-            key = next((k for k, v in first_elem.items() if isinstance(v, (list, np.ndarray))), None)
+            key = next((k for k, v in first_elem.items() if isinstance(v, (list, np.ndarray)) and np.any(v)), None)
             if key is None:
-                raise ValueError("medianfilter: cannot auto-detect numeric key in dicts")
+                raise ValueError("medianfilter: cannot auto-detect numeric key in dicts or all values are 0")
         # extract list of numeric vectors
         data_array = np.array([np.array(d[key], dtype=float) for d in data_array])
 
