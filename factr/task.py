@@ -8,8 +8,20 @@ import numpy as np
 import torch
 import wandb
 from torch.utils.data import DataLoader, IterableDataset
+import random
+import pytorch_lightning as pl
 
 from factr.replay_buffer import IterableWrapper
+
+def seed_worker(_worker_id: int) -> None:
+    """
+    DataLoaderのworkerの固定.
+
+    Dataloaderの乱数固定にはgeneratorの固定も必要らしい
+    """
+    worker_seed = torch.initial_seed() % 2**32
+    pl.seed_everything(worker_seed)
+
 
 def _build_data_loader(buffer, batch_size, num_workers, is_train=False, shuffle=True):
     if is_train and not isinstance(buffer, IterableDataset):
@@ -23,7 +35,9 @@ def _build_data_loader(buffer, batch_size, num_workers, is_train=False, shuffle=
         pin_memory=True,
         persistent_workers=num_workers > 0,
         drop_last=True,
-        worker_init_fn=lambda _: np.random.seed(),
+        # worker_init_fn=lambda _: np.random.seed(),
+        worker_init_fn=seed_worker,
+
     )
 
 

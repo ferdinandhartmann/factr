@@ -17,18 +17,34 @@ import hydra
 from factr import misc, transforms
 from copy import deepcopy
 from pathlib import Path
+import random
+import pytorch_lightning as pl
 
 base_path = os.path.dirname(os.path.abspath(__file__))
 
+def torch_fix_seed(seed: int = 42) -> None:
+    """
+    乱数を固定する関数.
+
+    References
+    ----------
+    - https://qiita.com/north_redwing/items/1e153139125d37829d2d
+    """
+    random.seed(seed)
+    pl.seed_everything(seed, workers=True)
+    torch.set_float32_matmul_precision("medium")
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
 
 @hydra.main(config_path="cfg", config_name="train_bc.yaml")
 def train_bc(cfg: DictConfig):
     try:
         resume_model = misc.init_job(cfg)
 
-        # set random seeds for reproducibility
-        torch.manual_seed(cfg.seed)
-        np.random.seed(cfg.seed + 1)
+        # # set random seeds for reproducibility
+        # torch.manual_seed(cfg.seed)
+        # np.random.seed(cfg.seed + 1)
+        torch_fix_seed(cfg.seed)
 
         # save rollout config
         rollout_dir = Path("rollout")
