@@ -24,4 +24,8 @@ class BehaviorCloning(BaseTrainer):
         self.log("bc_loss", global_step, loss_scalar.item())
         if self.is_train:
             self.log("lr", global_step, self.lr)
+
+        self.last_train_loss = loss.item()
+
         return loss
+

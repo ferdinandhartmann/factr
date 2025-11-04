@@ -334,10 +334,8 @@ for episode_name in episode_names:
         pred_actions.append(pred_action)
 
     pred_actions = np.array(pred_actions)
-    true_action = np.array(normalized_true_action_list)
-    # true_action = true_action[:N]
-    # true_action = normalized_true_action.cpu().numpy()
-
+    true_action_normalized = np.array(normalized_true_action_list)
+    true_action = true_action[:N]
 
     print("✅ Finished inference")
     print(f"Pred shape: {pred_actions.shape}, True shape: {true_action.shape}")
@@ -371,19 +369,20 @@ for episode_name in episode_names:
     # print(f"\nAverage L2 Loss for all joints: {l2_loss:.6f}"
 
 
+
+
+
     # Visualization
     plt.figure(figsize=(10, 2 * dof_dims))
     for d in range(dof_dims):
         plt.subplot(dof_dims, 1, d + 1)
         plt.plot(t, true_action[:, d], label="Ground Truth Joint Pos.", linewidth=2.5, color="red")
-        # plt.ylabel(f"Pos. Joint {d+1} [rad]")
-        plt.ylabel(f"Norm. Pos. Joint {d+1}")
+        plt.ylabel(f"Pos. Joint {d+1} [rad]")
         # every subplot should have same abs difference between y-limits
-        # mid = (max_mins[d][0] + max_mins[d][1]) / 2.0
-        # plt.ylim(mid - max_y_diff/2 - 0.04*max_y_diff, mid + max_y_diff/2 + 0.04*max_y_diff)
-        plt.ylim(-2.5, 2.5)
+        mid = (max_mins[d][0] + max_mins[d][1]) / 2.0
+        plt.ylim(mid - max_y_diff/2 - 0.04*max_y_diff, mid + max_y_diff/2 + 0.04*max_y_diff)
         for i in range (pred_dims):    
-            plt.plot(t + i, pred_action[:, i, d], label="Unnormalized Predicted Joint Pos.", linewidth=0.8, alpha=0.3, color="blue")
+            plt.plot(t + i, pred_action[:, i, d], label="Predicted Joint Pos.", linewidth=0.8, alpha=0.3, color="blue")
             if i == 0:
                 plt.legend(loc="upper right")  
         if d == 0:
@@ -391,9 +390,35 @@ for episode_name in episode_names:
         plt.grid(True, alpha=0.4)
     plt.xlabel("Frame")
     plt.tight_layout()
-    save_path = f"/home/ferdinand/factr/scripts/test_rollout_output/test_rollout_{model_name}_{checkpoint}_{episode_name}.png"
+    save_path = f"/home/ferdinand/factr/scripts/test_rollout_output/test_rollout_{model_name}_{checkpoint}_rad_{episode_name}.png"
     plt.savefig(save_path)
     print(f"✅ Saved plot to {save_path}")
+
+
+
+    # # Visualization
+    # plt.figure(figsize=(10, 2 * dof_dims))
+    # for d in range(dof_dims):
+    #     plt.subplot(dof_dims, 1, d + 1)
+    #     plt.plot(t, true_action_normalized[:, d], label="Ground Truth Joint Pos.", linewidth=2.5, color="red")
+    #     # plt.ylabel(f"Pos. Joint {d+1} [rad]")
+    #     plt.ylabel(f"Norm. Pos. Joint {d+1}")
+    #     # every subplot should have same abs difference between y-limits
+    #     # mid = (max_mins[d][0] + max_mins[d][1]) / 2.0
+    #     # plt.ylim(mid - max_y_diff/2 - 0.04*max_y_diff, mid + max_y_diff/2 + 0.04*max_y_diff)
+    #     plt.ylim(-2.5, 2.5)
+    #     for i in range (pred_dims):    
+    #         plt.plot(t + i, pred_action[:, i, d], label="Unnormalized Predicted Joint Pos.", linewidth=0.8, alpha=0.3, color="blue")
+    #         if i == 0:
+    #             plt.legend(loc="upper right")  
+    #     if d == 0:
+    #         plt.title(f"FACTR Prediction vs Ground Truth of {episode_name}")
+    #     plt.grid(True, alpha=0.4)
+    # plt.xlabel("Frame")
+    # plt.tight_layout()
+    # save_path = f"/home/ferdinand/factr/scripts/test_rollout_output/test_rollout_{model_name}_{checkpoint}_norm_{episode_name}.png"
+    # plt.savefig(save_path)
+    # print(f"✅ Saved plot to {save_path}")
 
 
     # Plot overlay of all dataset trajectories and FACTR predictions (normalized)
@@ -420,7 +445,7 @@ for episode_name in episode_names:
     axes[-1].set_xlabel("Frame index")
     plt.tight_layout(rect=[0.03, 0.03, 0.97, 0.96])
 
-    out_path = f"/home/ferdinand/factr/scripts/test_rollout_output/all_and_pred_norm_{model_name}_{episode_name}.png"
+    out_path = f"/home/ferdinand/factr/scripts/test_rollout_output/test_rollout_{model_name}_{checkpoint}_norm_{episode_name}.png"
     plt.savefig(out_path, dpi=300)
     plt.close(fig)
     print(f"✅ Saved overlay plot: {out_path}")

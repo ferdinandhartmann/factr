@@ -2,7 +2,7 @@
 #!/bin/bash
 
 # cuda id
-CUDA_DEVICE_ID=2
+CUDA_DEVICE_ID=0
 
 # task configuration, setup under cfg/task/
 task_config=single_franka

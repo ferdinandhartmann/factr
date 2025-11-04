@@ -87,31 +87,51 @@ class BCTask(DefaultTask):
         
         losses = []
         action_l2, action_lsig = [], []
-        for batch in self.test_loader:
-            (imgs, obs), actions, mask = batch
-            imgs = {k: v.to(trainer.device_id) for k, v in imgs.items()}
-            obs, actions, mask = [
-                ar.to(trainer.device_id) for ar in (obs, actions, mask)
-            ]
+        
+        l2_per_joint_all = []
 
-            # with torch.no_grad():
-            #     loss = trainer.training_step(batch, global_step)
-            #     losses.append(loss.item())
-            with torch.no_grad():
-                loss = trainer.training_step(batch, global_step)
-                # Handle multi-GPU (DataParallel) case
-                if loss.ndim > 0:
-                    loss = loss.mean()
-                losses.append(loss.item())
+        # Get the underlying model (handles DataParallel)
+        model = trainer.model.module if hasattr(trainer.model, "module") else trainer.model
+
+        # Temporarily switch to eval mode (disables dropout, batchnorm randomness)
+        was_training = model.training
+        model.eval()
+
+        with torch.no_grad():
+            for batch in self.test_loader:
+                (imgs, obs), actions, mask = batch
+                imgs = {k: v.to(trainer.device_id) for k, v in imgs.items()}
+                obs, actions, mask = [
+                    ar.to(trainer.device_id) for ar in (obs, actions, mask)
+                ]
+
+                # with torch.no_grad():
+                #     loss = trainer.training_step(batch, global_step)
+                #     losses.append(loss.item())
+                # with torch.no_grad():
+                #     loss = trainer.training_step(batch, global_step)
+                #     # Handle multi-GPU (DataParallel) case
+                #     if loss.ndim > 0:
+                #         loss = loss.mean()
+                #     losses.append(loss.item())
 
                 # compare predicted actions versus GT
                 # pred_actions = trainer.model.get_actions(imgs, obs)
-                model = trainer.model.module if hasattr(trainer.model, "module") else trainer.model
+                # model = trainer.model.module if hasattr(trainer.model, "module") else trainer.model
+                #  Directly compute loss without training_step
                 pred_actions = model.get_actions(imgs, obs)
 
                 # calculate l2 loss between pred_action and action
                 l2_delta = torch.square(mask * (pred_actions - actions))
                 l2_delta = l2_delta.sum((1, 2)) / mask.sum((1, 2))
+
+                l2_loss = torch.square(mask * (pred_actions - actions))
+                loss = l2_loss.sum((1, 2)) / mask.sum((1, 2))
+                losses.append(loss.mean().item())
+
+                # per-joint error for this batch
+                l2_per_joint = (mask * (pred_actions - actions)**2).sum(1) / mask.sum(1)
+                l2_per_joint_all.append(l2_per_joint.mean(0).cpu().numpy())
 
                 # calculate the % of time the signs agree
                 lsig = torch.logical_or(
@@ -124,12 +144,24 @@ class BCTask(DefaultTask):
                 action_l2.append(l2_delta.mean().item())
                 action_lsig.append(lsig.mean().item())
 
+        # Restore model mode after eval
+        if was_training:
+            model.train()
+
         mean_val_loss = np.mean(losses)
         ac_l2, ac_lsig = np.mean(action_l2), np.mean(action_lsig)
-        # print(f"Step: {global_step}\tVal Loss: {mean_val_loss:.4f}")
-        # print(f"Step: {global_step}\tAC L2={ac_l2:.2f}\tAC LSig={ac_lsig:.2f}")
+        l2_per_joint_mean = np.mean(np.stack(l2_per_joint_all, axis=0), axis=0)
+        print(f"Step: {global_step}\tVal Loss: {mean_val_loss:.4f}\tAC L2={ac_l2:.3f}\tAC LSig={ac_lsig:.3f}")
 
         if wandb.run is not None:
+            for i, v in enumerate(l2_per_joint_mean):
+                wandb.log({f"eval/joint{i+1}_l2": v}, step=global_step)
+
+            if hasattr(trainer, "last_train_loss"):
+                wandb.log({
+                    "eval/train_vs_eval_ratio": mean_val_loss / (trainer.last_train_loss + 1e-8)
+                }, step=global_step)
+
             wandb.log(
                 {
                     "eval/task_loss": mean_val_loss,

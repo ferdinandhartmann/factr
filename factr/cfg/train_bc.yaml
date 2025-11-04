@@ -16,28 +16,27 @@ hydra:
 
 rt: ${hydra:runtime.choices.agent/features}
 
-exp_name: 20251024_60_25hz_b64_lr27_d12_5_seed44
+exp_name: 20251024_60_25hz_b128_lr30_d10_10_s45_preproc
 batch_size: 64
 num_workers: 8
-lr: 0.00027
-max_iterations: 5000 # 20/50 epochs good mazbe, (batch_size*max_iterations) / dataset_size , datasetsize=(54 episodes × (300 raw steps)=16,200)
+lr: 0.0003
+max_iterations: 20000 # 20/50 epochs good mazbe, (batch_size*max_iterations) / dataset_size , datasetsize=(54 episodes × (300 raw steps)=16,200)
 eval_freq: 250
 save_freq: 2500
 schedule_freq: 1
 devices: 1
-seed: 44
+seed: 45
 
 # dataset_size = number_of_episodes * number_of_timesteps 
 #              = 54 * 300 = 16200
 #       epochs = (batch_size * max_iterations) / dataset_size
 #              = (64 * 10000) / 16200 = 39.5
 
-
 buffer_path: ./buffer.pkl
 # buffer_path: /home/ferdinand/factr/process_data/processed_data/20251024_train_60_filtered/buf.pkl
 ac_chunk: 25
 img_chunk: 1  # number of image timesteps to use (including current one)
-train_transform: medium
+train_transform: preproc
 test_transform: preproc
 
 curriculum:

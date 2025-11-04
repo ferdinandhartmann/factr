@@ -103,14 +103,27 @@ def get_transform_by_name(name, size=224):
         return transforms.Compose(
             [
                 transforms.RandomResizedCrop(
-                    size=size, scale=(0.9, 1.0), antialias=False
+                    size=size, scale=(0.9, 1.0), antialias=False # randomly crop with a factor between 0.9 and 1
                 ),
-                transforms.GaussianBlur(kernel_size=kernel_size),
+                transforms.GaussianBlur(kernel_size=kernel_size), # here gaussian blurr added
                 transforms.Normalize(
                     mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
                 ),
             ]
-        )
+        ) 
+
+    if name == "small": #added by ferdinand
+        kernel_size = int(0.02 * size) # smaller blur
+        kernel_size = kernel_size + (1 - kernel_size % 2)
+        return transforms.Compose([
+            transforms.RandomResizedCrop(
+                size=size, scale=(0.98, 1.0), antialias=False # randomly crop with a factor between 0.98 and 1
+            ), 
+            transforms.GaussianBlur(kernel_size=kernel_size), # here gaussian blurr added
+            transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                std=[0.229, 0.224, 0.225]),
+        ])
+
     if name == "nocrop":
         kernel_size = int(0.05 * size)
         kernel_size = kernel_size + (1 - kernel_size % 2)
