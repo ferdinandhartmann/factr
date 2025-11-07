@@ -147,7 +147,7 @@ def plot_joint_data(pkl_data, output_dir):
         plt.close()
     
     # 2. Plot External Joint Torques
-    if 'external_torques' in data_dict and 'external_torques_leader' in data_dict:
+    if 'external_torques' in data_dict:
         print("  Plotting external joint torques...")
         fig, axes = plt.subplots(7, 1, figsize=(12, 14))
         fig.suptitle('External Joint Torques', fontsize=16)
@@ -162,15 +162,15 @@ def plot_joint_data(pkl_data, output_dir):
             if i == 6:
                 axes[i].set_xlabel('Time [s]', fontsize=10)
 
-        torques_leader = np.array([d['effort'] for d in data_dict['external_torques_leader']['data']])
-        timestamps_leader = data_dict['external_torques_leader']['timestamps']
+        # torques_leader = np.array([d['effort'] for d in data_dict['external_torques_leader']['data']])
+        # timestamps_leader = data_dict['external_torques_leader']['timestamps']
 
-        for i in range(7):
-            axes[i].plot(timestamps_leader, torques_leader[:, i], linewidth=2, color='blue')
-            axes[i].set_ylabel(f'Leader? Joint {i+1} [Nm]', fontsize=10)
-            axes[i].grid(True, alpha=0.3)
-            if i == 6:
-                axes[i].set_xlabel('Time [s]', fontsize=10)
+        # for i in range(7):
+        #     axes[i].plot(timestamps_leader, torques_leader[:, i], linewidth=2, color='blue')
+        #     axes[i].set_ylabel(f'Leader? Joint {i+1} [Nm]', fontsize=10)
+        #     axes[i].grid(True, alpha=0.3)
+        #     if i == 6:
+        #         axes[i].set_xlabel('Time [s]', fontsize=10)
         
         plt.tight_layout()
         output_path = output_dir / 'external_joint_torques.png'
@@ -178,27 +178,27 @@ def plot_joint_data(pkl_data, output_dir):
         print(f"  ✅ Saved to {output_path}")
         plt.close()
     
-    # 3. Plot Impedance Controller Commands
-    if 'impedance_cmd' in data_dict:
-        print("  Plotting impedance controller commands...")
-        fig, axes = plt.subplots(7, 1, figsize=(12, 14))
-        fig.suptitle('Impedance Controller Joint Commands', fontsize=16)
+    # # 3. Plot Impedance Controller Commands
+    # if 'impedance_cmd' in data_dict:
+    #     print("  Plotting impedance controller commands...")
+    #     fig, axes = plt.subplots(7, 1, figsize=(12, 14))
+    #     fig.suptitle('Impedance Controller Joint Commands', fontsize=16)
         
-        commands = np.array([d['position'] for d in data_dict['impedance_cmd']['data']])
-        timestamps = data_dict['impedance_cmd']['timestamps']
+    #     commands = np.array([d['position'] for d in data_dict['impedance_cmd']['data']])
+    #     timestamps = data_dict['impedance_cmd']['timestamps']
         
-        for i in range(7):
-            axes[i].plot(timestamps, commands[:, i], linewidth=2, color='green')
-            axes[i].set_ylabel(f'Joint {i+1} [rad]', fontsize=10)
-            axes[i].grid(True, alpha=0.3)
-            if i == 6:
-                axes[i].set_xlabel('Time [s]', fontsize=10)
+    #     for i in range(7):
+    #         axes[i].plot(timestamps, commands[:, i], linewidth=2, color='green')
+    #         axes[i].set_ylabel(f'Joint {i+1} [rad]', fontsize=10)
+    #         axes[i].grid(True, alpha=0.3)
+    #         if i == 6:
+    #             axes[i].set_xlabel('Time [s]', fontsize=10)
         
-        plt.tight_layout()
-        output_path = output_dir / 'impedance_commands.png'
-        plt.savefig(output_path, dpi=150, bbox_inches='tight')
-        print(f"  ✅ Saved to {output_path}")
-        plt.close()
+    #     plt.tight_layout()
+    #     output_path = output_dir / 'impedance_commands.png'
+    #     plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    #     print(f"  ✅ Saved to {output_path}")
+    #     plt.close()
     
     # 4. Combined plot: Measured vs Commanded positions
     if 'measured_joints' in data_dict and 'impedance_cmd' in data_dict:
@@ -327,7 +327,7 @@ def visualize_data(data_path, output_dir=None):
     pkl_data = load_data(pkl_path)
     
     # Create GIFs for images
-    # create_image_gif(pkl_data, output_dir / 'camera_rgb.mp4', '/realsense/arm/im', fps=50)
+    create_image_gif(pkl_data, output_dir / 'camera_rgb.mp4', '/realsense/front/im', fps=25)
     # create_image_gif(pkl_data, output_dir / 'camera_depth.mp4', '/realsense/arm/depth', fps=50)
     # Create plots
     plot_joint_data(pkl_data, output_dir)
@@ -339,8 +339,8 @@ def visualize_data(data_path, output_dir=None):
 if __name__ == '__main__':
     import sys
 
-    base_data_dir = Path("/home/ferdinand/factr/process_data/data_to_process/20251024/test")
-    base_output_dir = Path("/home/ferdinand/factr/process_data/data_to_process/20251024/test")
+    base_data_dir = Path("/home/ferdinand/factr/process_data/data_to_process/20251107/data")
+    base_output_dir = Path("/home/ferdinand/factr/process_data/data_to_process/20251107/visualizations")
 
     # Allow overriding from CLI
     if len(sys.argv) >= 2:

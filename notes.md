@@ -24,6 +24,16 @@ The following topics are included in the `.pkl` file:
 | `/franka_robot_state_broadcaster/external_joint_torques` | Franka ROS driver | `sensor_msgs/JointState` | **Robot → ROS** | Native Franka topic publishing estimated external torques (used by FACTR for reference or debugging). |
 
 
+## Check Folder File Sizes
+To check the size of all files in the folder, sorted and displayed in a human-readable format, use the following command:
+
+```bash
+du -ah | sort -h
+```
+
+- `du -ah`: Displays the disk usage of all files and directories in human-readable format.
+- `--max-depth=1`: Limits the depth to the current folder.
+- `sort -h`: Sorts the output by size in human-readable format.
 
 ## Persistent Terminal Session with tmux
 

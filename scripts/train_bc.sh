@@ -8,7 +8,7 @@ CUDA_DEVICE_ID=0
 task_config=single_franka
 
 # # path to dataset buffer
-buffer_path=/home/ferdinand/factr/process_data/training_data/20251024_60_25hz/buf.pkl
+buffer_path=/home/ferdinand/factr/process_data/training_data/20251107_60_25hz/buf.pkl
 
 # # curriculum parameters
 # space_config=pixel # pixel, latent

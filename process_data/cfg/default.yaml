@@ -1,14 +1,14 @@
 
-input_path: /home/ferdinand/factr/process_data/raw_data_train/20251024_60
-output_path: /home/ferdinand/factr/process_data/training_data/20251024_60_25hz_filt
+input_path: /home/ferdinand/factr/process_data/raw_data_train/20251107_60
+output_path: /home/ferdinand/factr/process_data/training_data/20251107_60_25hz
 
-median_filter_torque: True
+median_filter_torque: False
 median_filter_kernel_size_torque: 3
-median_filter_position: True
+median_filter_position: False
 median_filter_kernel_size_position: 7
-filter_torque: True
+filter_torque: False
 cutoff_freq_torque: 10.0
-filter_position: True
+filter_position: False
 cutoff_freq_position: 10.0
 
 downsample: True
@@ -17,7 +17,7 @@ target_downsampling_freq: 25.0
 
 
 cameras_topics:
-  - /realsense/arm/im
+  - /realsense/front/im
 
 obs_topics:
 # - /franka/right/obs_franka_torque

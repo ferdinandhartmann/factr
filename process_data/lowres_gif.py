@@ -73,19 +73,19 @@ def main():
     data_fps = 50
     gif_fps = 10
     scale_factor = 0.4
-    pkl_path = Path(f"/home/ferdinand/factr/process_data/data_to_process/20251024/data/{episode}.pkl")
-    output_dir = Path("/home/ferdinand/factr/process_data/data_to_process/20251024/visualizations/a_gifs")
+    pkl_path = Path(f"/home/ferdinand/factr/process_data/data_to_process/20251107/data/{episode}.pkl")
+    output_dir = Path("/home/ferdinand/factr/process_data/data_to_process/20251107/visualizations/a_gifs")
     output_dir.mkdir(exist_ok=True, parents=True)
 
     print(f"📁 Loading {pkl_path}")
     data = load_pkl(pkl_path)
 
     # RGB
-    rgb_frames = extract_topic_images(data, "/realsense/arm/im")
+    rgb_frames = extract_topic_images(data, "/realsense/front/im")
     save_gif(rgb_frames, output_dir / f"{episode}_rgb_preview.gif", fps=gif_fps, scale=scale_factor, drop_ratio=int(data_fps/gif_fps))
 
     # Depth
-    depth_frames = extract_topic_images(data, "/realsense/arm/depth")
+    depth_frames = extract_topic_images(data, "/realsense/front/depth")
     save_gif(depth_frames, output_dir / f"{episode}_depth_preview.gif", fps=gif_fps, scale=scale_factor, drop_ratio=int(data_fps/gif_fps))
 
     print("🎉 Done! GIFs saved in:", output_dir)

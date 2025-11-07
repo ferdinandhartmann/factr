@@ -113,5 +113,5 @@ def summarize_pkl(path: Path):
 if __name__ == "__main__":
     # Use command-line argument if provided, otherwise use the default test file
     import sys
-    p = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("/home/ferdinand/factr/process_data/raw_data/20251024_train/ep_2.pkl")
+    p = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("/home/ferdinand/factr/process_data/raw_data_train/20251107_60/ep_2.pkl")
     summarize_pkl(p)
