@@ -33,8 +33,8 @@ def torch_fix_seed(seed: int = 42) -> None:
     random.seed(seed)
     pl.seed_everything(seed, workers=True)
     torch.set_float32_matmul_precision("medium")
-    torch.backends.cudnn.benchmark = False
-    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False 
+    torch.backends.cudnn.deterministic = True #impacts speed but ensures reproducibility
 
 @hydra.main(config_path="cfg", config_name="train_bc.yaml")
 def train_bc(cfg: DictConfig):

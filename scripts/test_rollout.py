@@ -19,9 +19,9 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", message=".*torch.load.*weights_only.*")
 
 # ---------- CONFIG ---------- # Select model, checkpoint, and episode here
-model_name = "20251107_60_25hz_s44_ac50_b64_lr30_20"
+model_name = "20251107_60_25hz_s40_ac25_b64_lr0.00025_20000"
 checkpoint = "latest"
-episode_names = ["ep_62"] # List of episode names to test
+episode_names = ["ep_62", "ep_63", "ep_64"] # List of episode names to test
 
 # ---------- PATHS & DEVICE ----------
 CKPT_PATH = None
@@ -39,6 +39,9 @@ ROLLOUT_CFG_PATH = Path(f"scripts/checkpoints/{model_name}/rollout/rollout_confi
 #     raise FileNotFoundError(f"Required PKL file not found: {RAW_DATA_PATH}.")
 
 dataset_folder = Path("/home/ferdinand/factr/process_data/raw_data_train/20251107_60/")
+
+output_folder = Path(f"/home/ferdinand/factr/scripts/test_rollout_output/{model_name}_{checkpoint}")
+output_folder.mkdir(parents=True, exist_ok=True)
 
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -169,51 +172,50 @@ def extract_7d(data_list: List[Any], key: str) -> np.ndarray:
         else:
             arr.append([np.nan] * 7)
     return np.array(arr, dtype=np.float32)
-
-def get_all_joint_cmds(data_path):
-    """Extract all joint commands from PKL files in a folder."""
-    # --- Paths and setup ---
-    data_path = Path(dataset_folder)
-    dataset_name = data_path.parent.stem
+def get_all_joint_cmds_np(data_path, action_mean, action_std):
+    """
+    Load each episode's joint commands separately (not concatenated)
+    and normalize them using rollout_config.yaml stats.
+    Returns:
+        cmds_per_episode: list of np.ndarray, each (T_i, 7)
+        cmds_per_episode_norm: list of np.ndarray, each (T_i, 7)
+    """
+    data_path = Path(data_path)
     topic = "/joint_impedance_command_controller/joint_trajectory"
-
-    print(f"Dataset: {dataset_name}")
-
     pkl_files = sorted(data_path.glob("*.pkl"))
-    if not pkl_files:
-        print("⚠️ No PKL files found.")
-        exit()
 
-    entries = []
-    for pkl_file in pkl_files[1:]:
+    if not pkl_files:
+        raise FileNotFoundError(f"No PKL files found in {data_path}")
+
+    cmds_per_episode = []
+    cmds_per_episode_norm = []
+
+    # Convert mean/std to numpy if they’re tensors
+    if isinstance(action_mean, torch.Tensor):
+        action_mean = action_mean.cpu().numpy()
+    if isinstance(action_std, torch.Tensor):
+        action_std = action_std.cpu().numpy()
+
+    for pkl_file in pkl_files:
         try:
             data = load_pkl(pkl_file)
             cmd_data, _ = extract_topic(data, topic)
             cmd_pos = extract_7d(cmd_data, "position")
+
             if len(cmd_pos) == 0:
                 continue
-            x = np.arange(len(cmd_pos))
-            entries.append({"x": x, "cmd_pos": cmd_pos})
+
+            cmd_norm = (cmd_pos - action_mean) / action_std
+            cmds_per_episode.append(cmd_pos)
+            cmds_per_episode_norm.append(cmd_norm)
+
         except Exception as e:
-            print(f"❌ Error in {pkl_file.name}: {e}")
+            print(f"⚠️ Skipping {pkl_file.name}: {e}")
 
-    if not entries:
-        print("⚠️ No usable data found.")
-        exit()
+    print(f"✅ Loaded {len(cmds_per_episode)} episodes from {data_path}")
+    return cmds_per_episode, cmds_per_episode_norm
 
-    # --- Compute normalization stats ---
-    cmd_concat = np.concatenate([e["cmd_pos"] for e in entries], axis=0)
-    means = np.nanmean(cmd_concat, axis=0)
-    stds = np.nanstd(cmd_concat, axis=0)
-    stds[stds < 1e-8] = 1.0
 
-    print("✅ Computed normalization stats")
-
-    # --- Normalize ---
-    for e in entries:
-        e["cmd_norm"] = (e["cmd_pos"] - means) / stds
-
-    return entries
 
 # ----------------------------
 
@@ -286,7 +288,7 @@ except Exception as e:
     action_mean, action_std = 0., 1.
 
 print("Loading all joint commands from dataset for visualization...")
-joint_cmds_normalized = get_all_joint_cmds(dataset_folder)
+joint_cmds_all, joint_cmds_all_norm = get_all_joint_cmds_np(dataset_folder, action_mean, action_std)
 print(f"✅ Loaded and normalized all joint commands from dataset folder.")
 
 # --- Load arrays from PKL file ---
@@ -298,15 +300,17 @@ for episode_name in episode_names:
         print(f"Required PKL file not found: {RAW_DATA_PATH}, skipping this episode.")
         break 
 
-    image_obs, torque_obs, true_action = load_and_extract_raw_data(RAW_DATA_PATH)
+    image_obs, torque_obs, true_actions = load_and_extract_raw_data(RAW_DATA_PATH)
 
     # -----------------------------
     # INFERENCE
     # -----------------------------
     pred_actions = []
+    pred_actions_norm = []
     normalized_true_action_list = []
+    attn_image, attn_force = [], []
 
-    N = min(len(true_action), len(torque_obs), len(image_obs))
+    N = min(len(true_actions), len(torque_obs), len(image_obs))
     print(f"🚀 Running inference on {N} samples...")
 
     for i in tqdm(range(N)):
@@ -321,30 +325,51 @@ for episode_name in episode_names:
         torque_tensor = torque_tensor.unsqueeze(0)
 
         # Normalize Ground Truth Action
-        true_action_tensor = torch.from_numpy(true_action[i]).float().to(DEVICE)
+        true_action_tensor = torch.from_numpy(true_actions[i]).float().to(DEVICE)
         normalized_true_action = (true_action_tensor - action_mean) / action_std  # normalization
         normalized_true_action = normalized_true_action.unsqueeze(0)
         normalized_true_action_list.append(normalized_true_action.cpu().numpy()[0])
 
         with torch.no_grad():
-            pred_action = policy.get_actions({"cam0": img_tensor}, torque_tensor)
-            # pred_action = pred_action * action_std + action_mean # Inverse normalization 
+            pred_action, cross_w = policy.get_actions({"cam0": img_tensor}, torque_tensor, return_weights=True)
+            # test_rollout.py → agent.get_actions() → policy.get_actions() → model.get_actions()
+            pred_action_norm = pred_action.cpu().numpy()[0]
+            pred_action = pred_action * action_std + action_mean # Inverse normalization 
             pred_action = pred_action.cpu().numpy()[0]
 
+            if cross_w is not None:
+                # Canonicalize attention
+                if cross_w.dim() == 3:
+                    cross_w = cross_w.unsqueeze(0)  # (1, H, Tq, Tk)
+                attn_heads_mean = cross_w.mean(1)   # mean over heads → (B, Tq, Tk)
+                attn_mean = attn_heads_mean.mean(1) # mean over decoder queries → (B, Tk)
+
+                N_images = 1  # since you only have cam0 and no past frames
+                img_attn = attn_mean[..., :N_images].mean().item()
+                torque_attn = attn_mean[..., N_images:].mean().item()
+
+                attn_image.append(img_attn)
+                attn_force.append(torque_attn)
+
         pred_actions.append(pred_action)
+        pred_actions_norm.append(pred_action_norm)
 
     pred_actions = np.array(pred_actions)
-    true_action_normalized = np.array(normalized_true_action_list)
-    true_action = true_action[:N]
+    pred_actions_norm = np.array(pred_actions_norm)
+    true_actions_normalized = np.array(normalized_true_action_list)
+    true_actions = true_actions[:N]
 
     print("✅ Finished inference")
-    print(f"Pred shape: {pred_actions.shape}, True shape: {true_action.shape}")
+    print(f"Pred shape: {pred_actions.shape}, True shape: {true_actions.shape}")
 
     with torch.no_grad():
         if isinstance(pred_actions, np.ndarray):
             if pred_actions.ndim == 3:
                 pred_action = pred_actions[:, :, :]
-
+        if isinstance(pred_action_norm, np.ndarray):
+            if pred_action_norm.ndim == 3:
+                pred_action_norm = pred_action_norm[:, :, :]
+            
 
     # EVALUATION (MSE) and VISUALIZATION
     t = np.arange(len(pred_action))  # <-- ensure t matches N
@@ -353,10 +378,7 @@ for episode_name in episode_names:
     print(f"Number of Frames: {t.shape[0]}, dof_dims: {dof_dims}, pred_dims: {pred_dims}")
 
     max_mins = []
-    # MSE per joint over all predictions and the whole trajectory
     for d in range(dof_dims):  # Use dof_dims for joint dimensions
-        # mse = np.mean((pred_action[:, :, d] - true_action[:, d, None]) ** 2)  # Compute MSE over all predictions and trajectory
-        # print(f"MSE Joint {d+1} over all predictions and whole trajectory: {mse:.6f}")
         # Get max and min of each joint dimension
         max_val = np.max(pred_action[:, :, d])
         min_val = np.min(pred_action[:, :, d])
@@ -364,89 +386,122 @@ for episode_name in episode_names:
 
     max_y_diff = max(np.abs(m[0] - m[1]) for m in max_mins)
 
-    # # Calculate L2 Loss
-    # l2_loss = np.mean(np.linalg.norm(pred_action.reshape(-1, dof_dims) - true_action, axis=1))
-    # print(f"\nAverage L2 Loss for all joints: {l2_loss:.6f}"
+    # Calculate L2 Loss
+    # Ensure pred_action and true_actions have compatible shapes
+    l2_loss = np.mean(np.linalg.norm(pred_actions_norm[:, 0, :] - true_actions, axis=1))
+    print(f"\nAverage L2 Loss for all joints: {l2_loss:.6f}\n")
 
 
+    # Plot attention weights over time
+    plt.figure(figsize=(10,5))
+    plt.plot(attn_force, label="Torque attention", linewidth=1.8)
+    plt.plot(attn_image, label="Image attention", linewidth=1.8)
+    plt.xlabel("Timestep")
+    plt.ylabel("Mean attention weight")
+    plt.title(f"Attention to Force and Image of {episode_name}")
+    plt.legend()
+    plt.ylim(0, 1)
+    plt.grid(True, alpha=0.4)
+    plt.tight_layout()
+    attn_path = f"{output_folder}/tr_att_{episode_name}.png"
+    plt.savefig(attn_path, dpi=200)
+    print(f"✅ Saved attention plot to {attn_path}")
 
 
-
-    # Visualization
-    plt.figure(figsize=(10, 2 * dof_dims))
+    # Visualization (unchanged content) 
+    fig, axes = plt.subplots(dof_dims, 1, figsize=(12, 2 * dof_dims), sharex=True)
+    fig.suptitle(f"FACTR Prediction vs Ground Truth\nModel {model_name}, episode {episode_name}, y-plot-range: {max_y_diff:.1f}", fontsize=16, y=0.96)
     for d in range(dof_dims):
-        plt.subplot(dof_dims, 1, d + 1)
-        plt.plot(t, true_action[:, d], label="Ground Truth Joint Pos.", linewidth=2.5, color="red")
-        plt.ylabel(f"Pos. Joint {d+1} [rad]")
+        ax = axes[d]
+        ax.plot(t, true_actions[:, d], label="Ground Truth Joint Pos.", linewidth=2.5, color="red")
+        ax.set_ylabel(f"J{d+1} Pos. [rad]")
         # every subplot should have same abs difference between y-limits
         mid = (max_mins[d][0] + max_mins[d][1]) / 2.0
-        plt.ylim(mid - max_y_diff/2 - 0.04*max_y_diff, mid + max_y_diff/2 + 0.04*max_y_diff)
-        for i in range (pred_dims):    
-            plt.plot(t + i, pred_action[:, i, d], label="Predicted Joint Pos.", linewidth=0.8, alpha=0.3, color="blue")
+        ax.set_ylim(mid - max_y_diff/2 - 0.04*max_y_diff, mid + max_y_diff/2 + 0.04*max_y_diff)
+        for i in range(pred_dims):
+            ax.plot(t + i, pred_action[:, i, d], label="Predicted Joint Pos.", linewidth=0.8, alpha=0.3, color="blue")
             if i == 0:
-                plt.legend(loc="upper right")  
-        if d == 0:
-            plt.title(f"FACTR Prediction vs Ground Truth of {episode_name}")
-        plt.grid(True, alpha=0.4)
-    plt.xlabel("Frame")
-    plt.tight_layout()
-    save_path = f"/home/ferdinand/factr/scripts/test_rollout_output/test_rollout_{model_name}_{checkpoint}_rad_{episode_name}.png"
-    plt.savefig(save_path)
+                ax.legend(loc="upper right", fontsize=10)
+        ax.grid(True, alpha=0.4)
+    axes[-1].set_xlabel("Timestep")
+    plt.tight_layout(rect=[0.03, 0.03, 0.97, 0.96])
+    save_path = f"{output_folder}/tr_rad_pred_{episode_name}.png"
+    plt.savefig(save_path, dpi=300)
+    plt.close(fig)
     print(f"✅ Saved plot to {save_path}")
 
 
+    # Visualization (normalized) 
+    fig, axes = plt.subplots(dof_dims, 1, figsize=(12, 2 * dof_dims), sharex=True)
+    fig.suptitle(f"Normalized FACTR Prediction vs Ground Truth\nModel {model_name}, episode {episode_name}, y-plot-range: {max_y_diff:.1f}", fontsize=16, y=0.96)
+    for d in range(dof_dims):
+        ax = axes[d]
+        ax.plot(t, true_actions_normalized[:, d], label="Ground Truth Joint Pos.", linewidth=2.5, color="red")
+        ax.set_ylabel(f"J{d+1} Pos. norm.")
+        # ax.set_ylim(-2.8, 2.8)
+        for i in range(pred_dims):
+            ax.plot(t + i, pred_actions_norm[:, i, d], label="Normalized Predicted Joint Pos.", linewidth=0.8, alpha=0.3, color="blue")
+            if i == 0:
+                ax.legend(loc="upper right", fontsize=10)
+        ax.grid(True, alpha=0.4)
+    axes[-1].set_xlabel("Timestep")
+    plt.tight_layout(rect=[0.03, 0.03, 0.97, 0.96])
+    save_path = f"{output_folder}/tr_norm_pred_{episode_name}.png"
+    plt.savefig(save_path, dpi=300)
+    plt.close(fig)
+    print(f"✅ Saved plot to {save_path}")
 
-    # # Visualization
-    # plt.figure(figsize=(10, 2 * dof_dims))
-    # for d in range(dof_dims):
-    #     plt.subplot(dof_dims, 1, d + 1)
-    #     plt.plot(t, true_action_normalized[:, d], label="Ground Truth Joint Pos.", linewidth=2.5, color="red")
-    #     # plt.ylabel(f"Pos. Joint {d+1} [rad]")
-    #     plt.ylabel(f"Norm. Pos. Joint {d+1}")
-    #     # every subplot should have same abs difference between y-limits
-    #     # mid = (max_mins[d][0] + max_mins[d][1]) / 2.0
-    #     # plt.ylim(mid - max_y_diff/2 - 0.04*max_y_diff, mid + max_y_diff/2 + 0.04*max_y_diff)
-    #     plt.ylim(-2.5, 2.5)
-    #     for i in range (pred_dims):    
-    #         plt.plot(t + i, pred_action[:, i, d], label="Unnormalized Predicted Joint Pos.", linewidth=0.8, alpha=0.3, color="blue")
-    #         if i == 0:
-    #             plt.legend(loc="upper right")  
-    #     if d == 0:
-    #         plt.title(f"FACTR Prediction vs Ground Truth of {episode_name}")
-    #     plt.grid(True, alpha=0.4)
-    # plt.xlabel("Frame")
-    # plt.tight_layout()
-    # save_path = f"/home/ferdinand/factr/scripts/test_rollout_output/test_rollout_{model_name}_{checkpoint}_norm_{episode_name}.png"
-    # plt.savefig(save_path)
-    # print(f"✅ Saved plot to {save_path}")
+
+    # Plot overlay of all dataset trajectories and FACTR predictions (un-normalized)
+    fig, axes = plt.subplots(dof_dims, 1, figsize=(12, 2 * dof_dims), sharex=True)
+    fig.suptitle(f"Joint Positions vs FACTR Predictions\nModel {model_name}, episode {episode_name}", fontsize=16, y=0.96)
+    for d in range(dof_dims):
+        ax = axes[d]
+        # Dataset trajectories
+        for ep_idx, ep_data in enumerate(joint_cmds_all_norm):
+            t_ep = np.arange(ep_data.shape[0])
+            ax.plot(t_ep, ep_data[:, d], color="red", alpha=0.3, linewidth=1.0, label="Joint Pos. from Dataset" if (d == 0 and ep_idx == 0) else None)
+        # Ground truth
+        t_pred = np.arange(pred_action.shape[0])
+        ax.plot(t_pred, true_actions[:, d], label="Ground Truth Joint Pos. normalized", linewidth=1.2, color="black", alpha=0.8)
+        # Predictions
+        for i in range(pred_dims):
+            ax.plot(t_pred + i, pred_action[:, i, d], color="blue", alpha=0.4, linewidth=0.8, label="Normalized FACTR prediction" if (d == 0 and i == 0) else None)
+        ax.set_ylabel(f"J{d+1} Pos. [rad]")
+        if d == 0:
+            ax.legend(loc="upper right", fontsize=10)
+        ax.grid(True, alpha=0.3)
+    axes[-1].set_xlabel("Timestep")
+    plt.tight_layout(rect=[0.03, 0.03, 0.97, 0.96])
+    save_path = f"{output_folder}/tr_norm_pred_vs_all_{episode_name}.png"
+    plt.savefig(save_path, dpi=300)
+    plt.close(fig)
+    print(f"✅ Saved overlay plot: {save_path}")
 
 
     # Plot overlay of all dataset trajectories and FACTR predictions (normalized)
-    fig, axes = plt.subplots(7, 1, figsize=(12, 14), sharex=True)
+    fig, axes = plt.subplots(dof_dims, 1, figsize=(12, 2 * dof_dims), sharex=True)
     fig.suptitle(f"Normalized Joint Positions vs FACTR Predictions\nModel {model_name}, episode {episode_name}", fontsize=16, y=0.96)
-
-    for j in range(7):
-        ax = axes[j]
-        # Dataset trajectories (red)
-        for i, cmd in enumerate(joint_cmds_normalized):
-            ax.plot(cmd["x"], cmd["cmd_norm"][:, j], color="red", alpha=0.3, linewidth=1.0, label="Normalized Joint Pos. from Dataset" if i == 0 else None)
-        # True (ground truth) (black)
-        t_pred = np.arange(pred_action.shape[0])
-        ax.plot(t_pred, true_action[:, j], label="Ground Truth Joint Pos. normalized", linewidth=1.2, color="black", alpha=0.8)
-        # Predictions (blue)
-        for i in range(pred_action.shape[1]):
-            ax.plot(t_pred + i, pred_action[:, i, j], color="blue", alpha=0.4, linewidth=0.8,
-                    label="Unnormalized FACTR prediction" if (j == 0 and i == 0) else None)
-        ax.set_ylabel(f"J{j+1} normalized pos.")
+    for d in range(dof_dims):
+        ax = axes[d]
+        # Dataset trajectories
+        for ep_idx, ep_data in enumerate(joint_cmds_all):
+            t_ep = np.arange(ep_data.shape[0])
+            ax.plot(t_ep, ep_data[:, d], color="red", alpha=0.3, linewidth=1.0, label="Normalized Joint Pos. from Dataset" if (d == 0 and ep_idx == 0) else None)
+        # Ground truth
+        t_pred = np.arange(pred_actions_norm.shape[0])
+        ax.plot(t_pred, true_actions[:, d], label="Ground Truth Joint Pos. normalized", linewidth=1.2, color="black", alpha=0.8)
+        # Predictions
+        for i in range(pred_dims):
+            ax.plot(t_pred + i, pred_actions_norm[:, i, d], color="blue", alpha=0.4, linewidth=0.8, label="Normalized FACTR prediction" if (d == 0 and i == 0) else None)
+        ax.set_ylabel(f"J{d+1} pos. norm.")
+        if d == 0:
+            ax.legend(loc="upper right", fontsize=10)
         ax.grid(True, alpha=0.3)
-        if j == 0:
-            ax.legend(loc="upper right", fontsize=8)
-
-    axes[-1].set_xlabel("Frame index")
+    axes[-1].set_xlabel("Timestep")
     plt.tight_layout(rect=[0.03, 0.03, 0.97, 0.96])
-
-    out_path = f"/home/ferdinand/factr/scripts/test_rollout_output/test_rollout_{model_name}_{checkpoint}_norm_{episode_name}.png"
-    plt.savefig(out_path, dpi=300)
+    save_path = f"{output_folder}/tr_rad_pred_vs_all_{episode_name}.png"
+    plt.savefig(save_path, dpi=300)
     plt.close(fig)
-    print(f"✅ Saved overlay plot: {out_path}")
+    print(f"✅ Saved overlay plot: {save_path}")
 

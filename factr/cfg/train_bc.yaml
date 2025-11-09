@@ -3,7 +3,6 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
-
 defaults:
   - agent: transformer_vit
   - task: franka
@@ -16,12 +15,14 @@ hydra:
 
 rt: ${hydra:runtime.choices.agent/features}
 
-exp_name: 20251107_60_25hz_s40_ac75_b64_lr28_15
+exp_base_name: 20251107_60_25hz
+exp_name_suffix:
+# exp_name: 20251107_60_25hz_s40_ac25_b64_lr28_10
 batch_size: 64
 num_workers: 8
 lr: 0.00028
-max_iterations: 15000 # 20/50 epochs good mazbe, (batch_size*max_iterations) / dataset_size , datasetsize=(54 episodes × (300 raw steps)=16,200)
-eval_freq: 500
+max_iterations: 20000 # 20/50 epochs good mazbe, (batch_size*max_iterations) / dataset_size , datasetsize=(54 episodes × (300 raw steps)=16,200)
+eval_freq: 50
 save_freq: 5000
 schedule_freq: 1
 devices: 1
@@ -34,7 +35,7 @@ seed: 40
 
 buffer_path: ./buffer.pkl
 # buffer_path: /home/ferdinand/factr/process_data/processed_data/20251024_train_60_filtered/buf.pkl
-ac_chunk: 75
+ac_chunk: 25
 img_chunk: 1  # number of image timesteps to use (including current one)
 train_transform: medium
 test_transform: preproc
@@ -46,6 +47,8 @@ curriculum:
   start_scale: 5
   stop_scale: 0
   max_step: ${max_iterations}
+
+exp_name: ${exp_base_name}_s${seed}_ac${ac_chunk}_b${batch_size}_lr${lr}_${max_iterations}_pix
 
 wandb:
   name: ${exp_name}

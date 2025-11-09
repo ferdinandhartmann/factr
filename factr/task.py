@@ -81,6 +81,21 @@ class DefaultTask:
             wandb.log({"eval/task_loss": mean_val_loss}, step=global_step)
 
 
+
+def canonicalize_attn(cross_w, batch_size):
+# Want (B, H, Tq, Tk)
+    if cross_w.dim() == 4:
+        # Assume already (B, H, Tq, Tk)
+        return cross_w
+    elif cross_w.dim() == 3:
+        # (H, Tq, Tk) -> add batch dim and repeat (rare, but safer than failing)
+        H, Tq, Tk = cross_w.shape
+        return cross_w.unsqueeze(0).expand(batch_size, H, Tq, Tk)
+    else:
+        raise ValueError(f"Unexpected attention shape: {tuple(cross_w.shape)}")
+
+
+
 class BCTask(DefaultTask):
 
     def eval(self, trainer, global_step):
@@ -88,7 +103,7 @@ class BCTask(DefaultTask):
         losses = []
         action_l2, action_lsig = [], []
         l2_per_joint_all = []
-        average_weights = 0.0
+        weights = []
 
         for batch in self.test_loader:
             (imgs, obs), actions, mask = batch
@@ -105,8 +120,19 @@ class BCTask(DefaultTask):
                 losses.append(loss.item())
 
                 # compare predicted actions versus GT
-                pred_actions, weights = trainer.model.get_actions(imgs, obs)
-                average_weights = weights.mean().item()
+                # pred_actions, cross_w = trainer.model.get_actions(imgs, obs, return_weights=False)
+                pred_actions = trainer.model.get_actions(imgs, obs, return_weights=False)
+                
+                # --- process attention weights ---
+                # B = next(iter(imgs.values())).shape[0]
+                # cross_w = canonicalize_attn(cross_w, B)          # (B, H, Tq, Tk)
+                # attn_heads_mean = cross_w.mean(dim=1)            # (B, Tq, Tk)
+
+                # N_images = 1
+                # image_curve = attn_heads_mean[..., :N_images].mean(-1)  # (B, Tq)
+                # other_curve = attn_heads_mean[..., N_images:].mean(-1)  # (B, Tq)
+
+
 
                 # calculate l2 loss between pred_action and action
                 l2_loss = torch.square(mask * (pred_actions - actions))
@@ -133,21 +159,55 @@ class BCTask(DefaultTask):
         l2_per_joint_mean = np.mean(np.stack(l2_per_joint_all, axis=0), axis=0)
         print(f"Step: {global_step}\tVal Loss: {mean_val_loss:.4f}\tAC L2={ac_l2:.3f}\tAC LSig={ac_lsig:.3f}")
 
+        # image_tokens = weights[:, :, :1].mean()
+        # torque_tokens = weights[:, :, 1:].mean()
+
+        # print(f"Weights: ", weights.cpu().numpy() if isinstance(weights, torch.Tensor) else weights)
+        # print(f"Weights: Image Tokens={image_tokens:.3f}\tTorque Tokens={torque_tokens:.3f}")
+
         if wandb.run is not None:
+            # Log scalar metrics
             for i, v in enumerate(l2_per_joint_mean):
                 wandb.log({f"eval/joint{i+1}_l2": v}, step=global_step)
 
-            if hasattr(trainer, "last_train_loss"):
-                wandb.log({
-                    "eval/train_vs_eval_ratio": mean_val_loss / (trainer.last_train_loss + 1e-8)
-                }, step=global_step)
+            log_dict = {
+                "eval/task_loss": mean_val_loss,
+                "eval/action_l2": ac_l2,
+                "eval/action_lsig": ac_lsig,
+            }
 
-            wandb.log(
-                {
-                    "eval/task_loss": mean_val_loss,
-                    "eval/action_l2": ac_l2,
-                    "eval/action_lsig": ac_lsig,
-                    "eval/attention_weights": average_weights,
-                },
-                step=global_step,
-            )
+            if hasattr(trainer, "last_train_loss"):
+                log_dict["eval/train_vs_eval_ratio"] = mean_val_loss / (trainer.last_train_loss + 1e-8)
+
+            wandb.log(log_dict, step=global_step)
+
+            # # Attention Plot in W&B
+            # xs = []
+            # ys = []
+            # keys = []
+
+            # # only plot a few episodes to avoid clutter
+            # max_episodes_to_plot = min(image_curve.shape[0], 5)
+            # print(f"Total eval episodes: {image_curve.shape[0]}")
+
+            # for b in range(max_episodes_to_plot):
+            #     t = np.arange(image_curve.shape[1])
+            #     xs.append(t)
+            #     ys.append(image_curve[b].cpu().numpy())
+            #     keys.append(f"Episode {b} - Image (Full Line)")
+            #     xs.append(t)
+            #     ys.append(other_curve[b].cpu().numpy())
+            #     keys.append(f"Episode {b} - Torque (Dashed Line)")
+
+            # # Create a wandb plot
+            # attn_plot = wandb.plot.line_series(
+            #     xs=xs,
+            #     ys=ys,
+            #     keys=keys,
+            #     title="Attention over time (eval episodes)",
+            #     xname="Timestep",
+            # )
+
+            # # Log with the step — important for visibility!
+            # wandb.log({"attention/episodes": attn_plot}, step=global_step)
+
