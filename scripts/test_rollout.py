@@ -19,9 +19,9 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", message=".*torch.load.*weights_only.*")
 
 # ---------- CONFIG ---------- # Select model, checkpoint, and episode here
-model_name = "20251024_60_25hz_b64_lr27_d12_3"
+model_name = "20251107_60_25hz_s44_ac50_b64_lr30_20"
 checkpoint = "latest"
-episode_names = ["ep_4", "ep_7", "ep_62", "ep_64"]  # List of episode names to test
+episode_names = ["ep_62"] # List of episode names to test
 
 # ---------- PATHS & DEVICE ----------
 CKPT_PATH = None
@@ -38,7 +38,7 @@ ROLLOUT_CFG_PATH = Path(f"scripts/checkpoints/{model_name}/rollout/rollout_confi
 # if not RAW_DATA_PATH.exists():
 #     raise FileNotFoundError(f"Required PKL file not found: {RAW_DATA_PATH}.")
 
-dataset_folder = Path("/home/ferdinand/factr/process_data/raw_data_train/20251024_60/")
+dataset_folder = Path("/home/ferdinand/factr/process_data/raw_data_train/20251107_60/")
 
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -56,7 +56,7 @@ def load_and_extract_raw_data(pkl_path: Path):
     image_obs, torque_obs, actions = [], [], []
 
     # Define topic names used in the raw data
-    image_topic = "/realsense/arm/im"
+    image_topic = "/realsense/front/im"
     obs_topic = "/franka_robot_state_broadcaster/external_joint_torques"
     action_topic = "/joint_impedance_command_controller/joint_trajectory"
 
@@ -291,9 +291,9 @@ print(f"✅ Loaded and normalized all joint commands from dataset folder.")
 
 # --- Load arrays from PKL file ---
 for episode_name in episode_names:
-    RAW_DATA_PATH = Path(f"/home/ferdinand/factr/process_data/raw_data_train/20251024_60/{episode_name}.pkl")
+    RAW_DATA_PATH = Path(f"/home/ferdinand/factr/process_data/raw_data_train/20251107_60/{episode_name}.pkl")
     if not RAW_DATA_PATH.exists():
-        RAW_DATA_PATH = Path(f"/home/ferdinand/factr/process_data/raw_data_eval/20251024_4/{episode_name}.pkl")
+        RAW_DATA_PATH = Path(f"/home/ferdinand/factr/process_data/raw_data_eval/20251107_8/{episode_name}.pkl")
     if not RAW_DATA_PATH.exists():
         print(f"Required PKL file not found: {RAW_DATA_PATH}, skipping this episode.")
         break 

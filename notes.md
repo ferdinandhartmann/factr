@@ -35,6 +35,21 @@ du -ah | sort -h
 - `--max-depth=1`: Limits the depth to the current folder.
 - `sort -h`: Sorts the output by size in human-readable format.
 
+Check the space of the whole computer
+```bash
+df -h /
+```
+
+## Check Folder Disk Usage
+
+To check the disk usage of files and directories in the current folder, sorted by size, use the following command:
+
+```bash
+du -sh * | sort -h
+```
+
+
+
 ## Persistent Terminal Session with tmux
 
 To ensure your terminal session continues running even after disconnecting from SSH, follow these steps:

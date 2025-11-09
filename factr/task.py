@@ -87,46 +87,30 @@ class BCTask(DefaultTask):
         
         losses = []
         action_l2, action_lsig = [], []
-        
         l2_per_joint_all = []
+        average_weights = 0.0
 
-        # Get the underlying model (handles DataParallel)
-        model = trainer.model.module if hasattr(trainer.model, "module") else trainer.model
+        for batch in self.test_loader:
+            (imgs, obs), actions, mask = batch
+            imgs = {k: v.to(trainer.device_id) for k, v in imgs.items()}
+            obs, actions, mask = [
+                ar.to(trainer.device_id) for ar in (obs, actions, mask)
+            ]
 
-        # Temporarily switch to eval mode (disables dropout, batchnorm randomness)
-        was_training = model.training
-        model.eval()
-
-        with torch.no_grad():
-            for batch in self.test_loader:
-                (imgs, obs), actions, mask = batch
-                imgs = {k: v.to(trainer.device_id) for k, v in imgs.items()}
-                obs, actions, mask = [
-                    ar.to(trainer.device_id) for ar in (obs, actions, mask)
-                ]
-
-                # with torch.no_grad():
-                #     loss = trainer.training_step(batch, global_step)
-                #     losses.append(loss.item())
-                # with torch.no_grad():
-                #     loss = trainer.training_step(batch, global_step)
-                #     # Handle multi-GPU (DataParallel) case
-                #     if loss.ndim > 0:
-                #         loss = loss.mean()
-                #     losses.append(loss.item())
+            with torch.no_grad():
+                loss = trainer.training_step(batch, global_step)
+                # Handle multi-GPU (DataParallel) case
+                if loss.ndim > 0:
+                    loss = loss.mean()
+                losses.append(loss.item())
 
                 # compare predicted actions versus GT
-                # pred_actions = trainer.model.get_actions(imgs, obs)
-                # model = trainer.model.module if hasattr(trainer.model, "module") else trainer.model
-                #  Directly compute loss without training_step
-                pred_actions = model.get_actions(imgs, obs)
+                pred_actions, weights = trainer.model.get_actions(imgs, obs)
+                average_weights = weights.mean().item()
 
                 # calculate l2 loss between pred_action and action
-                l2_delta = torch.square(mask * (pred_actions - actions))
-                l2_delta = l2_delta.sum((1, 2)) / mask.sum((1, 2))
-
                 l2_loss = torch.square(mask * (pred_actions - actions))
-                loss = l2_loss.sum((1, 2)) / mask.sum((1, 2))
+                l2_loss = l2_loss.sum((1, 2)) / mask.sum((1, 2))
                 losses.append(loss.mean().item())
 
                 # per-joint error for this batch
@@ -141,12 +125,8 @@ class BCTask(DefaultTask):
                 lsig = (lsig.float() * mask).sum((1, 2)) / mask.sum((1, 2))
 
                 # log mean error values
-                action_l2.append(l2_delta.mean().item())
+                action_l2.append(l2_loss.mean().item())
                 action_lsig.append(lsig.mean().item())
-
-        # Restore model mode after eval
-        if was_training:
-            model.train()
 
         mean_val_loss = np.mean(losses)
         ac_l2, ac_lsig = np.mean(action_l2), np.mean(action_lsig)
@@ -167,7 +147,7 @@ class BCTask(DefaultTask):
                     "eval/task_loss": mean_val_loss,
                     "eval/action_l2": ac_l2,
                     "eval/action_lsig": ac_lsig,
-                    # "eval/attention_weights": average_weights,
+                    "eval/attention_weights": average_weights,
                 },
                 step=global_step,
             )
