@@ -21,7 +21,10 @@ warnings.filterwarnings("ignore", message=".*torch.load.*weights_only.*")
 # ---------- CONFIG ---------- # Select model, checkpoint, and episode here
 model_name = "20251107_60_25hz_s40_ac25_b64_lr0.00025_20000"
 checkpoint = "latest"
-episode_names = ["ep_62", "ep_63", "ep_64"] # List of episode names to test
+episode_names = ["ep_40", "ep_41", "ep_61", "ep_62", "ep_63", "ep_64"] # List of episode names to test
+
+downsample = True #from 50Hz to 25Hz
+vs_all_plot = True
 
 # ---------- PATHS & DEVICE ----------
 CKPT_PATH = None
@@ -40,7 +43,10 @@ ROLLOUT_CFG_PATH = Path(f"scripts/checkpoints/{model_name}/rollout/rollout_confi
 
 dataset_folder = Path("/home/ferdinand/factr/process_data/raw_data_train/20251107_60/")
 
-output_folder = Path(f"/home/ferdinand/factr/scripts/test_rollout_output/{model_name}_{checkpoint}")
+if downsample:
+    output_folder = Path(f"/home/ferdinand/factr/scripts/test_rollout_output/{model_name}_{checkpoint}_25hz")
+else:
+    output_folder = Path(f"/home/ferdinand/factr/scripts/test_rollout_output/{model_name}_{checkpoint}_50hz")
 output_folder.mkdir(parents=True, exist_ok=True)
 
 
@@ -117,16 +123,15 @@ def load_and_extract_raw_data(pkl_path: Path):
     elif len(torque_obs) == 0 and len(final_image_obs) > 0:
         torque_obs = np.zeros((len(final_image_obs), 7))
 
-    # # Downsampling logic (as per your original script's output, simplified for this function block)
-    # target_freq = 25.0
-    # avg_freq = 50.0 # Assumed default from your log output
-    
-    # if avg_freq > target_freq:
-    #     step = int(np.floor(avg_freq / target_freq)) # step = 2
-    #     final_image_obs = final_image_obs[::step]
-    #     torque_obs = torque_obs[::step]
-    #     actions = actions[::step]
-    #     print(f"🔻 Downsampled from ~{avg_freq:.1f} Hz to ~{target_freq:.1f} Hz (step={step})")
+    if downsample:
+        # Downsampling logic (as per your original script's output, simplified for this function block)
+        target_freq = 25.0
+        avg_freq = 50.0 # Assumed default from your log output  
+        step = int(np.floor(avg_freq / target_freq)) # step = 2
+        final_image_obs = final_image_obs[::step]
+        torque_obs = torque_obs[::step]
+        actions = actions[::step]
+        print(f"🔻 Downsampled from ~{avg_freq:.1f} Hz to ~{target_freq:.1f} Hz (step={step})")
 
     # Match array lengths
     N = min(len(final_image_obs), len(torque_obs), len(actions))
@@ -204,6 +209,14 @@ def get_all_joint_cmds_np(data_path, action_mean, action_std):
 
             if len(cmd_pos) == 0:
                 continue
+
+            if downsample:
+                target_freq = 25.0
+                avg_freq = 50.0 # Assumed default from your log output  
+                step = int(np.floor(avg_freq / target_freq)) # step = 2
+                # Downsample from 50Hz to 25Hz
+                cmd_pos = cmd_pos[::step]
+                # print(f"🔻 Downsampled joint commands in {pkl_file.name} from ~{avg_freq:.1f} Hz to ~{target_freq:.1f} Hz (step={step})")
 
             cmd_norm = (cmd_pos - action_mean) / action_std
             cmds_per_episode.append(cmd_pos)
@@ -417,7 +430,7 @@ for episode_name in episode_names:
         ax.set_ylabel(f"J{d+1} Pos. [rad]")
         # every subplot should have same abs difference between y-limits
         mid = (max_mins[d][0] + max_mins[d][1]) / 2.0
-        ax.set_ylim(mid - max_y_diff/2 - 0.04*max_y_diff, mid + max_y_diff/2 + 0.04*max_y_diff)
+        ax.set_ylim(mid - max_y_diff/2 - 0.06*max_y_diff, mid + max_y_diff/2 + 0.06*max_y_diff)
         for i in range(pred_dims):
             ax.plot(t + i, pred_action[:, i, d], label="Predicted Joint Pos.", linewidth=0.8, alpha=0.3, color="blue")
             if i == 0:
@@ -433,12 +446,12 @@ for episode_name in episode_names:
 
     # Visualization (normalized) 
     fig, axes = plt.subplots(dof_dims, 1, figsize=(12, 2 * dof_dims), sharex=True)
-    fig.suptitle(f"Normalized FACTR Prediction vs Ground Truth\nModel {model_name}, episode {episode_name}, y-plot-range: {max_y_diff:.1f}", fontsize=16, y=0.96)
+    fig.suptitle(f"Normalized FACTR Prediction vs Ground Truth\nModel {model_name}, episode {episode_name}", fontsize=16, y=0.96)
     for d in range(dof_dims):
         ax = axes[d]
-        ax.plot(t, true_actions_normalized[:, d], label="Ground Truth Joint Pos.", linewidth=2.5, color="red")
+        ax.plot(t, true_actions_normalized[:, d], label="Normalized Ground Truth Joint Pos.", linewidth=2.5, color="red")
         ax.set_ylabel(f"J{d+1} Pos. norm.")
-        # ax.set_ylim(-2.8, 2.8)
+        ax.set_ylim(-3.0, 3.0)
         for i in range(pred_dims):
             ax.plot(t + i, pred_actions_norm[:, i, d], label="Normalized Predicted Joint Pos.", linewidth=0.8, alpha=0.3, color="blue")
             if i == 0:
@@ -452,45 +465,47 @@ for episode_name in episode_names:
     print(f"✅ Saved plot to {save_path}")
 
 
-    # Plot overlay of all dataset trajectories and FACTR predictions (un-normalized)
+    # Plot overlay of all dataset trajectories and FACTR predictions in rad
     fig, axes = plt.subplots(dof_dims, 1, figsize=(12, 2 * dof_dims), sharex=True)
-    fig.suptitle(f"Joint Positions vs FACTR Predictions\nModel {model_name}, episode {episode_name}", fontsize=16, y=0.96)
+    fig.suptitle(f"Joint Positions vs FACTR Predictions\nModel {model_name}, episode {episode_name}, y-plot-range: {max_y_diff:.1f}", fontsize=16, y=0.96)
     for d in range(dof_dims):
         ax = axes[d]
         # Dataset trajectories
-        for ep_idx, ep_data in enumerate(joint_cmds_all_norm):
+        for ep_idx, ep_data in enumerate(joint_cmds_all):
             t_ep = np.arange(ep_data.shape[0])
             ax.plot(t_ep, ep_data[:, d], color="red", alpha=0.3, linewidth=1.0, label="Joint Pos. from Dataset" if (d == 0 and ep_idx == 0) else None)
         # Ground truth
         t_pred = np.arange(pred_action.shape[0])
-        ax.plot(t_pred, true_actions[:, d], label="Ground Truth Joint Pos. normalized", linewidth=1.2, color="black", alpha=0.8)
+        ax.plot(t_pred, true_actions[:, d], label="Ground Truth Joint Pos.", linewidth=2, color="black", alpha=0.8)
+        mid = (max_mins[d][0] + max_mins[d][1]) / 2.0
+        ax.set_ylim(mid - max_y_diff/2 - 0.06*max_y_diff, mid + max_y_diff/2 + 0.06*max_y_diff)
         # Predictions
         for i in range(pred_dims):
-            ax.plot(t_pred + i, pred_action[:, i, d], color="blue", alpha=0.4, linewidth=0.8, label="Normalized FACTR prediction" if (d == 0 and i == 0) else None)
+            ax.plot(t_pred + i, pred_action[:, i, d], color="blue", alpha=0.4, linewidth=0.8, label="FACTR prediction" if (d == 0 and i == 0) else None)
         ax.set_ylabel(f"J{d+1} Pos. [rad]")
         if d == 0:
             ax.legend(loc="upper right", fontsize=10)
         ax.grid(True, alpha=0.3)
     axes[-1].set_xlabel("Timestep")
     plt.tight_layout(rect=[0.03, 0.03, 0.97, 0.96])
-    save_path = f"{output_folder}/tr_norm_pred_vs_all_{episode_name}.png"
+    save_path = f"{output_folder}/tr_rad_pred_vs_all_{episode_name}.png"
     plt.savefig(save_path, dpi=300)
     plt.close(fig)
     print(f"✅ Saved overlay plot: {save_path}")
 
 
-    # Plot overlay of all dataset trajectories and FACTR predictions (normalized)
+    # Plot overlay of all dataset trajectories and FACTR predictions normalized
     fig, axes = plt.subplots(dof_dims, 1, figsize=(12, 2 * dof_dims), sharex=True)
     fig.suptitle(f"Normalized Joint Positions vs FACTR Predictions\nModel {model_name}, episode {episode_name}", fontsize=16, y=0.96)
     for d in range(dof_dims):
         ax = axes[d]
         # Dataset trajectories
-        for ep_idx, ep_data in enumerate(joint_cmds_all):
+        for ep_idx, ep_data in enumerate(joint_cmds_all_norm):
             t_ep = np.arange(ep_data.shape[0])
             ax.plot(t_ep, ep_data[:, d], color="red", alpha=0.3, linewidth=1.0, label="Normalized Joint Pos. from Dataset" if (d == 0 and ep_idx == 0) else None)
         # Ground truth
         t_pred = np.arange(pred_actions_norm.shape[0])
-        ax.plot(t_pred, true_actions[:, d], label="Ground Truth Joint Pos. normalized", linewidth=1.2, color="black", alpha=0.8)
+        ax.plot(t_pred, true_actions_normalized[:, d], label="Normalized Ground Truth Joint Pos.", linewidth=2, color="black", alpha=0.8)
         # Predictions
         for i in range(pred_dims):
             ax.plot(t_pred + i, pred_actions_norm[:, i, d], color="blue", alpha=0.4, linewidth=0.8, label="Normalized FACTR prediction" if (d == 0 and i == 0) else None)
@@ -498,9 +513,10 @@ for episode_name in episode_names:
         if d == 0:
             ax.legend(loc="upper right", fontsize=10)
         ax.grid(True, alpha=0.3)
+        ax.set_ylim(-3.0, 3.0)
     axes[-1].set_xlabel("Timestep")
     plt.tight_layout(rect=[0.03, 0.03, 0.97, 0.96])
-    save_path = f"{output_folder}/tr_rad_pred_vs_all_{episode_name}.png"
+    save_path = f"{output_folder}/tr_norm_pred_vs_all_{episode_name}.png"
     plt.savefig(save_path, dpi=300)
     plt.close(fig)
     print(f"✅ Saved overlay plot: {save_path}")

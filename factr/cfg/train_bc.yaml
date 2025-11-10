@@ -21,8 +21,8 @@ exp_name_suffix:
 batch_size: 64
 num_workers: 8
 lr: 0.00028
-max_iterations: 20000 # 20/50 epochs good mazbe, (batch_size*max_iterations) / dataset_size , datasetsize=(54 episodes × (300 raw steps)=16,200)
-eval_freq: 50
+max_iterations: 5000 # 20/50 epochs good mazbe, (batch_size*max_iterations) / dataset_size , datasetsize=(54 episodes × (300 raw steps)=16,200)
+eval_freq: 200
 save_freq: 5000
 schedule_freq: 1
 devices: 1
@@ -48,7 +48,7 @@ curriculum:
   stop_scale: 0
   max_step: ${max_iterations}
 
-exp_name: ${exp_base_name}_s${seed}_ac${ac_chunk}_b${batch_size}_lr${lr}_${max_iterations}_pix
+exp_name: ${exp_base_name}_s${seed}_ac${ac_chunk}_b${batch_size}_lr${lr}_${max_iterations}
 
 wandb:
   name: ${exp_name}
