@@ -129,7 +129,7 @@ class BCTask(DefaultTask):
                 # attn_heads_mean = cross_w.mean(dim=1)            # (B, Tq, Tk)
 
                 # N_images = 1
-                # image_curve = attn_heads_mean[..., :N_images].mean(-1)  # (B, Tq)
+                # image_curve = attnscripts/test_rollout_output_heads_mean[..., :N_images].mean(-1)  # (B, Tq)
                 # other_curve = attn_heads_mean[..., N_images:].mean(-1)  # (B, Tq)
 
 

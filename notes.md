@@ -88,3 +88,18 @@ To ensure your terminal session continues running even after disconnecting from 
       tmux attach -t <name>
       ```
 
+
+rsync -avz -e ssh otake@192.168.1.172:~/factr_ws/raw_data/box_lift_3 .
+
+## Delete All JSON Files in the Folder
+
+To delete all `.json` files in the current folder, use the following command:
+
+```bash
+rm *.json
+```
+
+- `rm`: Command to remove files.
+- `*.json`: Matches all files with the `.json` extension in the current folder.
+
+**Caution:** This command is irreversible. Double-check the folder contents before running it.

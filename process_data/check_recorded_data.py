@@ -12,7 +12,7 @@ import torch.nn.functional as F
 import math
 import sys
 from scipy.signal import butter, filtfilt, medfilt
-from utils_data_process import lowpass_filter, medianfilter, downsample_data
+from utils_data_process import lowpass_filter, medianfilter, downsample_data, ema_filter
 
 def load_data(data_path):
     """Load data from pkl file."""
@@ -57,6 +57,7 @@ def safe_extract_7d_data(data_list: List[Any], key: str) -> np.ndarray:
     # Convert to NumPy array with float dtype to allow NaNs
     return np.array(processed_data, dtype=np.float32)
 
+
 def plot_joint_data(pkl_data, output_dir, median_filter_torque=True, median_filter_kernel_size_torque=3,
                     median_filter_position=True, median_filter_kernel_size_position=7,
                     filter_torque=True, cutoff_freq_torque=10.0,
@@ -77,7 +78,8 @@ def plot_joint_data(pkl_data, output_dir, median_filter_torque=True, median_filt
         # 'franka_state': '/franka/right/obs_franka_state',
         'external_torques_broadcaster': '/franka_robot_state_broadcaster/external_joint_torques',
         # 'franka_torque_leader': '/franka/right/obs_franka_torque',
-        'impedance_cmd': '/joint_impedance_command_controller/joint_trajectory',
+        # 'impedance_cmd': '/joint_impedance_command_controller/joint_trajectory',
+        'impedance_cmd': '/joint_impedance_dynamic_gain_controller/joint_impedance_command',
         'measured_joints': '/franka_robot_state_broadcaster/measured_joint_states',
     }
     
@@ -109,10 +111,10 @@ def plot_joint_data(pkl_data, output_dir, median_filter_torque=True, median_filt
 
     #     # Get data
     #     broadcaster_states =  safe_extract_7d_data(data_dict['measured_joints']['data'], 'position')
-    #     broadcaster_ts = data_dict['measured_joints']['timestamps']
+    broadcaster_ts = data_dict['measured_joints']['timestamps']
         
     #     commanded_pos = safe_extract_7d_data(data_dict['impedance_cmd']['data'], 'position')
-    #     commanded_ts = data_dict['impedance_cmd']['timestamps']
+    commanded_ts = data_dict['impedance_cmd']['timestamps']
         
     #     for i in range(7):
     #         ax1 = axes[i]
@@ -233,6 +235,8 @@ def plot_joint_data(pkl_data, output_dir, median_filter_torque=True, median_filt
 
         if median_filter_position:
             commanded_pos_medfilt = medianfilter(commanded_pos, kernel_size=median_filter_kernel_size_position)
+            # temp_medfilt = np.stack([ema_filter(joint, alpha=0.2) for joint in commanded_pos_medfilt.T], axis=1)
+            # commanded_pos_medfilt = temp_medfilt
         else:
             commanded_pos_medfilt = commanded_pos
         if filter_position:
@@ -301,7 +305,7 @@ def gaussian_2d_smoothing(
     Args:
         img: Tensor of shape (..., C, H, W).
         scale: Controls the standard deviation (sigma) of the Gaussian kernel. 
-               Larger scale corresponds to more smoothing.
+            Larger scale corresponds to more smoothing.
     Returns:
         blurred: Tensor of the same shape as img.
     """
@@ -400,17 +404,17 @@ if __name__ == '__main__':
 
     ################# Single File Visualization #################
 
-    episode_name = "ep_4"  ## SELECT EPISODE HERE ####
-    pkl_path = Path(f"/home/ferdinand/factr/process_data/data_to_process/20251107/data/{episode_name}.pkl")
+    episode_name = "ep_41"  ## SELECT EPISODE HERE ####
+    pkl_path = Path(f"/home/ferdinand/factr/process_data/data_to_process/20251112/data/{episode_name}.pkl")
 
-    median_filter_torque = True
+    median_filter_torque = False
     median_filter_kernel_size_torque = 3
     median_filter_position = True
-    median_filter_kernel_size_position = 7
-    filter_torque = True
+    median_filter_kernel_size_position = 9
+    filter_torque = False
     cutoff_freq_torque = 10.0
-    filter_position = False
-    cutoff_freq_position = 10.0
+    filter_position = True
+    cutoff_freq_position = 3.0
 
     downsample = True
     data_frequency = 50.0
@@ -441,7 +445,7 @@ if __name__ == '__main__':
                     filter_torque=filter_torque, cutoff_freq_torque=cutoff_freq_torque,
                     filter_position=filter_position, cutoff_freq_position=cutoff_freq_position, downsample=downsample,
                     data_frequency=data_frequency, target_downsampling_freq=target_downsampling_freq)
-    visualize_curriculum_steps(pkl_data, output_dir, topic_name='/realsense/front/im')
+    # visualize_curriculum_steps(pkl_data, output_dir, topic_name='/realsense/front/im')
 
 
     print(f"🎯 Single file visualization complete!")

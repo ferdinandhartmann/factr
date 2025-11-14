@@ -302,10 +302,13 @@ class TransformerAgent(BaseAgent):
     # def get_actions(self, imgs, obs):
     def get_actions(self, imgs, obs, return_weights=False):
         tokens = self.tokenize_obs(imgs, obs)
+        # print(f"Tokens shape: {tokens.shape}") = Action tokens shape: torch.Size([1, 25, 512])
         # action_tokens = self.transformer(tokens, self.ac_query.weight)
         # return self.ac_proj(action_tokens)
         if return_weights:
             action_tokens, cross_w = self.transformer(tokens, self.ac_query.weight, return_weights=True)
+            # print(f"Action tokens shape: {action_tokens.shape}") = Tokens shape: torch.Size([1, 2, 512])
+            # print(f"Cross-attention weights shape: {cross_w.shape}") = Cross-attention weights shape: torch.Size([1, 8, 25, 2])
             return self.ac_proj(action_tokens), cross_w
         else:
             action_tokens = self.transformer(tokens, self.ac_query.weight)

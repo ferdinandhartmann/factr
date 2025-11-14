@@ -11,21 +11,21 @@ _target_: factr.models.action_transformer.TransformerAgent
 odim: ${task.obs_dim}
 n_cams: ${task.n_cams}
 use_obs: add_token
-dropout: 0.1
-img_dropout: 0
+dropout: 0.1 #Inside Transformer layers (self-attn & FFN)
+img_dropout: 0.2 #0 #On the visual embeddings before fusion
 ac_dim: ${task.ac_dim}
 ac_chunk: ${ac_chunk}
 imgs_per_cam: ${img_chunk}
 share_cam_features: False
 early_fusion: True
 feat_norm: layer_norm
-token_dim: 512
+token_dim: 256 #(512)
 curriculum: ${curriculum}
 transformer_kwargs:
   d_model: ${agent.token_dim}
   dropout: ${agent.dropout}
-  nhead: 8
+  nhead: 8 # has token_dim/nhead number of dimesnions per head
   num_encoder_layers: 4
   num_decoder_layers: 6
-  dim_feedforward: 3200
-  activation: relu
+  dim_feedforward: 1536 #3200
+  activation: gelu #relu

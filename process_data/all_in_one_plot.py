@@ -80,7 +80,8 @@ def plot_all_traj_in_one_plot(data_path, output_dir, step=1):
         # 'franka_state': '/franka/right/obs_franka_state',
         'external_torques_broadcaster': '/franka_robot_state_broadcaster/external_joint_torques',
         # 'franka_torque_leader': '/franka/right/obs_franka_torque',
-        'impedance_cmd': '/joint_impedance_command_controller/joint_trajectory',
+        # 'impedance_cmd': '/joint_impedance_command_controller/joint_trajectory',
+        'impedance_cmd': '/joint_impedance_dynamic_gain_controller/joint_impedance_command',
         'measured_joints': '/franka_robot_state_broadcaster/measured_joint_states',
     }
 
@@ -287,6 +288,6 @@ if __name__ == '__main__':
 
     ################### All Data in one plot ###################
 
-    dataset_folder = Path("/home/ferdinand/factr/process_data/data_to_process/20251107/data/")
+    dataset_folder = Path("/home/ferdinand/factr/process_data/data_to_process/20251112/data/")
     output_folder_allplots = dataset_folder.parent / "visualizations" / "all_in_one_plots"
     plot_all_traj_in_one_plot(dataset_folder, output_folder_allplots)

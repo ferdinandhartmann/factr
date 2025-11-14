@@ -256,3 +256,10 @@ def downsample_data(data, avg_freq, target_downsampling_freq):
     # --- unsupported type ---
     else:
         raise TypeError(f"Unsupported data type: {type(data)}")
+
+def ema_filter(x, alpha=0.1):
+    y = np.zeros_like(x)
+    y[0] = x[0]
+    for i in range(1, len(x)):
+        y[i] = alpha * x[i] + (1 - alpha) * y[i-1]
+    return y

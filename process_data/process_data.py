@@ -88,8 +88,8 @@ def main(cfg: DictConfig):
         
         if median_filter_position:
             # Apply median filter to position command data
-            traj_data["/joint_impedance_command_controller/joint_trajectory"] = medianfilter(
-                np.array(traj_data["/joint_impedance_command_controller/joint_trajectory"]),
+            traj_data["/joint_impedance_dynamic_gain_controller/joint_impedance_command"] = medianfilter(
+                np.array(traj_data["/joint_impedance_dynamic_gain_controller/joint_impedance_command"]),
                 kernel_size=median_filter_kernel_size_position,
             ).tolist()
 
@@ -108,7 +108,7 @@ def main(cfg: DictConfig):
                 traj_data,
                 cutoff_freq_position,
                 data_frequency,
-                "/joint_impedance_command_controller/joint_trajectory",
+                "/joint_impedance_dynamic_gain_controller/joint_impedance_command",
                 key_options=("position", "data"),
             )
 

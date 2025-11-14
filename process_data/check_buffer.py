@@ -178,13 +178,12 @@ def plot_buffer(buf_path, output_dir=None, step=1):
     plt.close(fig)
     print(f"✅ Saved {out_state}")
 
-
-    save_camera_images(buffer, output_dir / "camera_images")
+    # save_camera_images(buffer, output_dir / "camera_images")
 
     print("🎯 Done: All buffer plots created.")
 
 if __name__ == "__main__":
 
-    buf_path = "/home/ferdinand/factr/process_data/training_data/20251107_60_25hz/buf.pkl"
+    buf_path = "/home/ferdinand/factr/process_data/training_data/20251112_60_25hz_filt/buf.pkl"
 
     plot_buffer(buf_path)

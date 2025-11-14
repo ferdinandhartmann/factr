@@ -106,7 +106,8 @@ def plot_joint_data(pkl_data, output_dir):
         'franka_state': '/franka/right/obs_franka_state',
         'external_torques': '/franka_robot_state_broadcaster/external_joint_torques',
         'external_torques_leader': '/franka/right/obs_franka_torque',
-        'impedance_cmd': '/joint_impedance_command_controller/joint_trajectory',
+        # 'impedance_cmd': '/joint_impedance_command_controller/joint_trajectory',
+        'impedance_cmd': '/joint_impedance_dynamic_gain_controller/joint_impedance_command',
         'measured_joints': '/franka_robot_state_broadcaster/measured_joint_states',
         'gripper_cmd': '/factr_teleop/right/cmd_gripper_pos',
         'gripper_state': '/gripper/right/obs_gripper_state'
@@ -339,8 +340,8 @@ def visualize_data(data_path, output_dir=None):
 if __name__ == '__main__':
     import sys
 
-    base_data_dir = Path("/home/ferdinand/factr/process_data/data_to_process/20251107/data")
-    base_output_dir = Path("/home/ferdinand/factr/process_data/data_to_process/20251107/visualizations")
+    base_data_dir = Path("/home/ferdinand/factr/process_data/data_to_process/20251112/data")
+    base_output_dir = Path("/home/ferdinand/factr/process_data/data_to_process/20251112/visualizations")
 
     # Allow overriding from CLI
     if len(sys.argv) >= 2:

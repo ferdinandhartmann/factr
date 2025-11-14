@@ -131,7 +131,7 @@ def train_bc(cfg: DictConfig):
                 trainer.set_train()
 
             if misc.GLOBAL_STEP >= cfg.max_iterations:
-                trainer.save_checkpoint(misc.GLOBAL_STEP)
+                trainer.save_checkpoint(misc.GLOBAL_STEP, onlysave_latest=True)
                 return
             elif misc.GLOBAL_STEP % cfg.save_freq == 0:
                 trainer.save_checkpoint(misc.GLOBAL_STEP)

@@ -19,7 +19,7 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", message=".*torch.load.*weights_only.*")
 
 # ---------- CONFIG ---------- # Select model, checkpoint, and episode here
-model_name = "20251107_60_25hz_s40_ac25_b64_lr0.00025_20000"
+model_name = "20251112_60_25hz_filt2_s50_ac25_b64_lr0.00025_iter10000__newtest"
 checkpoint = "latest"
 episode_names = ["ep_40", "ep_41", "ep_61", "ep_62", "ep_63", "ep_64"] # List of episode names to test
 
@@ -41,7 +41,10 @@ ROLLOUT_CFG_PATH = Path(f"scripts/checkpoints/{model_name}/rollout/rollout_confi
 # if not RAW_DATA_PATH.exists():
 #     raise FileNotFoundError(f"Required PKL file not found: {RAW_DATA_PATH}.")
 
-dataset_folder = Path("/home/ferdinand/factr/process_data/raw_data_train/20251107_60/")
+RAW_DATA_PATH_TRAIN = Path(f"/home/ferdinand/factr/process_data/raw_data_train/20251112_60/")
+RAW_DATA_PATH_EVAL = Path(f"/home/ferdinand/factr/process_data/raw_data_eval/20251112_7/")
+
+dataset_folder = Path("/home/ferdinand/factr/process_data/raw_data_train/20251112_60/")
 
 if downsample:
     output_folder = Path(f"/home/ferdinand/factr/scripts/test_rollout_output/{model_name}_{checkpoint}_25hz")
@@ -67,7 +70,8 @@ def load_and_extract_raw_data(pkl_path: Path):
     # Define topic names used in the raw data
     image_topic = "/realsense/front/im"
     obs_topic = "/franka_robot_state_broadcaster/external_joint_torques"
-    action_topic = "/joint_impedance_command_controller/joint_trajectory"
+    # action_topic = "/joint_impedance_command_controller/joint_trajectory"
+    action_topic = "/joint_impedance_dynamic_gain_controller/joint_impedance_command"
 
     if "data" not in raw_data:
         raise ValueError("Unknown data structure: 'data' key not found in raw PKL file.")
@@ -186,7 +190,7 @@ def get_all_joint_cmds_np(data_path, action_mean, action_std):
         cmds_per_episode_norm: list of np.ndarray, each (T_i, 7)
     """
     data_path = Path(data_path)
-    topic = "/joint_impedance_command_controller/joint_trajectory"
+    topic = "/joint_impedance_dynamic_gain_controller/joint_impedance_command"
     pkl_files = sorted(data_path.glob("*.pkl"))
 
     if not pkl_files:
@@ -271,7 +275,7 @@ new_state_dict = {k.replace("module.", ""): v for k, v in state_dict.items()}
 missing, unexpected = policy.load_state_dict(new_state_dict, strict=False)
 print(f"✅ Loaded policy from {CKPT_PATH}, step {ckpt['global_step']}")
 if len(missing) > 0 or len(unexpected) > 0:
-    print(f"⚠️ Missing keys: {len(missing)}, Unexpected keys: {len(unexpected)}")
+    print(f"⚠️ Missing keys: {len(missing)}, Unexpected keys: {len( )}")
 
 policy.eval()
 policy.to(DEVICE)
@@ -306,9 +310,9 @@ print(f"✅ Loaded and normalized all joint commands from dataset folder.")
 
 # --- Load arrays from PKL file ---
 for episode_name in episode_names:
-    RAW_DATA_PATH = Path(f"/home/ferdinand/factr/process_data/raw_data_train/20251107_60/{episode_name}.pkl")
+    RAW_DATA_PATH = RAW_DATA_PATH_TRAIN / f"{episode_name}.pkl"
     if not RAW_DATA_PATH.exists():
-        RAW_DATA_PATH = Path(f"/home/ferdinand/factr/process_data/raw_data_eval/20251107_8/{episode_name}.pkl")
+        RAW_DATA_PATH = RAW_DATA_PATH_EVAL / f"{episode_name}.pkl"
     if not RAW_DATA_PATH.exists():
         print(f"Required PKL file not found: {RAW_DATA_PATH}, skipping this episode.")
         break 
@@ -426,7 +430,7 @@ for episode_name in episode_names:
     fig.suptitle(f"FACTR Prediction vs Ground Truth\nModel {model_name}, episode {episode_name}, y-plot-range: {max_y_diff:.1f}", fontsize=16, y=0.96)
     for d in range(dof_dims):
         ax = axes[d]
-        ax.plot(t, true_actions[:, d], label="Ground Truth Joint Pos.", linewidth=2.5, color="red")
+        ax.plot(t, true_actions[:, d], label="Ground Truth Joint Pos.", linewidth=2.0, color="red")
         ax.set_ylabel(f"J{d+1} Pos. [rad]")
         # every subplot should have same abs difference between y-limits
         mid = (max_mins[d][0] + max_mins[d][1]) / 2.0
@@ -449,7 +453,7 @@ for episode_name in episode_names:
     fig.suptitle(f"Normalized FACTR Prediction vs Ground Truth\nModel {model_name}, episode {episode_name}", fontsize=16, y=0.96)
     for d in range(dof_dims):
         ax = axes[d]
-        ax.plot(t, true_actions_normalized[:, d], label="Normalized Ground Truth Joint Pos.", linewidth=2.5, color="red")
+        ax.plot(t, true_actions_normalized[:, d], label="Normalized Ground Truth Joint Pos.", linewidth=2.0, color="red")
         ax.set_ylabel(f"J{d+1} Pos. norm.")
         ax.set_ylim(-3.0, 3.0)
         for i in range(pred_dims):
