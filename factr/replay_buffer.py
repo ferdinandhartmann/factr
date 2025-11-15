@@ -110,6 +110,12 @@ class ReplayBuffer(Dataset):
         assert (
             loss_mask.shape[0] == a_t.shape[0]
         ), "a_t and mask shape must be ac_chunk!"
+
+        # ONLY USE THESE JOINTS ####################
+        use_indices = [0,1,3,4,5,6] #(0-based) 
+        a_t = a_t[:, use_indices]
+        o_t = o_t[use_indices]
+        ###########################################
         return (i_t, o_t), a_t, loss_mask
 
 
@@ -192,6 +198,12 @@ class RobobufReplayBuffer(ReplayBuffer):
                     loss_mask.append(0.0)
 
             a_t = np.concatenate(chunked_actions, 0).astype(np.float32)
+
+            # ONLY USE THESE JOINTS FOR ACTIONS ####################
+            if a_t.shape[-1] != ac_dim and a_t.shape[-1] == 7:
+                use_indices = [0, 1, 3, 4, 5, 6]  # ← Indices of the 3D joints to use (0-based)
+                a_t = a_t[..., use_indices]
+            ###########################################
             assert ac_dim == a_t.shape[-1]
 
             loss_mask = np.array(loss_mask, dtype=np.float32)
@@ -209,6 +221,10 @@ class RobobufReplayBuffer(ReplayBuffer):
 
             i_t[f"cam{idx}"] = i_c
 
+        # ONLY USE THESE JOINTS FOR OBSERVATIONS ####################
+        use_indices_obs = [0, 1, 3, 4, 5, 6] 
+        o_t = o_t[use_indices_obs]
+        #########################################################
         o_t, a_t = _to_tensor(o_t), _to_tensor(a_t)
         loss_mask = _to_tensor(loss_mask)[:, None].repeat((1, a_t.shape[-1]))
         assert (

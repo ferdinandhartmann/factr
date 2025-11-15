@@ -133,7 +133,6 @@ class BCTask(DefaultTask):
                 # other_curve = attn_heads_mean[..., N_images:].mean(-1)  # (B, Tq)
 
 
-
                 # calculate l2 loss between pred_action and action
                 l2_loss = torch.square(mask * (pred_actions - actions))
                 l2_loss = l2_loss.sum((1, 2)) / mask.sum((1, 2))
@@ -157,6 +156,9 @@ class BCTask(DefaultTask):
         mean_val_loss = np.mean(losses)
         ac_l2, ac_lsig = np.mean(action_l2), np.mean(action_lsig)
         l2_per_joint_mean = np.mean(np.stack(l2_per_joint_all, axis=0), axis=0)
+        # Only when removing some joints ##############################################################
+        l2_per_joint_mean = np.insert(l2_per_joint_mean, 2, 0)  # Add a zero column in the 3rd position
+        
         print(f"Step: {global_step}\tVal Loss: {mean_val_loss:.4f}\tAC L2={ac_l2:.3f}\tAC LSig={ac_lsig:.3f}")
 
         # image_tokens = weights[:, :, :1].mean()
@@ -175,9 +177,6 @@ class BCTask(DefaultTask):
                 "eval/action_l2": ac_l2,
                 "eval/action_lsig": ac_lsig,
             }
-
-            if hasattr(trainer, "last_train_loss"):
-                log_dict["eval/train_vs_eval_ratio"] = mean_val_loss / (trainer.last_train_loss + 1e-8)
 
             wandb.log(log_dict, step=global_step)
 

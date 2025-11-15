@@ -19,44 +19,46 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", message=".*torch.load.*weights_only.*")
 
 # ---------- CONFIG ---------- # Select model, checkpoint, and episode here
-model_name = "20251112_60_25hz_filt2_s50_ac25_b64_lr0.00025_iter10000__newtest"
+model_name = "20251112_60_25hz_filt2_6dof_s42_ac25_b64_lr0.00018_iter40000_2"
 checkpoint = "latest"
-episode_names = ["ep_40", "ep_41", "ep_61", "ep_62", "ep_63", "ep_64"] # List of episode names to test
+episode_names = ["ep_40", "ep_41", "ep_61", "ep_62", "ep_63", "ep_64", "ep_65", "ep_66"] # List of episode names to test
 
-downsample = True #from 50Hz to 25Hz
-vs_all_plot = True
+downsample = True # from 50Hz to 25Hz
+vs_all_plot = False # whether to load all joint commands from dataset for visualization
+use_buffer = True  # load from buffer.pkl instead of raw PKL files
+remove_joints = [2] # zero-indexed joints to remove
 
 # ---------- PATHS & DEVICE ----------
+FACTR_REPO = Path(__file__).resolve().parents[1]
+print(f"Detected FACTR repo folder: {FACTR_REPO}")
 CKPT_PATH = None
 if checkpoint == "latest":
-    CKPT_PATH = Path(f"scripts/checkpoints/{model_name}/rollout/latest_ckpt.ckpt")
+    CKPT_PATH = Path(f"{FACTR_REPO}/scripts/checkpoints/{model_name}/rollout/latest_ckpt.ckpt")
 else:
-    CKPT_PATH = Path(f"scripts/checkpoints/{model_name}/{checkpoint}.ckpt")
-EXP_CFG_PATH = Path(f"scripts/checkpoints/{model_name}/rollout/exp_config.yaml")
-ROLLOUT_CFG_PATH = Path(f"scripts/checkpoints/{model_name}/rollout/rollout_config.yaml")
+    CKPT_PATH = Path(f"{FACTR_REPO}/scripts/checkpoints/{model_name}/{checkpoint}.ckpt")
+EXP_CFG_PATH = Path(f"{FACTR_REPO}/scripts/checkpoints/{model_name}/rollout/exp_config.yaml")
+ROLLOUT_CFG_PATH = Path(f"{FACTR_REPO}/scripts/checkpoints/{model_name}/rollout/rollout_config.yaml")
 
-# RAW_DATA_PATH = Path(f"/home/ferdinand/factr/process_data/raw_data_train/20251024_60/{episode_name}.pkl")
-# if not RAW_DATA_PATH.exists():
-#     RAW_DATA_PATH = Path(f"/home/ferdinand/factr/process_data/raw_data_eval/20251024_4/{episode_name}.pkl")
-# if not RAW_DATA_PATH.exists():
-#     raise FileNotFoundError(f"Required PKL file not found: {RAW_DATA_PATH}.")
+RAW_DATA_PATH_TRAIN = Path(f"{FACTR_REPO}/process_data/raw_data_train/20251112_60/")
+RAW_DATA_PATH_EVAL = Path(f"{FACTR_REPO}/process_data/raw_data_eval/20251112_7/")
 
-RAW_DATA_PATH_TRAIN = Path(f"/home/ferdinand/factr/process_data/raw_data_train/20251112_60/")
-RAW_DATA_PATH_EVAL = Path(f"/home/ferdinand/factr/process_data/raw_data_eval/20251112_7/")
+image_topic = "/realsense/front/im"
+obs_topic = "/franka_robot_state_broadcaster/external_joint_torques"
+# action_topic = "/joint_impedance_command_controller/joint_trajectory"
+action_topic = "/joint_impedance_dynamic_gain_controller/joint_impedance_command"
 
-dataset_folder = Path("/home/ferdinand/factr/process_data/raw_data_train/20251112_60/")
+BUF_PATH = Path(f"{FACTR_REPO}/process_data/training_data/20251112_60_25hz_filt2/buf.pkl")
 
-if downsample:
-    output_folder = Path(f"/home/ferdinand/factr/scripts/test_rollout_output/{model_name}_{checkpoint}_25hz")
-else:
-    output_folder = Path(f"/home/ferdinand/factr/scripts/test_rollout_output/{model_name}_{checkpoint}_50hz")
+dataset_folder = Path(f"{FACTR_REPO}/process_data/raw_data_train/20251112_60/")
+
+output_folder = Path(f"{FACTR_REPO}/scripts/test_rollout_output/{model_name}_{checkpoint}")
 output_folder.mkdir(parents=True, exist_ok=True)
 
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 
-def load_and_extract_raw_data(pkl_path: Path):
+def load_and_extract_raw_data(pkl_path: Path, image_topic="/realsense/front/im", obs_topic="/franka_robot_state_broadcaster/external_joint_torques", action_topic="/joint_impedance_dynamic_gain_controller/joint_impedance_command"):
     """
     Load the raw pickle file and extract/process image, state (torque), 
     and action data, ensuring images are proper NumPy arrays.
@@ -66,12 +68,6 @@ def load_and_extract_raw_data(pkl_path: Path):
     print(f"✅ Loaded raw data from {pkl_path}")
     
     image_obs, torque_obs, actions = [], [], []
-
-    # Define topic names used in the raw data
-    image_topic = "/realsense/front/im"
-    obs_topic = "/franka_robot_state_broadcaster/external_joint_torques"
-    # action_topic = "/joint_impedance_command_controller/joint_trajectory"
-    action_topic = "/joint_impedance_dynamic_gain_controller/joint_impedance_command"
 
     if "data" not in raw_data:
         raise ValueError("Unknown data structure: 'data' key not found in raw PKL file.")
@@ -149,14 +145,28 @@ def load_and_extract_raw_data(pkl_path: Path):
     return final_image_obs, torque_obs, actions
 
 def preprocess_image(img):
-    # Handle grayscale or depth
+
+    # --- FIX: ensure uint8 RGB ---
+    if img.dtype == bool:
+        img = img.astype(np.uint8) * 255
+    elif img.dtype != np.uint8:
+        # assume float image in [0,1]
+        img = (img * 255).clip(0, 255).astype(np.uint8)
+
+    # Handle grayscale
     if img.ndim == 2:
         img = np.repeat(img[..., None], 3, axis=-1)
-    img = cv2.resize(img, (224, 224))
+
+    if img.shape[:2] != (224, 224):
+        img = cv2.resize(img, (224, 224))
+
     img_tensor = torch.from_numpy(img).float().permute(2, 0, 1)[None] / 255.
-    mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1) 
+
+    # normalization
+    mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
     std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
-    img_tensor = (img_tensor - mean) / std # with standard normalization
+    img_tensor = (img_tensor - mean) / std
+
     return img_tensor.to(DEVICE)
 
 def load_pkl(path: Path):
@@ -181,6 +191,7 @@ def extract_7d(data_list: List[Any], key: str) -> np.ndarray:
         else:
             arr.append([np.nan] * 7)
     return np.array(arr, dtype=np.float32)
+
 def get_all_joint_cmds_np(data_path, action_mean, action_std):
     """
     Load each episode's joint commands separately (not concatenated)
@@ -233,6 +244,45 @@ def get_all_joint_cmds_np(data_path, action_mean, action_std):
     return cmds_per_episode, cmds_per_episode_norm
 
 
+def load_episode_from_buffer(buf_path, episode_idx, cam_key="enc_cam_0"):
+
+    with open(buf_path, "rb") as f:
+        traj_list = pickle.load(f)
+
+    traj = traj_list[episode_idx-1]  # zero-indexed
+
+    images = []
+    states = []
+    actions = []
+
+    for (obs, act, done) in traj:
+
+        # ----- 1. Load image -----
+        if cam_key not in obs:
+            raise KeyError(f"{cam_key} not found in obs dict keys={obs.keys()}")
+
+        enc = obs[cam_key]   # encoded JPEG bytes (np.uint8 array)
+        img = cv2.imdecode(enc, cv2.IMREAD_COLOR)  # decode JPEG
+        if img is None:
+            raise ValueError("Failed to decode JPEG from buffer!")
+
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)  # convert to RGB
+
+        images.append(img)
+
+        # ----- 2. Low-dim state -----
+        if "state" not in obs:
+            raise KeyError("obs['state'] missing from buffer step")
+        states.append(np.array(obs["state"], dtype=float))
+
+        # ----- 3. Action -----
+        actions.append(np.array(act, dtype=float))
+
+    images = np.stack(images)
+    states = np.stack(states)
+    actions = np.stack(actions)
+
+    return images, states, actions
 
 # ----------------------------
 
@@ -304,28 +354,52 @@ except Exception as e:
     obs_mean, obs_std = 0., 1.
     action_mean, action_std = 0., 1.
 
-print("Loading all joint commands from dataset for visualization...")
-joint_cmds_all, joint_cmds_all_norm = get_all_joint_cmds_np(dataset_folder, action_mean, action_std)
-print(f"✅ Loaded and normalized all joint commands from dataset folder.")
+if vs_all_plot:
+    print("Loading all joint commands from dataset for visualization...")
+    joint_cmds_all, joint_cmds_all_norm = get_all_joint_cmds_np(dataset_folder, action_mean, action_std)
+    print(f"✅ Loaded and normalized all joint commands from dataset folder.")
+
+
+image_obs = []
+torque_obs = []
+true_actions = []
+use_indicies = [i for i in range(7) if i not in remove_joints]
+print(f"Using joint indices: {use_indicies} (removed joints: {remove_joints})")
 
 # --- Load arrays from PKL file ---
 for episode_name in episode_names:
-    RAW_DATA_PATH = RAW_DATA_PATH_TRAIN / f"{episode_name}.pkl"
-    if not RAW_DATA_PATH.exists():
-        RAW_DATA_PATH = RAW_DATA_PATH_EVAL / f"{episode_name}.pkl"
-    if not RAW_DATA_PATH.exists():
-        print(f"Required PKL file not found: {RAW_DATA_PATH}, skipping this episode.")
-        break 
+    use_eval = False
+    if use_buffer:
+        episode_idx = int(episode_name.split("_")[1])  # ep_40 → 40
+        try:
+            image_obs, torque_obs, true_actions = load_episode_from_buffer(BUF_PATH, episode_idx)
+            print(f"Size from buffer - Images: {image_obs.shape}, Torque: {torque_obs.shape}, Actions: {true_actions.shape}")
+        except Exception as e:
+            print(f"⚠️ Warning: Could not load episode {episode_name} from buffer. Error: {e}, loading from raw PKL instead.")
+            RAW_DATA_PATH = RAW_DATA_PATH_EVAL / f"{episode_name}.pkl"
+            image_obs, torque_obs, true_actions = load_and_extract_raw_data(RAW_DATA_PATH, image_topic=image_topic, obs_topic=obs_topic, action_topic=action_topic)
+            use_eval = True
 
-    image_obs, torque_obs, true_actions = load_and_extract_raw_data(RAW_DATA_PATH)
+    else:
+        RAW_DATA_PATH = RAW_DATA_PATH_TRAIN / f"{episode_name}.pkl"
+        if not RAW_DATA_PATH.exists():
+            RAW_DATA_PATH = RAW_DATA_PATH_EVAL / f"{episode_name}.pkl"
+        if not RAW_DATA_PATH.exists():
+            print(f"Required PKL file not found: {RAW_DATA_PATH}, skipping this episode.")
+            break 
+        image_obs, torque_obs, true_actions = load_and_extract_raw_data(RAW_DATA_PATH, image_topic=image_topic, obs_topic=obs_topic, action_topic=action_topic)
 
     # -----------------------------
     # INFERENCE
     # -----------------------------
     pred_actions = []
     pred_actions_norm = []
+    true_action_list = []
     normalized_true_action_list = []
     attn_image, attn_force = [], []
+
+    action_mean_red = action_mean[use_indicies]
+    action_std_red = action_std[use_indicies]
 
     N = min(len(true_actions), len(torque_obs), len(image_obs))
     print(f"🚀 Running inference on {N} samples...")
@@ -340,18 +414,26 @@ for episode_name in episode_names:
         torque_tensor = torch.from_numpy(torque).float().to(DEVICE)
         torque_tensor = (torque_tensor - obs_mean) / obs_std  # normalization
         torque_tensor = torque_tensor.unsqueeze(0)
+        torque_tensor = torque_tensor[:, use_indicies] 
 
-        # Normalize Ground Truth Action
-        true_action_tensor = torch.from_numpy(true_actions[i]).float().to(DEVICE)
-        normalized_true_action = (true_action_tensor - action_mean) / action_std  # normalization
-        normalized_true_action = normalized_true_action.unsqueeze(0)
-        normalized_true_action_list.append(normalized_true_action.cpu().numpy()[0])
+        # Normalize Ground Truth Action or denormalize from buffer
+        true_action = true_actions[i]
+        true_action_tensor = torch.from_numpy(np.array(true_action)).float().to(DEVICE)
+        normalized_true_action = []
+        if not use_buffer or use_eval:
+            normalized_true_action = (true_action_tensor - action_mean) / action_std # normalization
+        else:
+            true_action = true_action_tensor * action_std + action_mean  # denormalize from buffer
+            true_action = true_action.unsqueeze(0).cpu().numpy()[0]
+            normalized_true_action = true_action_tensor
+        true_action_list.append(true_action)
+        normalized_true_action_list.append(normalized_true_action.unsqueeze(0).cpu().numpy()[0])
 
         with torch.no_grad():
             pred_action, cross_w = policy.get_actions({"cam0": img_tensor}, torque_tensor, return_weights=True)
             # test_rollout.py → agent.get_actions() → policy.get_actions() → model.get_actions()
             pred_action_norm = pred_action.cpu().numpy()[0]
-            pred_action = pred_action * action_std + action_mean # Inverse normalization 
+            pred_action = pred_action * action_std_red + action_mean_red # Inverse normalization 
             pred_action = pred_action.cpu().numpy()[0]
 
             if cross_w is not None:
@@ -374,7 +456,12 @@ for episode_name in episode_names:
     pred_actions = np.array(pred_actions)
     pred_actions_norm = np.array(pred_actions_norm)
     true_actions_normalized = np.array(normalized_true_action_list)
-    true_actions = true_actions[:N]
+    true_actions = np.array(true_action_list)
+
+    if len(remove_joints) > 0:
+        for remove_joint in sorted(remove_joints):
+            pred_actions = np.insert(pred_actions, remove_joint, 0, axis=2)
+            pred_actions_norm = np.insert(pred_actions_norm, remove_joint, 0, axis=2)
 
     print("✅ Finished inference")
     print(f"Pred shape: {pred_actions.shape}, True shape: {true_actions.shape}")
@@ -405,7 +492,7 @@ for episode_name in episode_names:
 
     # Calculate L2 Loss
     # Ensure pred_action and true_actions have compatible shapes
-    l2_loss = np.mean(np.linalg.norm(pred_actions_norm[:, 0, :] - true_actions, axis=1))
+    l2_loss = np.mean(np.linalg.norm(pred_actions_norm[:, 0, use_indicies] - true_actions[:, use_indicies], axis=1))
     print(f"\nAverage L2 Loss for all joints: {l2_loss:.6f}\n")
 
 
@@ -468,60 +555,60 @@ for episode_name in episode_names:
     plt.close(fig)
     print(f"✅ Saved plot to {save_path}")
 
+    if vs_all_plot:
+        # Plot overlay of all dataset trajectories and FACTR predictions in rad
+        fig, axes = plt.subplots(dof_dims, 1, figsize=(12, 2 * dof_dims), sharex=True)
+        fig.suptitle(f"Joint Positions vs FACTR Predictions\nModel {model_name}, episode {episode_name}, y-plot-range: {max_y_diff:.1f}", fontsize=16, y=0.96)
+        for d in range(dof_dims):
+            ax = axes[d]
+            # Dataset trajectories
+            for ep_idx, ep_data in enumerate(joint_cmds_all):
+                t_ep = np.arange(ep_data.shape[0])
+                ax.plot(t_ep, ep_data[:, d], color="red", alpha=0.3, linewidth=1.0, label="Joint Pos. from Dataset" if (d == 0 and ep_idx == 0) else None)
+            # Ground truth
+            t_pred = np.arange(pred_action.shape[0])
+            ax.plot(t_pred, true_actions[:, d], label="Ground Truth Joint Pos.", linewidth=2, color="black", alpha=0.8)
+            mid = (max_mins[d][0] + max_mins[d][1]) / 2.0
+            ax.set_ylim(mid - max_y_diff/2 - 0.06*max_y_diff, mid + max_y_diff/2 + 0.06*max_y_diff)
+            # Predictions
+            for i in range(pred_dims):
+                ax.plot(t_pred + i, pred_action[:, i, d], color="blue", alpha=0.4, linewidth=0.8, label="FACTR prediction" if (d == 0 and i == 0) else None)
+            ax.set_ylabel(f"J{d+1} Pos. [rad]")
+            if d == 0:
+                ax.legend(loc="upper right", fontsize=10)
+            ax.grid(True, alpha=0.3)
+        axes[-1].set_xlabel("Timestep")
+        plt.tight_layout(rect=[0.03, 0.03, 0.97, 0.96])
+        save_path = f"{output_folder}/tr_rad_pred_vs_all_{episode_name}.png"
+        plt.savefig(save_path, dpi=300)
+        plt.close(fig)
+        print(f"✅ Saved overlay plot: {save_path}")
 
-    # Plot overlay of all dataset trajectories and FACTR predictions in rad
-    fig, axes = plt.subplots(dof_dims, 1, figsize=(12, 2 * dof_dims), sharex=True)
-    fig.suptitle(f"Joint Positions vs FACTR Predictions\nModel {model_name}, episode {episode_name}, y-plot-range: {max_y_diff:.1f}", fontsize=16, y=0.96)
-    for d in range(dof_dims):
-        ax = axes[d]
-        # Dataset trajectories
-        for ep_idx, ep_data in enumerate(joint_cmds_all):
-            t_ep = np.arange(ep_data.shape[0])
-            ax.plot(t_ep, ep_data[:, d], color="red", alpha=0.3, linewidth=1.0, label="Joint Pos. from Dataset" if (d == 0 and ep_idx == 0) else None)
-        # Ground truth
-        t_pred = np.arange(pred_action.shape[0])
-        ax.plot(t_pred, true_actions[:, d], label="Ground Truth Joint Pos.", linewidth=2, color="black", alpha=0.8)
-        mid = (max_mins[d][0] + max_mins[d][1]) / 2.0
-        ax.set_ylim(mid - max_y_diff/2 - 0.06*max_y_diff, mid + max_y_diff/2 + 0.06*max_y_diff)
-        # Predictions
-        for i in range(pred_dims):
-            ax.plot(t_pred + i, pred_action[:, i, d], color="blue", alpha=0.4, linewidth=0.8, label="FACTR prediction" if (d == 0 and i == 0) else None)
-        ax.set_ylabel(f"J{d+1} Pos. [rad]")
-        if d == 0:
-            ax.legend(loc="upper right", fontsize=10)
-        ax.grid(True, alpha=0.3)
-    axes[-1].set_xlabel("Timestep")
-    plt.tight_layout(rect=[0.03, 0.03, 0.97, 0.96])
-    save_path = f"{output_folder}/tr_rad_pred_vs_all_{episode_name}.png"
-    plt.savefig(save_path, dpi=300)
-    plt.close(fig)
-    print(f"✅ Saved overlay plot: {save_path}")
 
-
-    # Plot overlay of all dataset trajectories and FACTR predictions normalized
-    fig, axes = plt.subplots(dof_dims, 1, figsize=(12, 2 * dof_dims), sharex=True)
-    fig.suptitle(f"Normalized Joint Positions vs FACTR Predictions\nModel {model_name}, episode {episode_name}", fontsize=16, y=0.96)
-    for d in range(dof_dims):
-        ax = axes[d]
-        # Dataset trajectories
-        for ep_idx, ep_data in enumerate(joint_cmds_all_norm):
-            t_ep = np.arange(ep_data.shape[0])
-            ax.plot(t_ep, ep_data[:, d], color="red", alpha=0.3, linewidth=1.0, label="Normalized Joint Pos. from Dataset" if (d == 0 and ep_idx == 0) else None)
-        # Ground truth
-        t_pred = np.arange(pred_actions_norm.shape[0])
-        ax.plot(t_pred, true_actions_normalized[:, d], label="Normalized Ground Truth Joint Pos.", linewidth=2, color="black", alpha=0.8)
-        # Predictions
-        for i in range(pred_dims):
-            ax.plot(t_pred + i, pred_actions_norm[:, i, d], color="blue", alpha=0.4, linewidth=0.8, label="Normalized FACTR prediction" if (d == 0 and i == 0) else None)
-        ax.set_ylabel(f"J{d+1} pos. norm.")
-        if d == 0:
-            ax.legend(loc="upper right", fontsize=10)
-        ax.grid(True, alpha=0.3)
-        ax.set_ylim(-3.0, 3.0)
-    axes[-1].set_xlabel("Timestep")
-    plt.tight_layout(rect=[0.03, 0.03, 0.97, 0.96])
-    save_path = f"{output_folder}/tr_norm_pred_vs_all_{episode_name}.png"
-    plt.savefig(save_path, dpi=300)
-    plt.close(fig)
-    print(f"✅ Saved overlay plot: {save_path}")
+        # Plot overlay of all dataset trajectories and FACTR predictions normalized
+        fig, axes = plt.subplots(dof_dims, 1, figsize=(12, 2 * dof_dims), sharex=True)
+        fig.suptitle(f"Normalized Joint Positions vs FACTR Predictions\nModel {model_name}, episode {episode_name}", fontsize=16, y=0.96)
+        for d in range(dof_dims):
+            ax = axes[d]
+            # Dataset trajectories
+            for ep_idx, ep_data in enumerate(joint_cmds_all_norm):
+                t_ep = np.arange(ep_data.shape[0])
+                ax.plot(t_ep, ep_data[:, d], color="red", alpha=0.3, linewidth=1.0, label="Normalized Joint Pos. from Dataset" if (d == 0 and ep_idx == 0) else None)
+            # Ground truth
+            t_pred = np.arange(pred_actions_norm.shape[0])
+            ax.plot(t_pred, true_actions_normalized[:, d], label="Normalized Ground Truth Joint Pos.", linewidth=2, color="black", alpha=0.8)
+            # Predictions
+            for i in range(pred_dims):
+                ax.plot(t_pred + i, pred_actions_norm[:, i, d], color="blue", alpha=0.4, linewidth=0.8, label="Normalized FACTR prediction" if (d == 0 and i == 0) else None)
+            ax.set_ylabel(f"J{d+1} pos. norm.")
+            if d == 0:
+                ax.legend(loc="upper right", fontsize=10)
+            ax.grid(True, alpha=0.3)
+            ax.set_ylim(-3.0, 3.0)
+        axes[-1].set_xlabel("Timestep")
+        plt.tight_layout(rect=[0.03, 0.03, 0.97, 0.96])
+        save_path = f"{output_folder}/tr_norm_pred_vs_all_{episode_name}.png"
+        plt.savefig(save_path, dpi=300)
+        plt.close(fig)
+        print(f"✅ Saved overlay plot: {save_path}")
 
