@@ -500,20 +500,53 @@ for episode_name in episode_names:
     print(f"\nAverage L2 Loss for all joints: {l2_loss:.6f}\n")
 
 
-    # Plot attention weights over time
-    plt.figure(figsize=(10,5))
-    plt.plot(attn_force, label="Torque attention", linewidth=1.8)
-    plt.plot(attn_image, label="Image attention", linewidth=1.8)
-    plt.xlabel("Timestep")
-    plt.ylabel("Mean attention weight")
-    plt.title(f"Attention to Force and Image of {episode_name}")
-    plt.legend()
-    plt.ylim(0, 1)
-    plt.grid(True, alpha=0.4)
+    # Combined: Attention plot + 6 evenly spaced images
+    # num_imgs = 6
+    N_img = len(image_obs)
+    # frame_indices = np.linspace(0, N_img - 1, num_imgs, dtype=int)
+    desired_indices  = np.array([0, 50, 100, 150, 200, 250])
+    frame_indices = np.clip(desired_indices, 0, N_img - 1)
+
+    fig = plt.figure(figsize=(14, 7))
+
+    # ----- 1. Attention plot (top, larger space) -----
+    ax1 = plt.subplot2grid((3, 1), (0, 0), rowspan=2)  # Allocate 2/3 of the height
+    ax1.plot(attn_force, label="Torque attention", linewidth=1.8)
+    ax1.plot(attn_image, label="Image attention", linewidth=1.8)
+    ax1.set_xlabel("Timestep")
+    ax1.set_ylabel("Mean attention weight")
+    ax1.set_title(f"Attention to Force and Image — {episode_name}")
+    ax1.legend()
+    ax1.set_ylim(0, 1)
+    ax1.grid(True, alpha=0.4)
+
+    # ----- 2. Image strip (bottom, 1/3 space) -----
+    gs = plt.GridSpec(3, len(frame_indices))  # 3 rows x num_imgs columns
+    start_row = 2  # start at row 2 to stay below attention plot
+
+    for k, idx in enumerate(frame_indices):
+        ax = fig.add_subplot(gs[start_row:, k])  # row 2
+        img = image_obs[idx]
+
+        # Ensure uint8 for plotting and convert to RGB
+        img_display = img
+        if img_display.dtype != np.uint8:
+            img_display = img_display.astype(np.uint8)
+        elif img_display.shape[2] == 3:  # BGR to RGB
+            img_display = cv2.cvtColor(img_display, cv2.COLOR_BGR2RGB)
+
+        ax.imshow(img_display)
+        ax.axis("off")
+        ax.set_title(f"t = {idx}", fontsize=9, pad=4)
+
+    # plt.subplots_adjust(hspace=0.5)  # Adjust spacing between plots
     plt.tight_layout()
-    attn_path = f"{output_folder}/tr_att_{episode_name}.png"
-    plt.savefig(attn_path, dpi=200)
-    print(f"✅ Saved attention plot to {attn_path}")
+
+    # Save combined figure
+    combined_path = f"{output_folder}/tr_att_{episode_name}.png"
+    plt.savefig(combined_path, dpi=200)
+    plt.close(fig)
+    print(f"✅ Saved attention + images combined plot: {combined_path}")
 
 
     # Visualization (unchanged content) 
