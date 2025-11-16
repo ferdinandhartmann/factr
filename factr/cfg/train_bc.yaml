@@ -27,7 +27,7 @@ schedule_freq: 1
 devices: 1
 seed: 42
 
-suffix: _test2
+suffix: _test4
 
 # dataset_size = number_of_episodes * number_of_timesteps 
 #              = 54 * 300 = 16200

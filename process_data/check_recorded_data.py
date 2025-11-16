@@ -231,7 +231,7 @@ def plot_joint_data(pkl_data, output_dir, median_filter_torque=True, median_filt
     if all(k in data_dict for k in required_keys_1):
         print("  Plotting Combined Joint Position Plot...")
         fig, axes = plt.subplots(7, 1, figsize=(12, 14), sharex=True)
-        fig.suptitle('Commanded Torque Smoothing', fontsize=16, y=0.96)
+        fig.suptitle('Commanded Position Smoothing', fontsize=16, y=0.96)
 
         if median_filter_position:
             commanded_pos_medfilt = medianfilter(commanded_pos, kernel_size=median_filter_kernel_size_position)
@@ -404,7 +404,7 @@ if __name__ == '__main__':
 
     ################# Single File Visualization #################
 
-    episode_name = "ep_41"  ## SELECT EPISODE HERE ####
+    episode_name = "ep_45"  ## SELECT EPISODE HERE ####
     pkl_path = Path(f"/home/ferdinand/factr/process_data/data_to_process/20251112/data/{episode_name}.pkl")
 
     median_filter_torque = False
