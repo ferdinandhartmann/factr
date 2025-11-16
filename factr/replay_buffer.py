@@ -15,11 +15,6 @@ import tqdm
 from robobuf import ReplayBuffer as RB
 from tensorflow.io import gfile
 from torch.utils.data import Dataset, IterableDataset
-from omegaconf import OmegaConf
-
-# Rename the dynamically loaded YAML configuration to avoid conflicts
-config_path = os.path.join(os.path.dirname(__file__), 'cfg', 'train_bc.yaml')
-train_bc_config = OmegaConf.load(config_path)
 
 # helper functions
 _img_to_tensor = (
@@ -59,7 +54,13 @@ BUF_SHUFFLE_RNG = 3904767649
 
 class ReplayBuffer(Dataset):
     def __init__(
-        self, buffer_path, transform=None, n_train_demos=200, mode="train", ac_chunk=1
+        self,
+        buffer_path,
+        transform=None,
+        n_train_demos=200,
+        mode="train",
+        ac_chunk=1,
+        use_indices=None,
     ):
         assert mode in ("train", "test"), "Mode must be train/test"
         buffer_data = self._load_buffer(buffer_path)
@@ -77,6 +78,11 @@ class ReplayBuffer(Dataset):
         )
 
         self.transform = transform
+        self.use_indices = (
+            np.asarray(use_indices, dtype=np.int64)
+            if use_indices is not None
+            else None
+        )
         self.s_a_mask = []
         for traj in tqdm.tqdm(buffer_data):
             imgs, obs, acs = traj["images"], traj["observations"], traj["actions"]
@@ -92,6 +98,9 @@ class ReplayBuffer(Dataset):
                 i_t = {f"cam{c}": imgs[t, c] for c in range(imgs.shape[1])}
                 loss_mask = np.ones((ac_chunk,), dtype=np.float32)
                 o_t, a_t = obs[t], acs[t : t + ac_chunk]
+                if self.use_indices is not None:
+                    a_t = a_t[:, self.use_indices]
+                    o_t = o_t[self.use_indices]
                 self.s_a_mask.append(((i_t, o_t), a_t, loss_mask))
 
     def _load_buffer(self, buffer_path):
@@ -116,11 +125,6 @@ class ReplayBuffer(Dataset):
             loss_mask.shape[0] == a_t.shape[0]
         ), "a_t and mask shape must be ac_chunk!"
 
-        # ONLY USE THESE JOINTS ####################
-        use_indices = train_bc_config['use_indices']  # Read indices from YAML configuration
-        a_t = a_t[:, use_indices]
-        o_t = o_t[use_indices]
-        ###########################################
         return (i_t, o_t), a_t, loss_mask
 
 
@@ -154,6 +158,7 @@ class RobobufReplayBuffer(ReplayBuffer):
         past_frames=0,
         ac_dim=7,
         shuffle=True,
+        use_indices=None,
     ):
         assert mode in ("train", "test"), "Mode must be train/test"
         buf = _cached_load(buffer_path)
@@ -178,6 +183,11 @@ class RobobufReplayBuffer(ReplayBuffer):
             rng.shuffle(index_list)
             
         self.transform = transform
+        self.use_indices = (
+            np.asarray(use_indices, dtype=np.int64)
+            if use_indices is not None
+            else None
+        )
         self.s_a_mask = []
 
         self.cam_indexes = cam_indexes = list(cam_indexes)
@@ -204,11 +214,8 @@ class RobobufReplayBuffer(ReplayBuffer):
 
             a_t = np.concatenate(chunked_actions, 0).astype(np.float32)
 
-            # ONLY USE THESE JOINTS FOR ACTIONS ####################
-            if a_t.shape[-1] != ac_dim and a_t.shape[-1] == 7:
-                use_indices = train_bc_config['use_indices']  # Read indices from YAML configuration
-                a_t = a_t[..., use_indices]
-            ###########################################
+            if self.use_indices is not None:
+                a_t = a_t[..., self.use_indices]
             assert ac_dim == a_t.shape[-1]
 
             loss_mask = np.array(loss_mask, dtype=np.float32)
@@ -226,10 +233,8 @@ class RobobufReplayBuffer(ReplayBuffer):
 
             i_t[f"cam{idx}"] = i_c
 
-        # ONLY USE THESE JOINTS FOR OBSERVATIONS ####################
-        use_indices_obs = train_bc_config['use_indices']  # Read indices from YAML configuration
-        o_t = o_t[use_indices_obs]
-        #########################################################
+        if self.use_indices is not None:
+            o_t = o_t[self.use_indices]
         o_t, a_t = _to_tensor(o_t), _to_tensor(a_t)
         loss_mask = _to_tensor(loss_mask)[:, None].repeat((1, a_t.shape[-1]))
         assert (

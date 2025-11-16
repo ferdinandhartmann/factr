@@ -9,6 +9,7 @@ obs_dim: 7
 ac_dim: 7
 cam_indexes: [0]
 n_cams: ${len:${task.cam_indexes}}
+use_indices: ${use_indices}
 
 
 train_buffer:
@@ -21,6 +22,7 @@ train_buffer:
   cam_indexes: ${task.cam_indexes}
   past_frames: ${add:${img_chunk},-1}
   ac_dim: ${task.ac_dim}
+  use_indices: ${use_indices}
 
 test_buffer:
   _target_: factr.replay_buffer.RobobufReplayBuffer
@@ -32,3 +34,4 @@ test_buffer:
   cam_indexes: ${task.cam_indexes}
   past_frames: ${add:${img_chunk},-1}
   ac_dim: ${task.ac_dim}
+  use_indices: ${use_indices}
