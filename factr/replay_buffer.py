@@ -78,7 +78,11 @@ class ReplayBuffer(Dataset):
         )
 
         self.transform = transform
-        self.use_indices = tuple(use_indices) if use_indices is not None else None
+        self.use_indices = (
+            np.asarray(use_indices, dtype=np.int64)
+            if use_indices is not None
+            else None
+        )
         self.s_a_mask = []
         for traj in tqdm.tqdm(buffer_data):
             imgs, obs, acs = traj["images"], traj["observations"], traj["actions"]
@@ -179,7 +183,11 @@ class RobobufReplayBuffer(ReplayBuffer):
             rng.shuffle(index_list)
             
         self.transform = transform
-        self.use_indices = tuple(use_indices) if use_indices is not None else None
+        self.use_indices = (
+            np.asarray(use_indices, dtype=np.int64)
+            if use_indices is not None
+            else None
+        )
         self.s_a_mask = []
 
         self.cam_indexes = cam_indexes = list(cam_indexes)
