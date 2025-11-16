@@ -10,8 +10,7 @@ import wandb
 from torch.utils.data import DataLoader, IterableDataset
 import random
 import pytorch_lightning as pl
-from omegaconf import OmegaConf
-from factr.train_bc_policy import train_bc 
+from factr.train_bc_policy import train_bc
 
 from factr.replay_buffer import IterableWrapper
 
@@ -99,6 +98,29 @@ def canonicalize_attn(cross_w, batch_size):
 
 
 class BCTask(DefaultTask):
+    def __init__(
+        self,
+        train_buffer,
+        test_buffer,
+        cam_indexes,
+        n_cams,
+        obs_dim,
+        ac_dim,
+        batch_size,
+        num_workers,
+        use_indices=None,
+    ):
+        super().__init__(
+            train_buffer,
+            test_buffer,
+            cam_indexes,
+            n_cams,
+            obs_dim,
+            ac_dim,
+            batch_size,
+            num_workers,
+        )
+        self.use_indices = tuple(use_indices) if use_indices is not None else None
 
     def eval(self, trainer, global_step):
         
@@ -149,11 +171,11 @@ class BCTask(DefaultTask):
         ac_l2, ac_lsig = np.mean(action_l2), np.mean(action_lsig)
         l2_per_joint_mean = np.mean(np.stack(l2_per_joint_all, axis=0), axis=0)
         
-        # Dynamically insert zeros for unused joints based on `use_indices`
-        full_joint_indices = list(range(max(train_bc_config['use_indices']) + 1))
-        missing_indices = set(full_joint_indices) - set(train_bc_config['use_indices'])
-        for idx in sorted(missing_indices):
-            l2_per_joint_mean = np.insert(l2_per_joint_mean, idx, 0)
+        if self.use_indices:
+            full_joint_indices = list(range(max(self.use_indices) + 1))
+            missing_indices = set(full_joint_indices) - set(self.use_indices)
+            for idx in sorted(missing_indices):
+                l2_per_joint_mean = np.insert(l2_per_joint_mean, idx, 0)
         
         print(f"Step: {global_step}\tVal Loss: {mean_val_loss:.4f}\tAC L2={ac_l2:.3f}\tAC LSig={ac_lsig:.3f}")
 
