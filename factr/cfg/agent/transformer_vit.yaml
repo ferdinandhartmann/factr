@@ -25,7 +25,7 @@ transformer_kwargs:
   d_model: ${agent.token_dim}
   dropout: ${agent.dropout}
   nhead: 8 # has token_dim/nhead number of dimesnions per head
-  num_encoder_layers: 4
+  num_encoder_layers: 4 #6
   num_decoder_layers: 6
-  dim_feedforward: 1536 #3200
+  dim_feedforward: 1536 #2048
   activation: gelu #relu

@@ -10,6 +10,8 @@ import wandb
 from torch.utils.data import DataLoader, IterableDataset
 import random
 import pytorch_lightning as pl
+from omegaconf import OmegaConf
+from factr.train_bc_policy import train_bc 
 
 from factr.replay_buffer import IterableWrapper
 
@@ -123,16 +125,6 @@ class BCTask(DefaultTask):
                 # pred_actions, cross_w = trainer.model.get_actions(imgs, obs, return_weights=False)
                 pred_actions = trainer.model.get_actions(imgs, obs, return_weights=False)
                 
-                # --- process attention weights ---
-                # B = next(iter(imgs.values())).shape[0]
-                # cross_w = canonicalize_attn(cross_w, B)          # (B, H, Tq, Tk)
-                # attn_heads_mean = cross_w.mean(dim=1)            # (B, Tq, Tk)
-
-                # N_images = 1
-                # image_curve = attnscripts/test_rollout_output_heads_mean[..., :N_images].mean(-1)  # (B, Tq)
-                # other_curve = attn_heads_mean[..., N_images:].mean(-1)  # (B, Tq)
-
-
                 # calculate l2 loss between pred_action and action
                 l2_loss = torch.square(mask * (pred_actions - actions))
                 l2_loss = l2_loss.sum((1, 2)) / mask.sum((1, 2))
@@ -156,16 +148,14 @@ class BCTask(DefaultTask):
         mean_val_loss = np.mean(losses)
         ac_l2, ac_lsig = np.mean(action_l2), np.mean(action_lsig)
         l2_per_joint_mean = np.mean(np.stack(l2_per_joint_all, axis=0), axis=0)
-        # Only when removing some joints ##############################################################
-        l2_per_joint_mean = np.insert(l2_per_joint_mean, 2, 0)  # Add a zero column in the 3rd position
+        
+        # Dynamically insert zeros for unused joints based on `use_indices`
+        full_joint_indices = list(range(max(train_bc_config['use_indices']) + 1))
+        missing_indices = set(full_joint_indices) - set(train_bc_config['use_indices'])
+        for idx in sorted(missing_indices):
+            l2_per_joint_mean = np.insert(l2_per_joint_mean, idx, 0)
         
         print(f"Step: {global_step}\tVal Loss: {mean_val_loss:.4f}\tAC L2={ac_l2:.3f}\tAC LSig={ac_lsig:.3f}")
-
-        # image_tokens = weights[:, :, :1].mean()
-        # torque_tokens = weights[:, :, 1:].mean()
-
-        # print(f"Weights: ", weights.cpu().numpy() if isinstance(weights, torch.Tensor) else weights)
-        # print(f"Weights: Image Tokens={image_tokens:.3f}\tTorque Tokens={torque_tokens:.3f}")
 
         if wandb.run is not None:
             # Log scalar metrics
@@ -179,34 +169,3 @@ class BCTask(DefaultTask):
             }
 
             wandb.log(log_dict, step=global_step)
-
-            # # Attention Plot in W&B
-            # xs = []
-            # ys = []
-            # keys = []
-
-            # # only plot a few episodes to avoid clutter
-            # max_episodes_to_plot = min(image_curve.shape[0], 5)
-            # print(f"Total eval episodes: {image_curve.shape[0]}")
-
-            # for b in range(max_episodes_to_plot):
-            #     t = np.arange(image_curve.shape[1])
-            #     xs.append(t)
-            #     ys.append(image_curve[b].cpu().numpy())
-            #     keys.append(f"Episode {b} - Image (Full Line)")
-            #     xs.append(t)
-            #     ys.append(other_curve[b].cpu().numpy())
-            #     keys.append(f"Episode {b} - Torque (Dashed Line)")
-
-            # # Create a wandb plot
-            # attn_plot = wandb.plot.line_series(
-            #     xs=xs,
-            #     ys=ys,
-            #     keys=keys,
-            #     title="Attention over time (eval episodes)",
-            #     xname="Timestep",
-            # )
-
-            # # Log with the step — important for visibility!
-            # wandb.log({"attention/episodes": attn_plot}, step=global_step)
-

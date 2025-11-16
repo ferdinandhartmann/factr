@@ -328,7 +328,7 @@ def visualize_data(data_path, output_dir=None):
     pkl_data = load_data(pkl_path)
     
     # Create GIFs for images
-    create_image_gif(pkl_data, output_dir / 'camera_rgb.mp4', '/realsense/front/im', fps=25)
+    create_image_gif(pkl_data, output_dir / 'camera_rgb.mp4', '/realsense/front/im', fps=50)
     # create_image_gif(pkl_data, output_dir / 'camera_depth.mp4', '/realsense/arm/depth', fps=50)
     # Create plots
     plot_joint_data(pkl_data, output_dir)

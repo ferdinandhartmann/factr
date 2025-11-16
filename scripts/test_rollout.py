@@ -19,18 +19,20 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", message=".*torch.load.*weights_only.*")
 
 # ---------- CONFIG ---------- # Select model, checkpoint, and episode here
-model_name = "20251112_60_25hz_filt2_6dof_s42_ac25_b64_lr0.00018_iter40000_2"
+model_name = "20251112_60_25hz_filt2_7dof_s42_ac25_b64_lr0.00018_iter3000_"
 checkpoint = "latest"
-episode_names = ["ep_40", "ep_41", "ep_61", "ep_62", "ep_63", "ep_64", "ep_65", "ep_66"] # List of episode names to test
+episode_names = ["ep_8", "ep_25", "ep_40", "ep_45", "ep_61", "ep_62", "ep_63", "ep_64", "ep_65", "ep_66"] # List of episode names to test
 
 downsample = True # from 50Hz to 25Hz
-vs_all_plot = False # whether to load all joint commands from dataset for visualization
+vs_all_plot = True # whether to load all joint commands from dataset for visualization
 use_buffer = True  # load from buffer.pkl instead of raw PKL files
-remove_joints = [2] # zero-indexed joints to remove
+remove_joints = [] # zero-indexed joints to remove
 
 # ---------- PATHS & DEVICE ----------
 FACTR_REPO = Path(__file__).resolve().parents[1]
 print(f"Detected FACTR repo folder: {FACTR_REPO}")
+
+# Checkpoint and configs
 CKPT_PATH = None
 if checkpoint == "latest":
     CKPT_PATH = Path(f"{FACTR_REPO}/scripts/checkpoints/{model_name}/rollout/latest_ckpt.ckpt")
@@ -39,20 +41,22 @@ else:
 EXP_CFG_PATH = Path(f"{FACTR_REPO}/scripts/checkpoints/{model_name}/rollout/exp_config.yaml")
 ROLLOUT_CFG_PATH = Path(f"{FACTR_REPO}/scripts/checkpoints/{model_name}/rollout/rollout_config.yaml")
 
+# Raw data
 RAW_DATA_PATH_TRAIN = Path(f"{FACTR_REPO}/process_data/raw_data_train/20251112_60/")
 RAW_DATA_PATH_EVAL = Path(f"{FACTR_REPO}/process_data/raw_data_eval/20251112_7/")
 
+# Buffer
+BUF_PATH = Path(f"{FACTR_REPO}/process_data/training_data/20251112_60_25hz_filt2/buf.pkl")
+
+# Output folder
+output_folder = Path(f"{FACTR_REPO}/scripts/test_rollout_output/{model_name}_{checkpoint}")
+output_folder.mkdir(parents=True, exist_ok=True)
+
+# Topics in PKL files
 image_topic = "/realsense/front/im"
 obs_topic = "/franka_robot_state_broadcaster/external_joint_torques"
 # action_topic = "/joint_impedance_command_controller/joint_trajectory"
 action_topic = "/joint_impedance_dynamic_gain_controller/joint_impedance_command"
-
-BUF_PATH = Path(f"{FACTR_REPO}/process_data/training_data/20251112_60_25hz_filt2/buf.pkl")
-
-dataset_folder = Path(f"{FACTR_REPO}/process_data/raw_data_train/20251112_60/")
-
-output_folder = Path(f"{FACTR_REPO}/scripts/test_rollout_output/{model_name}_{checkpoint}")
-output_folder.mkdir(parents=True, exist_ok=True)
 
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -356,7 +360,7 @@ except Exception as e:
 
 if vs_all_plot:
     print("Loading all joint commands from dataset for visualization...")
-    joint_cmds_all, joint_cmds_all_norm = get_all_joint_cmds_np(dataset_folder, action_mean, action_std)
+    joint_cmds_all, joint_cmds_all_norm = get_all_joint_cmds_np(RAW_DATA_PATH_TRAIN, action_mean, action_std)
     print(f"✅ Loaded and normalized all joint commands from dataset folder.")
 
 

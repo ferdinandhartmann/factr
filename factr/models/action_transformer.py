@@ -302,6 +302,7 @@ class TransformerAgent(BaseAgent):
     # def get_actions(self, imgs, obs):
     def get_actions(self, imgs, obs, return_weights=False):
         tokens = self.tokenize_obs(imgs, obs)
+        print(f"Tokens shape: {tokens.shape}")
         # print(f"Tokens shape: {tokens.shape}") = Action tokens shape: torch.Size([1, 25, 512])
         # action_tokens = self.transformer(tokens, self.ac_query.weight)
         # return self.ac_proj(action_tokens)

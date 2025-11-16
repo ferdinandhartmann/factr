@@ -45,7 +45,7 @@ class BaseTrainer(ABC):
                 #no_weight_decay_list=model.no_weight_decay(),
                 layer_decay=optim_builder.optimizer_kwargs.layer_decay
             )
-            self.optim = torch.optim.AdamW(param_groups, lr=optim_builder.optimizer_kwargs.lr)
+            self.optim = torch.optim.AdamW(param_groups, lr=optim_builder.optimizer_kwargs.lr, betas=optim_builder.optimizer_kwargs.betas)
         else:
             self.optim = optim_builder(self.model.parameters())
 
