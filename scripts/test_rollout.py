@@ -563,14 +563,16 @@ for episode_name in episode_names:
         #     alpha=0.7,
         #     color=f"C{layer_idx}",
         # )
-        linestyle = "--" if layer_idx == 0 else ":" if layer_idx == attn_layer_vectors_stacked.shape[1] - 1 else "-"
-        colour = "gray" if layer_idx == 0 else "gray" if layer_idx == attn_layer_vectors_stacked.shape[1] - 1 else f"C{layer_idx}"
+        linestyle = "-" if layer_idx == 0 else "-" if layer_idx == attn_layer_vectors_stacked.shape[1] - 1 else "--"
+        colour = "blue" if layer_idx == 0 else "black" if layer_idx == attn_layer_vectors_stacked.shape[1] - 1 else f"C{layer_idx}"
+        alpha = 1.0 if layer_idx == 0 else 1.0 if layer_idx == attn_layer_vectors_stacked.shape[1] - 1 else 0.7
         ax1.plot(
             (attn_layer_vectors_stacked[:, layer_idx, 1] - attn_layer_vectors_stacked[:, layer_idx, 0]),
             label=f"Layer {layer_idx + 1} - (Torque - Image)",
             linewidth=1.8,
             linestyle=linestyle,
             color=colour,
+            alpha=alpha,
         )
     # ax1.plot(attn_force_np, label="Torque attention (mean)", linewidth=1.5, color="black")
     # ax1.plot(attn_image_np, label="Image attention (mean)", linewidth=1.5, color="darkgray")
