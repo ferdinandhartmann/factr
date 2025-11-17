@@ -24,7 +24,7 @@ checkpoint = "latest"
 episode_names = ["ep_8", "ep_25", "ep_40", "ep_45", "ep_61", "ep_62", "ep_63", "ep_64", "ep_65", "ep_66"] # List of episode names to test
 
 downsample = True # from 50Hz to 25Hz
-vs_all_plot = True # whether to load all joint commands from dataset for visualization
+vs_all_plot = False # whether to load all joint commands from dataset for visualization
 use_buffer = True  # load from buffer.pkl instead of raw PKL files
 remove_joints = [] # zero-indexed joints to remove
 
@@ -401,6 +401,7 @@ for episode_name in episode_names:
     true_action_list = []
     normalized_true_action_list = []
     attn_image, attn_force = [], []
+    attn_layer_vectors_list = []
 
     action_mean_red = action_mean[use_indicies]
     action_std_red = action_std[use_indicies]
@@ -435,24 +436,54 @@ for episode_name in episode_names:
 
         with torch.no_grad():
             pred_action, cross_w = policy.get_actions({"cam0": img_tensor}, torque_tensor, return_weights=True)
+            # print(f"size of cross_w: {cross_w.shape}")
+            # corss_w shape = (L, B, H, NQ​, NS​)
+            #               =([6, 1, 8, 25, 2])
+            # 6 Decoder layers
+            # 1 Batch size
+            # 8 Attention heads
+            # 25 Number of action chunks (NQ)
+            # 2 Number of source tokens (NS) - 1 image + 1 torque
+
+            if cross_w is not None:
+                # Canonicalize attention (5D tensor: L, B, H, Nq, Ns)
+                # Remove Batch dimension (B=1) -> (L, H, Nq, Ns)
+                cross_w_no_batch = cross_w.squeeze(dim=1) 
+                # Mean over Heads (H) -> (L, Nq, Ns)
+                attn_heads_mean = cross_w_no_batch.mean(dim=1) 
+                # Mean over Queries (Nq) -> (L, Ns)
+                attn_layer_vector = attn_heads_mean.mean(dim=1) 
+                # This vector is (L=6, Ns=2): rows are layers, columns are tokens [Image, Torque]
+                attn_layer_vector_np = attn_layer_vector.cpu().numpy()
+                attn_layer_vectors_list.append(attn_layer_vector_np)
+
+                # size of cross_w: torch.Size([6, 1, 8, 25, 2])
+                # --- Layer Attention Vector (Timestep 238) ---
+                # Shape: torch.Size([6, 2])
+                # [Image, Torque] Attention per Layer 1-6:
+                # [[0.4363075  0.5636925 ]
+                # [0.3447853  0.65521467]
+                # [0.38640937 0.6135906 ]
+                # [0.55851334 0.44148666]
+                # [0.46212408 0.5378759 ]
+                # [0.51679295 0.48320693]]
+
+                # Mean over all Layers (L) -> (Ns). This is used to maintain the time-series plot.
+                attn_mean_combined = attn_layer_vector.mean(dim=0)                
+                N_tokens = attn_mean_combined.shape[-1]
+                if N_tokens == 2:
+                    # Token 0 is Image, Token 1 is Torque
+                    img_attn = attn_mean_combined[0].item()
+                    torque_attn = attn_mean_combined[1].item()
+                    attn_image.append(img_attn)
+                    attn_force.append(torque_attn)
+                else:
+                    print(f"Warning: Expected 2 source tokens but found {N_tokens}. Skipping attention logging.")
+
             # test_rollout.py → agent.get_actions() → policy.get_actions() → model.get_actions()
             pred_action_norm = pred_action.cpu().numpy()[0]
             pred_action = pred_action * action_std_red + action_mean_red # Inverse normalization 
             pred_action = pred_action.cpu().numpy()[0]
-
-            if cross_w is not None:
-                # Canonicalize attention
-                if cross_w.dim() == 3:
-                    cross_w = cross_w.unsqueeze(0)  # (1, H, Tq, Tk)
-                attn_heads_mean = cross_w.mean(1)   # mean over heads → (B, Tq, Tk)
-                attn_mean = attn_heads_mean.mean(1) # mean over decoder queries → (B, Tk)
-
-                N_images = 1  # since you only have cam0 and no past frames
-                img_attn = attn_mean[..., :N_images].mean().item()
-                torque_attn = attn_mean[..., N_images:].mean().item()
-
-                attn_image.append(img_attn)
-                attn_force.append(torque_attn)
 
         pred_actions.append(pred_action)
         pred_actions_norm.append(pred_action_norm)
@@ -461,6 +492,10 @@ for episode_name in episode_names:
     pred_actions_norm = np.array(pred_actions_norm)
     true_actions_normalized = np.array(normalized_true_action_list)
     true_actions = np.array(true_action_list)
+    attn_layer_vectors_stacked = np.array(attn_layer_vectors_list)
+    attn_image_np = np.array(attn_image)
+    attn_force_np = np.array(attn_force)
+
 
     if len(remove_joints) > 0:
         for remove_joint in sorted(remove_joints):
@@ -507,18 +542,51 @@ for episode_name in episode_names:
     desired_indices  = np.array([0, 50, 100, 150, 200, 250])
     frame_indices = np.clip(desired_indices, 0, N_img - 1)
 
-    fig = plt.figure(figsize=(14, 7))
+    fig = plt.figure(figsize=(12, 7))
 
     # ----- 1. Attention plot (top, larger space) -----
     ax1 = plt.subplot2grid((3, 1), (0, 0), rowspan=2)  # Allocate 2/3 of the height
-    ax1.plot(attn_force, label="Torque attention", linewidth=1.8)
-    ax1.plot(attn_image, label="Image attention", linewidth=1.8)
+    ax1.axhline(0, color="black", linestyle="-", linewidth=1.0, alpha=0.6)
+    for layer_idx in range(attn_layer_vectors_stacked.shape[1]):
+        # ax1.plot(
+        #     attn_layer_vectors_stacked[:, layer_idx, 0],
+        #     label=f"Layer {layer_idx + 1} - Image",
+        #     linestyle="--",
+        #     linewidth=1.2,
+        #     alpha=0.7,
+        #     color=f"C{layer_idx}",
+        # )
+        # ax1.plot(
+        #     attn_layer_vectors_stacked[:, layer_idx, 1],
+        #     label=f"Layer {layer_idx + 1} - Torque",
+        #     linewidth=1.2,
+        #     alpha=0.7,
+        #     color=f"C{layer_idx}",
+        # )
+        linestyle = "--" if layer_idx == 0 else ":" if layer_idx == attn_layer_vectors_stacked.shape[1] - 1 else "-"
+        colour = "gray" if layer_idx == 0 else "gray" if layer_idx == attn_layer_vectors_stacked.shape[1] - 1 else f"C{layer_idx}"
+        ax1.plot(
+            (attn_layer_vectors_stacked[:, layer_idx, 1] - attn_layer_vectors_stacked[:, layer_idx, 0]),
+            label=f"Layer {layer_idx + 1} - (Torque - Image)",
+            linewidth=1.8,
+            linestyle=linestyle,
+            color=colour,
+        )
+    # ax1.plot(attn_force_np, label="Torque attention (mean)", linewidth=1.5, color="black")
+    # ax1.plot(attn_image_np, label="Image attention (mean)", linewidth=1.5, color="darkgray")
+    # ax1.plot((attn_force_np - attn_image_np), label="(Torque - Image) attention mean", linewidth=2.0, color="black")
     ax1.set_xlabel("Timestep")
     ax1.set_ylabel("Mean attention weight")
     ax1.set_title(f"Attention to Force and Image — {episode_name}")
-    ax1.legend()
-    ax1.set_ylim(0, 1)
+    ax1.legend(loc="upper right")
+    ax1.set_ylim(-1, 1)
     ax1.grid(True, alpha=0.4)
+
+    
+
+    # Add labels for -1 and 1 limits
+    ax1.text(ax1.get_xlim()[0]+0.05, -0.9, "100% Image", va="center", ha="left", fontsize=12, color="gray")
+    ax1.text(ax1.get_xlim()[0]+0.05, 0.9, "100% Torque", va="center", ha="left", fontsize=12, color="gray")
 
     # ----- 2. Image strip (bottom, 1/3 space) -----
     gs = plt.GridSpec(3, len(frame_indices))  # 3 rows x num_imgs columns

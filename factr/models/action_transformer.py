@@ -115,15 +115,12 @@ class _TransformerDecoderLayer(nn.Module):
 
         self.activation = _get_activation_fn(activation)
 
-    # def forward(self, tgt, memory, pos=None, query_pos=None):
     def forward(self, tgt, memory, pos=None, query_pos=None, return_weights=False, nheads=None):
         q = k = _with_pos_embed(tgt, query_pos)
-        # tgt2, _ = self.self_attn(q, k, value=tgt)
         tgt2, _ = self.self_attn(q, k, value=tgt)  # self-attn weights skipped here
         tgt = tgt + self.dropout1(tgt2)
         tgt = self.norm1(tgt)
 
-        # tgt2, _ = self.multihead_attn(
         # Get cross-attention weights
         # average_attn_weights=True gives shape (tgt_len, src_len) (averaged over heads; PyTorch handles batch internally).
         tgt2, cross_w = self.multihead_attn(
@@ -139,7 +136,6 @@ class _TransformerDecoderLayer(nn.Module):
         tgt2 = self.linear2(self.dropout3(self.activation(self.linear1(tgt))))
         tgt = tgt + self.dropout4(tgt2)
         tgt = self.norm3(tgt)
-        # return tgt
         if return_weights:
             return tgt, cross_w
         return tgt
@@ -165,32 +161,35 @@ class _TransformerDecoder(nn.Module):
         self.num_layers = num_layers
         self.norm = nn.LayerNorm(decoder_layer.linear2.out_features)  # d_model
 
-    # def forward(self, tgt, memory, pos, query_pos, return_intermediate=False):
     def forward(self, tgt, memory, pos, query_pos, return_intermediate=False, return_weights=False, nheads=None):
         output = tgt
         intermediate = []
-        last_cross_w = None
+        all_cross_w = []
         for layer in self.layers:
-            # output = layer(output, memory, pos=pos, query_pos=query_pos)
             if return_weights:
                 output, cross_w = layer(output, memory, pos=pos, query_pos=query_pos, return_weights=True, nheads=nheads)
-                last_cross_w = cross_w  # keep weights from the last layer (common practice)
+                all_cross_w.append(cross_w.unsqueeze(0))
             else:
                 output = layer(output, memory, pos=pos, query_pos=query_pos)
 
             if return_intermediate:
                 intermediate.append(self.norm(output))
 
-        # if return_intermediate:
-        #     return torch.stack(intermediate)
-        # return output
+        # The output attention tensor's shape will now be:
+        # (L, B*H, N_Q, N_S)
+        # L: Number of decoder layers
+        # B: Batch size
+        # H: Number of attention heads
+        # N_Q: Number of queries (action chunks, ac_chunk)
+        # N_S: Number of source tokens (observation tokens)
+
         if return_intermediate:
             out = torch.stack(intermediate)
             if return_weights:
-                return out, last_cross_w
+                return out, torch.cat(all_cross_w, dim=0)
             return out
         if return_weights:
-            return output, last_cross_w
+            return output, torch.cat(all_cross_w, dim=0)
         return output
 
 
@@ -228,7 +227,6 @@ class _ACT(nn.Module):
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
 
-    # def forward(self, input_tokens, query_enc):
     def forward(self, input_tokens, query_enc, return_weights=False, nheads=None):
         input_tokens = input_tokens.transpose(0, 1)
         input_pos = self.pos_helper(input_tokens)
@@ -236,8 +234,6 @@ class _ACT(nn.Module):
 
         query_enc = query_enc[:, None].repeat((1, input_tokens.shape[1], 1))
         tgt = torch.zeros_like(query_enc)
-        # acs_tokens = self.decoder(tgt, memory, input_pos, query_enc)
-        # return acs_tokens.transpose(0, 1)
         if return_weights:
             acs_tokens, cross_w = self.decoder(
                 tgt, memory, input_pos, query_enc, return_weights=True, nheads=self.nhead
@@ -302,10 +298,7 @@ class TransformerAgent(BaseAgent):
     # def get_actions(self, imgs, obs):
     def get_actions(self, imgs, obs, return_weights=False):
         tokens = self.tokenize_obs(imgs, obs)
-        print(f"Tokens shape: {tokens.shape}")
         # print(f"Tokens shape: {tokens.shape}") = Action tokens shape: torch.Size([1, 25, 512])
-        # action_tokens = self.transformer(tokens, self.ac_query.weight)
-        # return self.ac_proj(action_tokens)
         if return_weights:
             action_tokens, cross_w = self.transformer(tokens, self.ac_query.weight, return_weights=True)
             # print(f"Action tokens shape: {action_tokens.shape}") = Tokens shape: torch.Size([1, 2, 512])
