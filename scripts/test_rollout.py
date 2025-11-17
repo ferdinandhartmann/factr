@@ -578,7 +578,7 @@ for episode_name in episode_names:
     ax1.set_xlabel("Timestep")
     ax1.set_ylabel("Mean attention weight")
     ax1.set_title(f"Attention to Force and Image — {episode_name}")
-    ax1.legend(loc="upper right")
+    ax1.legend(loc="lower right")
     ax1.set_ylim(-1, 1)
     ax1.grid(True, alpha=0.4)
 
