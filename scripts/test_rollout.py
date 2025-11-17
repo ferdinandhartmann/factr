@@ -260,7 +260,6 @@ def load_episode_from_buffer(buf_path, episode_idx, cam_key="enc_cam_0"):
     actions = []
 
     for (obs, act, done) in traj:
-
         # ----- 1. Load image -----
         if cam_key not in obs:
             raise KeyError(f"{cam_key} not found in obs dict keys={obs.keys()}")
@@ -269,8 +268,6 @@ def load_episode_from_buffer(buf_path, episode_idx, cam_key="enc_cam_0"):
         img = cv2.imdecode(enc, cv2.IMREAD_COLOR)  # decode JPEG
         if img is None:
             raise ValueError("Failed to decode JPEG from buffer!")
-
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)  # convert to RGB
 
         images.append(img)
 
@@ -379,7 +376,7 @@ for episode_name in episode_names:
             image_obs, torque_obs, true_actions = load_episode_from_buffer(BUF_PATH, episode_idx)
             print(f"Size from buffer - Images: {image_obs.shape}, Torque: {torque_obs.shape}, Actions: {true_actions.shape}")
         except Exception as e:
-            print(f"⚠️ Warning: Could not load episode {episode_name} from buffer. Error: {e}, loading from raw PKL instead.")
+            print(f"ℹ️ Info: Could not load episode {episode_name} from buffer. Error: {e}, loading from raw PKL instead.")
             RAW_DATA_PATH = RAW_DATA_PATH_EVAL / f"{episode_name}.pkl"
             image_obs, torque_obs, true_actions = load_and_extract_raw_data(RAW_DATA_PATH, image_topic=image_topic, obs_topic=obs_topic, action_topic=action_topic)
             use_eval = True
@@ -535,6 +532,11 @@ for episode_name in episode_names:
     print(f"\nAverage L2 Loss for all joints: {l2_loss:.6f}\n")
 
 
+
+    ######################################
+    #             PLOTTING 
+    ######################################
+
     # Combined: Attention plot + 6 evenly spaced images
     # num_imgs = 6
     N_img = len(image_obs)
@@ -583,12 +585,9 @@ for episode_name in episode_names:
     ax1.legend(loc="lower right")
     ax1.set_ylim(-1, 1)
     ax1.grid(True, alpha=0.4)
-
-    
-
     # Add labels for -1 and 1 limits
-    ax1.text(ax1.get_xlim()[0]+0.05, -0.9, "100% Image", va="center", ha="left", fontsize=12, color="gray")
-    ax1.text(ax1.get_xlim()[0]+0.05, 0.9, "100% Torque", va="center", ha="left", fontsize=12, color="gray")
+    ax1.text(ax1.get_xlim()[0]+0.1, -0.9, "100% Image", va="center", ha="left", fontsize=12, color="gray")
+    ax1.text(ax1.get_xlim()[0]+0.1, 0.9, "100% Torque", va="center", ha="left", fontsize=12, color="gray")
 
     # ----- 2. Image strip (bottom, 1/3 space) -----
     gs = plt.GridSpec(3, len(frame_indices))  # 3 rows x num_imgs columns
@@ -597,15 +596,7 @@ for episode_name in episode_names:
     for k, idx in enumerate(frame_indices):
         ax = fig.add_subplot(gs[start_row:, k])  # row 2
         img = image_obs[idx]
-
-        # Ensure uint8 for plotting and convert to RGB
-        img_display = img
-        if img_display.dtype != np.uint8:
-            img_display = img_display.astype(np.uint8)
-        elif img_display.shape[2] == 3:  # BGR to RGB
-            img_display = cv2.cvtColor(img_display, cv2.COLOR_BGR2RGB)
-
-        ax.imshow(img_display)
+        ax.imshow(img)
         ax.axis("off")
         ax.set_title(f"t = {idx}", fontsize=9, pad=4)
 
