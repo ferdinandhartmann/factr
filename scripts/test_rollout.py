@@ -12,6 +12,8 @@ import yaml
 import os
 import copy
 from typing import List, Any
+import roboticstoolbox as rtb
+from mpl_toolkits.mplot3d import Axes3D
 
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -19,14 +21,14 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", message=".*torch.load.*weights_only.*")
 
 # ---------- CONFIG ---------- # Select model, checkpoint, and episode here
-model_name = "20251112_60_25hz_filt2_7dof_s42_ac25_b64_lr0.00018_iter3000_"
+model_name = "20251112_60_25hz_filt2_3dof_s42_ac25_b64_lr0.00018_iter3000_2"
 checkpoint = "latest"
 episode_names = ["ep_8", "ep_25", "ep_40", "ep_45", "ep_61", "ep_62", "ep_63", "ep_64", "ep_65", "ep_66"] # List of episode names to test
 
 downsample = True # from 50Hz to 25Hz
 vs_all_plot = False # whether to load all joint commands from dataset for visualization
 use_buffer = True  # load from buffer.pkl instead of raw PKL files
-remove_joints = [] # zero-indexed joints to remove
+remove_joints = [0,2,4,6] # zero-indexed joints to remove
 
 # ---------- PATHS & DEVICE ----------
 FACTR_REPO = Path(__file__).resolve().parents[1]
@@ -536,6 +538,110 @@ for episode_name in episode_names:
     ######################################
     #             PLOTTING 
     ######################################
+
+    def calculate_franka_fk(joint_angles_timeseries):
+        """
+        Calculates the end-effector position (x, y, z) for the Franka Panda robot.
+        """
+        robot = rtb.models.Panda() # 1. Load the Franka Panda model (which FR3 uses)
+        
+        num_timesteps = joint_angles_timeseries.shape[0]
+        ee_positions = np.zeros((num_timesteps, 3))
+
+        for t in range(num_timesteps):
+            q = joint_angles_timeseries[t, :]
+            T = robot.fkine(q)
+            ee_positions[t, :] = T.t 
+            
+        return ee_positions
+
+
+    q_gt = true_actions[:, :]
+    q_pred = pred_action[:, 0, :] 
+    # Calculate End-Effector Positions
+    predicted_pos = calculate_franka_fk(q_pred)
+    ground_truth_pos = calculate_franka_fk(q_gt)
+
+
+    def plot_franka_comparison_3d(predicted_pos, ground_truth_pos, output_folder, episode_name="Franka End-Effector Trajectory"):
+
+        error = np.linalg.norm(predicted_pos - ground_truth_pos, axis=1)
+
+        fig = plt.figure(figsize=(15, 11))
+        fig.suptitle(f"End-Effecvtor Plots of Ground-Truth and Prediction of {episode_name}\nmodel: {model_name}", fontsize=18)
+                
+        # Plot 1: X vs Time (Top-Left)
+        ax_x = fig.add_subplot(4, 2, 1)
+        # Plot 2: Y vs Time (Top-Right)
+        ax_y = fig.add_subplot(4, 2, 2, sharex=ax_x)
+        # Plot 3: Z vs Time (Middle-Left)
+        ax_z = fig.add_subplot(4, 2, 3, sharex=ax_x)
+        # Plot 4: Positional Error (Middle-Right)
+        ax_err = fig.add_subplot(4, 2, 4, sharex=ax_x)
+        # Plot 5: 3D Trajectory (Bottom, spanning two columns)
+        ax_3d = fig.add_subplot(4, 2, (5, 8), projection='3d')
+        
+        axes = [ax_x, ax_y, ax_z] # For easy iteration
+        labels = ['X Position (m)', 'Y Position (m)', 'Z Position (m)']
+        
+        # --- Plot 1, 2, 3: X, Y, Z Axes over Time ---
+        for i in range(3):
+            axes[i].plot(ground_truth_pos[:, i], label=f'GT {labels[i][0]}', color='red', alpha=0.7, linewidth=1.5)
+            axes[i].plot(predicted_pos[:, i], label=f'Predicted {labels[i][0]}', color='blue', linewidth=1.5)
+            
+            axes[i].set_ylabel(labels[i])
+            axes[i].legend(loc='upper right')
+            axes[i].grid(True, alpha=0.4)
+            if i == 2:
+                axes[i].set_xlabel("Timestep") # Only label X-axis on the bottom-most time plot
+
+        # --- Plot 4: Positional Error ---
+        ax_err.plot(error, label='Positional Error (m)', color='red', linewidth=1.5)
+        ax_err.set_ylim(0, 0.2)
+        # mean_error = np.mean(error)
+        # ax_err.axhline(mean_error, color='gray', linestyle='--', label=f'Mean Error: {mean_error:.4f} m')
+        ax_x.set_title("End-Effector x-Position Over Time")
+        ax_y.set_title("End-Effector y-Position Over Time")
+        ax_z.set_title("End-Effector z-Position Over Time")
+        ax_err.set_title("End-Effector Positional Error")
+        ax_err.set_xlabel("Timestep")
+        ax_z.set_xlabel("Timestep")
+        ax_err.set_ylabel("Error (m)")
+        ax_err.legend()
+        ax_err.grid(True, alpha=0.4)
+
+        # --- Plot 5: 3D Trajectory (The New Plot) ---
+        # Plot Ground Truth 3D path
+        ax_3d.plot(ground_truth_pos[:, 0], ground_truth_pos[:, 1], ground_truth_pos[:, 2], label='GT Trajectory', color='red', linewidth=1.2)
+        ax_3d.plot(predicted_pos[:, 0], predicted_pos[:, 1], predicted_pos[:, 2], label='Predicted Trajectory', color='blue', linewidth=1.2)
+        
+        # Mark start and end points
+        ax_3d.scatter(ground_truth_pos[0, 0], ground_truth_pos[0, 1], ground_truth_pos[0, 2], c='k', marker='o', s=20, label='GT Start')
+        ax_3d.scatter(ground_truth_pos[-1, 0], ground_truth_pos[-1, 1], ground_truth_pos[-1, 2], c='r', marker='x', s=50, label='GT End')
+        ax_3d.scatter(predicted_pos[0, 0], predicted_pos[0, 1], predicted_pos[0, 2], c='darkgray', marker='o', s=20, label='Pred Start')
+        ax_3d.scatter(predicted_pos[-1, 0], predicted_pos[-1, 1], predicted_pos[-1, 2], c='blue', marker='x', s=50, label='Pred End')
+        
+        ax_3d.set_xlabel('X (m)')
+        ax_3d.set_ylabel('Y (m)')
+        ax_3d.set_zlabel('Z (m)')
+        ax_3d.set_xlim([0.3, 0.6])
+        ax_3d.set_ylim([-0.15, 0.15])
+        ax_3d.set_zlim([0, 0.55])
+        ax_3d.set_title("End-Effector 3D Trajectory Comparison")
+        ax_3d.legend(loc='best')
+        ax_3d.grid(True, alpha=0.4)
+        plt.tight_layout(rect=[0, 0, 1, 0.96]) # Adjust rect to make space for suptitle
+        ax_3d.view_init(elev=7.5, azim=-60)  # Elevation (up-down) and Azimuth (left-right)
+
+        combined_path = f"{output_folder}/tr_efp_3d_{episode_name}.png"
+        plt.savefig(combined_path, dpi=300)
+        plt.close(fig)
+        print(f"✅ Saved end-effector position plots: {combined_path}")
+
+
+    plot_franka_comparison_3d(predicted_pos, ground_truth_pos, output_folder, episode_name=episode_name)
+
+
 
     # Combined: Attention plot + 6 evenly spaced images
     # num_imgs = 6

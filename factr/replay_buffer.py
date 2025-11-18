@@ -100,7 +100,7 @@ class ReplayBuffer(Dataset):
                 o_t, a_t = obs[t], acs[t : t + ac_chunk]
                 if self.use_indices is not None:
                     a_t = a_t[:, self.use_indices]
-                    o_t = o_t[self.use_indices]
+                    # o_t = o_t[self.use_indices]
                 self.s_a_mask.append(((i_t, o_t), a_t, loss_mask))
 
     def _load_buffer(self, buffer_path):
@@ -233,8 +233,8 @@ class RobobufReplayBuffer(ReplayBuffer):
 
             i_t[f"cam{idx}"] = i_c
 
-        if self.use_indices is not None:
-            o_t = o_t[self.use_indices]
+        # if self.use_indices is not None:
+        #     o_t = o_t[self.use_indices]
         o_t, a_t = _to_tensor(o_t), _to_tensor(a_t)
         loss_mask = _to_tensor(loss_mask)[:, None].repeat((1, a_t.shape[-1]))
         assert (

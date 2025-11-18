@@ -6,7 +6,7 @@
 
 _target_: factr.task.BCTask
 obs_dim: 7
-ac_dim: 7
+ac_dim: 3
 cam_indexes: [0]
 n_cams: ${len:${task.cam_indexes}}
 use_indices: ${use_indices}

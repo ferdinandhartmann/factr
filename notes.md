@@ -103,3 +103,5 @@ rm *.json
 - `*.json`: Matches all files with the `.json` extension in the current folder.
 
 **Caution:** This command is irreversible. Double-check the folder contents before running it.
+
+conda install -c conda-forge roboticstoolbox-python
