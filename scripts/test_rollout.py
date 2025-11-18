@@ -14,6 +14,10 @@ from test_rollout_utils import (
     calculate_franka_fk, load_and_extract_raw_data, load_pkl, load_and_prepare_policy
 )
 
+import plotly.graph_objects as go
+import plotly.io as pio
+
+
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -22,14 +26,16 @@ warnings.filterwarnings("ignore", message=".*torch.load.*weights_only.*")
 plt.rcParams.update(plt.rcParamsDefault)
 
 # ---------- CONFIG ---------- # Select model, checkpoint, and episode here
-model_name = "20251112_60_25hz_filt2_7dof_s42_ac25_b64_lr0.00018_iter3000_"
+model_name = "20251112_60_25hz_filt2_7dof_s42_ac25_b64_lr0.0002_iter6000_"
 checkpoint = "latest"
-episode_names = ["ep_8", "ep_25", "ep_40", "ep_45", "ep_61", "ep_62", "ep_63", "ep_64", "ep_65", "ep_66"] # List of episode names to test
+episode_names = ["ep_08", "ep_25", "ep_40", "ep_45", "ep_61", "ep_62", "ep_63", "ep_64", "ep_65", "ep_66"] # List of episode names to test
 
 downsample = True # from 50Hz to 25Hz
 vs_all_plot = False # whether to load all joint commands from dataset for visualization
 use_buffer = False  # !!!!!!!!! somehow different results, i dont know why. load from buffer.pkl instead of raw PKL files 
 remove_joints = [] # zero-indexed joints to remove
+interactive_3d_plot = True
+endeffector_plot = True
 
 # ---------- PATHS & DEVICE ----------
 FACTR_REPO = Path(__file__).resolve().parents[1]
@@ -254,68 +260,117 @@ for episode_name in episode_names:
     ######################################
     #             PLOTTING 
     ######################################
+    if interactive_3d_plot == True:
+        # --- Plot 5: 3D Trajectory (The New Plot) ---
+        fig = go.Figure()
+        # Plot Ground Truth 3D path
+        fig.add_trace(go.Scatter3d(
+            x=ground_truth_pos[:, 0],
+            y=ground_truth_pos[:, 1],
+            z=ground_truth_pos[:, 2],
+            mode='lines',
+            name='GT Trajectory',
+            line=dict(color='red', width=4)
+        ))
+        # Plot Predicted 3D path
+        fig.add_trace(go.Scatter3d(
+            x=predicted_pos[:, 0],
+            y=predicted_pos[:, 1],
+            z=predicted_pos[:, 2],
+            mode='lines',
+            name='Predicted Trajectory',
+            line=dict(color='blue', width=4)
+        ))
+        # Mark start and end points
+        fig.add_trace(go.Scatter3d(x=[ground_truth_pos[0, 0]], y=[ground_truth_pos[0, 1]], z=[ground_truth_pos[0, 2]], mode='markers', name='GT Start', marker=dict(color='black', size=6, symbol='circle')))
+        fig.add_trace(go.Scatter3d(x=[ground_truth_pos[-1, 0]], y=[ground_truth_pos[-1, 1]], z=[ground_truth_pos[-1, 2]], mode='markers', name='GT End', marker=dict(color='red', size=8, symbol='x')))
+        fig.add_trace(go.Scatter3d(x=[predicted_pos[0, 0]], y=[predicted_pos[0, 1]], z=[predicted_pos[0, 2]], mode='markers', name='Pred Start', marker=dict(color='darkgray', size=6, symbol='circle')))
+        fig.add_trace(go.Scatter3d(x=[predicted_pos[-1, 0]], y=[predicted_pos[-1, 1]], z=[predicted_pos[-1, 2]], mode='markers', name='Pred End', marker=dict(color='blue', size=8, symbol='x')));
 
-    fig = plt.figure(figsize=(15, 15))
-    fig.suptitle(f"End-Effector Plots of Ground-Truth and Prediction of {episode_name}", fontsize=16)
-    fig.text(0.5, 0.95, f"model: {model_name}", fontsize=11, ha='center', va='top')
-            
-    ax_x = fig.add_subplot(5, 2, 1) # Plot 1: X vs Time (Top-Left)
-    ax_y = fig.add_subplot(5, 2, 2, sharex=ax_x) # Plot 2: Y vs Time (Top-Right)
-    ax_z = fig.add_subplot(5, 2, 3, sharex=ax_x) # Plot 3: Z vs Time (Middle-Left)
-    ax_err = fig.add_subplot(5, 2, 4, sharex=ax_x) # Plot 4: Positional Error (Middle-Right)
-    ax_3d = fig.add_subplot(5, 2, (5, 10), projection='3d') # Plot 5: 3D Trajectory (Bottom, spanning two columns)
-    axes = [ax_x, ax_y, ax_z] 
-    labels = ['X Position (m)', 'Y Position (m)', 'Z Position (m)']
-    
-    # --- Plot 1, 2, 3: X, Y, Z Axes over Time ---
-    for i in range(3):
-        axes[i].plot(ground_truth_pos[:, i], label=f'GT {labels[i][0]}', color='red', alpha=0.7, linewidth=1.5)
-        axes[i].plot(predicted_pos[:, i], label=f'Predicted {labels[i][0]}', color='blue', linewidth=1.5)
-        axes[i].set_ylabel(labels[i])
-        axes[i].legend(loc='lower right')
-        axes[i].grid(True, alpha=0.4)
-        if i == 2:
-            axes[i].set_xlabel("Timestep") # Only label X-axis on the bottom-most time plot
+        # Set axis labels, limits, and camera view
+        fig.update_layout(
+            scene=dict(
+                xaxis_title='X (m)',
+                yaxis_title='Y (m)',
+                zaxis_title='Z (m)',
+                xaxis=dict(range=[0.3, 0.6]),
+                yaxis=dict(range=[-0.15, 0.15]),
+                zaxis=dict(range=[0, 0.55]),
+                camera=dict(
+                    eye=dict(x=1.5, y=-1.5, z=1.5)  
+                )
+            ),
+            title=f"End-Effector 3D Trajectory Comparison — {episode_name}",
+            legend=dict(x=0.8, y=0.9),
+        )
 
-    # --- Plot 4: Positional Error ---
-    ax_err.plot(ef_error, label='Positional Error (m)', color='black', linewidth=1.5)
-    ax_err.set_ylim(0, 0.2)
-    ax_x.set_title("End-Effector x-Position Over Time")
-    ax_y.set_title("End-Effector y-Position Over Time")
-    ax_z.set_title("End-Effector z-Position Over Time")
-    ax_err.set_title("End-Effector Positional Error")
-    ax_err.set_xlabel("Timestep")
-    ax_z.set_xlabel("Timestep")
-    ax_err.set_ylabel("Error (m)")
-    ax_err.legend()
-    ax_err.grid(True, alpha=0.4)
+        fig.show() # auto-open in browser
+        # plotly_path = f"{output_folder}/tr_efp_{episode_name}.html"
+        # pio.write_html(fig, file=plotly_path, auto_open=False)
+        # print(f"✅ Saved interactive 3D plot: {plotly_path}")
 
-    # --- Plot 5: 3D Trajectory (The New Plot) ---
-    # Plot Ground Truth 3D path
-    ax_3d.plot(ground_truth_pos[:, 0], ground_truth_pos[:, 1], ground_truth_pos[:, 2], label='GT Trajectory', color='red', linewidth=1.2)
-    ax_3d.plot(predicted_pos[:, 0], predicted_pos[:, 1], predicted_pos[:, 2], label='Predicted Trajectory', color='blue', linewidth=1.2)
-    # Mark start and end points
-    ax_3d.scatter(ground_truth_pos[0, 0], ground_truth_pos[0, 1], ground_truth_pos[0, 2], c='k', marker='o', s=20, label='GT Start')
-    ax_3d.scatter(ground_truth_pos[-1, 0], ground_truth_pos[-1, 1], ground_truth_pos[-1, 2], c='r', marker='x', s=50, label='GT End')
-    ax_3d.scatter(predicted_pos[0, 0], predicted_pos[0, 1], predicted_pos[0, 2], c='darkgray', marker='o', s=20, label='Pred Start')
-    ax_3d.scatter(predicted_pos[-1, 0], predicted_pos[-1, 1], predicted_pos[-1, 2], c='blue', marker='x', s=50, label='Pred End')
-    
-    ax_3d.set_xlabel('X (m)')
-    ax_3d.set_ylabel('Y (m)')
-    ax_3d.set_zlabel('Z (m)')
-    ax_3d.set_xlim([0.3, 0.6])
-    ax_3d.set_ylim([-0.15, 0.15])
-    ax_3d.set_zlim([0, 0.55])
-    ax_3d.set_title("End-Effector 3D Trajectory Comparison")
-    ax_3d.legend(loc='best')
-    ax_3d.grid(True, alpha=0.4)
-    plt.tight_layout(rect=[0, 0, 1, 0.96]) # Adjust rect to make space for suptitle
-    ax_3d.view_init(elev=7.5, azim=-60)  # Elevation (up-down) and Azimuth (left-right)
+    if endeffector_plot == True:
+        fig = plt.figure(figsize=(15, 15))
+        fig.suptitle(f"End-Effector Plots of Ground-Truth and Prediction of {episode_name}", fontsize=16)
+        fig.text(0.5, 0.95, f"model: {model_name}", fontsize=11, ha='center', va='top')
+                
+        ax_x = fig.add_subplot(5, 2, 1) # Plot 1: X vs Time (Top-Left)
+        ax_y = fig.add_subplot(5, 2, 2, sharex=ax_x) # Plot 2: Y vs Time (Top-Right)
+        ax_z = fig.add_subplot(5, 2, 3, sharex=ax_x) # Plot 3: Z vs Time (Middle-Left)
+        ax_err = fig.add_subplot(5, 2, 4, sharex=ax_x) # Plot 4: Positional Error (Middle-Right)
+        ax_3d = fig.add_subplot(5, 2, (5, 10), projection='3d') # Plot 5: 3D Trajectory (Bottom, spanning two columns)
+        axes = [ax_x, ax_y, ax_z] 
+        labels = ['X Position (m)', 'Y Position (m)', 'Z Position (m)']
+        
+        # --- Plot 1, 2, 3: X, Y, Z Axes over Time ---
+        for i in range(3):
+            axes[i].plot(ground_truth_pos[:, i], label=f'GT {labels[i][0]}', color='red', alpha=0.7, linewidth=1.5)
+            axes[i].plot(predicted_pos[:, i], label=f'Predicted {labels[i][0]}', color='blue', linewidth=1.5)
+            axes[i].set_ylabel(labels[i])
+            axes[i].legend(loc='lower right')
+            axes[i].grid(True, alpha=0.4)
+            if i == 2:
+                axes[i].set_xlabel("Timestep") # Only label X-axis on the bottom-most time plot
 
-    combined_path = f"{output_folder}/tr_efp_{episode_name}.png"
-    plt.savefig(combined_path, dpi=250)
-    plt.close(fig)
-    print(f"✅ Saved end-effector position plots: {combined_path}")
+        # --- Plot 4: Positional Error ---
+        ax_err.plot(ef_error, label='Positional Error (m)', color='black', linewidth=1.5)
+        ax_err.set_ylim(0, 0.2)
+        ax_x.set_title("End-Effector x-Position Over Time")
+        ax_y.set_title("End-Effector y-Position Over Time")
+        ax_z.set_title("End-Effector z-Position Over Time")
+        ax_err.set_title("End-Effector Positional Error")
+        ax_err.set_xlabel("Timestep")
+        ax_z.set_xlabel("Timestep")
+        ax_err.set_ylabel("Error (m)")
+        ax_err.legend()
+        ax_err.grid(True, alpha=0.4)
+
+        # --- Plot 5: 3D Trajectory (The New Plot) ---
+        # Plot Ground Truth 3D path
+        ax_3d.plot(ground_truth_pos[:, 0], ground_truth_pos[:, 1], ground_truth_pos[:, 2], label='GT Trajectory', color='red', linewidth=1.2)
+        ax_3d.plot(predicted_pos[:, 0], predicted_pos[:, 1], predicted_pos[:, 2], label='Predicted Trajectory', color='blue', linewidth=1.2)
+        # Mark start and end points
+        ax_3d.scatter(ground_truth_pos[0, 0], ground_truth_pos[0, 1], ground_truth_pos[0, 2], c='k', marker='o', s=20, label='GT Start')
+        ax_3d.scatter(ground_truth_pos[-1, 0], ground_truth_pos[-1, 1], ground_truth_pos[-1, 2], c='r', marker='x', s=50, label='GT End')
+        ax_3d.scatter(predicted_pos[0, 0], predicted_pos[0, 1], predicted_pos[0, 2], c='darkgray', marker='o', s=20, label='Pred Start')
+        ax_3d.scatter(predicted_pos[-1, 0], predicted_pos[-1, 1], predicted_pos[-1, 2], c='blue', marker='x', s=50, label='Pred End')
+        
+        ax_3d.set_xlabel('X (m)')
+        ax_3d.set_ylabel('Y (m)')
+        ax_3d.set_zlabel('Z (m)')
+        ax_3d.set_xlim([0.3, 0.6])
+        ax_3d.set_ylim([-0.15, 0.15])
+        ax_3d.set_zlim([0, 0.55])
+        ax_3d.set_title("End-Effector 3D Trajectory Comparison")
+        ax_3d.legend(loc='best')
+        ax_3d.grid(True, alpha=0.4)
+        plt.tight_layout(rect=[0, 0, 1, 0.96]) # Adjust rect to make space for suptitle
+        ax_3d.view_init(elev=7.5, azim=-60)  # Elevation (up-down) and Azimuth (left-right)
+
+        combined_path = f"{output_folder}/tr_efp_{episode_name}.png"
+        plt.savefig(combined_path, dpi=250)
+        plt.close(fig)
+        print(f"✅ Saved end-effector position plots: {combined_path}")
 
 
     ############### Combined: Attention plot + 6 evenly spaced images
@@ -389,6 +444,8 @@ for episode_name in episode_names:
     plt.savefig(combined_path, dpi=250)
     plt.close(fig)
     print(f"✅ Saved attention + images combined plot: {combined_path}")
+
+
 
 
     # Visualization (unchanged content) 
