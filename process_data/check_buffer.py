@@ -147,12 +147,13 @@ def plot_buffer(buf_path, output_dir=None, step=1):
     print(f"✅ Saved {out_act}")
 
     # Plot: States zoomed in
-    only_first_datapoints = 900
+    from_first_datapoints = 1000
+    only_first_datapoints = 1800
     fig, axes = plt.subplots(7, 1, figsize=(12, 14), sharex=True)
     fig.suptitle(f"All States (Ext. Torques) from Buffer of {dataset_name} (first {only_first_datapoints} datapoints)", fontsize=16, y=0.96)
     for j in range(min(7, states.shape[1])):
         ax = axes[j]
-        ax.plot(t[:only_first_datapoints], states[:only_first_datapoints, j], color="blue", linewidth=1.0, alpha=0.7)
+        ax.plot(t[from_first_datapoints:only_first_datapoints], states[from_first_datapoints:only_first_datapoints, j], color="blue", linewidth=1.0, alpha=0.7)
         ax.set_ylabel(f"State {j+1}")
         ax.grid(True, alpha=0.3)
     axes[-1].set_xlabel("Frame index")
@@ -163,12 +164,11 @@ def plot_buffer(buf_path, output_dir=None, step=1):
     print(f"✅ Saved {out_state}")
 
     # Plot: Actions zoomed in
-    only_first_datapoints = 900
     fig, axes = plt.subplots(7, 1, figsize=(12, 14), sharex=True)
     fig.suptitle(f"All Actions (Joint Angles) from Buffer of {dataset_name} (first {only_first_datapoints} datapoints)", fontsize=16, y=0.96)
     for j in range(min(7, actions.shape[1])):
         ax = axes[j]
-        ax.plot(t[:only_first_datapoints], actions[:only_first_datapoints, j], color="red", linewidth=1.0, alpha=0.7)
+        ax.plot(t[from_first_datapoints:only_first_datapoints], actions[from_first_datapoints:only_first_datapoints, j], color="red", linewidth=1.0, alpha=0.7)
         ax.set_ylabel(f"Act {j+1} [rad]")
         ax.grid(True, alpha=0.3)
     axes[-1].set_xlabel("Frame index")

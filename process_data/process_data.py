@@ -63,8 +63,15 @@ def main(cfg: DictConfig):
     # initialize topics
     all_topics = state_obs_topics + rgb_obs_topics + action_topics
     
-    all_episodes = sorted([f for f in data_folder.iterdir() if f.name.startswith('ep_') and f.name.endswith('.pkl')])
-    
+    def extract_ep_index(path):
+        name = path.stem  # e.g., "ep_12"
+        return int(name.split("_")[1])
+
+    all_episodes = sorted(
+        [f for f in data_folder.iterdir() if f.name.startswith("ep_") and f.name.endswith(".pkl")],
+        key=extract_ep_index
+    )
+
     trajectories = []
     all_states = []
     all_actions = []
