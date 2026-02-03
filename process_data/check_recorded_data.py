@@ -405,7 +405,7 @@ if __name__ == '__main__':
     ################# Single File Visualization #################
 
     episode_name = "ep_04"  ## SELECT EPISODE HERE ####
-    pkl_path = Path(f"/home/ferdinand/factr_project/factr/process_data/data_to_process/bld_stiff/data/{episode_name}.pkl")
+    pkl_path = Path(f"/home/ferdinand/activeinference/factr/process_data/data_to_process/bld_stiff/data/{episode_name}.pkl")
 
     median_filter_torque = False
     median_filter_kernel_size_torque = 3

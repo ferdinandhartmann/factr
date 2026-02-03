@@ -46,10 +46,13 @@ def generate_robobuf(trajectories):
         num_steps = traj['num_steps']
         actions = traj['actions']
         states = traj['states']
+        goals = traj.get('goals')
         for i in range(num_steps):
             obs = {
                 'state': states[i],
             }
+            if goals is not None:
+                obs['goals'] = goals[i]
             for k, v in traj.items():
                 if k.startswith('enc_cam_'):
                     obs[k] = v[i]

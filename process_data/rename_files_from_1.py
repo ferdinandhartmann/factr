@@ -1,7 +1,7 @@
 import os
 
 # Folder containing your .pkl files
-FOLDER = "/home/ferdinand/factr_project/factr/process_data/data_to_process/bld_soft/data/"   # "." means current folder; change if needed
+FOLDER = "/home/ferdinand/activeinference/factr/process_data/data_to_process/bld_soft/data/"   # "." means current folder; change if needed
 
 PREFIX = "ep_"
 EXT = ".pkl"
