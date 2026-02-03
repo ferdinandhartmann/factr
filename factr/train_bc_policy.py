@@ -5,22 +5,21 @@
 
 
 import os
+import random
 import traceback
+from copy import deepcopy
+from pathlib import Path
 
-import numpy as np
+import hydra
+import pytorch_lightning as pl
 import torch
 import tqdm
 from omegaconf import DictConfig, OmegaConf
-import yaml
 
-import hydra
 from factr import misc, transforms
-from copy import deepcopy
-from pathlib import Path
-import random
-import pytorch_lightning as pl
 
 base_path = os.path.dirname(os.path.abspath(__file__))
+
 
 def torch_fix_seed(seed: int = 42) -> None:
     """
@@ -33,8 +32,9 @@ def torch_fix_seed(seed: int = 42) -> None:
     random.seed(seed)
     pl.seed_everything(seed, workers=True)
     torch.set_float32_matmul_precision("medium")
-    torch.backends.cudnn.benchmark = False 
-    torch.backends.cudnn.deterministic = True #impacts speed but ensures reproducibility
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True  # impacts speed but ensures reproducibility
+
 
 @hydra.main(config_path="cfg", config_name="train_bc.yaml")
 def train_bc(cfg: DictConfig):
@@ -52,7 +52,7 @@ def train_bc(cfg: DictConfig):
             rollout_dir.mkdir()
             with open(rollout_dir / "agent_config.yaml", "w") as f:
                 inference_config = deepcopy(cfg.agent)
-                inference_config.features.restore_path = ''
+                inference_config.features.restore_path = ""
                 agent_yaml = OmegaConf.to_yaml(inference_config, resolve=True)
                 f.write(agent_yaml)
             with open(rollout_dir / "exp_config.yaml", "w") as f:
@@ -67,15 +67,11 @@ def train_bc(cfg: DictConfig):
         trainer = hydra.utils.instantiate(cfg.trainer, model=agent, device_id=0)
 
         # build task, replay buffer, and dataloader
-        task = hydra.utils.instantiate(
-            cfg.task, batch_size=cfg.batch_size, num_workers=cfg.num_workers
-        )
+        task = hydra.utils.instantiate(cfg.task, batch_size=cfg.batch_size, num_workers=cfg.num_workers)
 
         # create a gpu train transform (if used)
         gpu_transform = (
-            transforms.get_gpu_transform_by_name(cfg.train_transform)
-            if "gpu" in cfg.train_transform
-            else None
+            transforms.get_gpu_transform_by_name(cfg.train_transform) if "gpu" in cfg.train_transform else None
         )
 
         # restore/save the model as required
@@ -91,9 +87,7 @@ def train_bc(cfg: DictConfig):
 
         trainer.set_train()
         train_iterator = iter(task.train_loader)
-        for itr in (
-            pbar := tqdm.tqdm(range(cfg.max_iterations), postfix=dict(Loss=None))
-        ):
+        for itr in (pbar := tqdm.tqdm(range(cfg.max_iterations), postfix=dict(Loss=None))):
             if itr < misc.GLOBAL_STEP:
                 continue
 
@@ -110,7 +104,7 @@ def train_bc(cfg: DictConfig):
                 imgs = {k: v.to(trainer.device_id) for k, v in imgs.items()}
                 imgs = {k: gpu_transform(v) for k, v in imgs.items()}
                 batch = ((imgs, obs), actions, mask)
-        
+
             trainer.optim.zero_grad()
             loss = trainer.training_step(batch, misc.GLOBAL_STEP)
             if loss.ndim > 0:

@@ -1,40 +1,40 @@
-
 import pickle
-import numpy as np
-import matplotlib.pyplot as plt
 from pathlib import Path
-import os
-from PIL import Image
-import sys
-from typing import List, Any
+from typing import Any, List
+
+import matplotlib.pyplot as plt
+import numpy as np
+
 
 def load_data(data_path):
     """Load data from pkl file."""
     data_path = Path(data_path)
-    if data_path.suffix == '.pkl':
-        with open(data_path, 'rb') as f:
+    if data_path.suffix == ".pkl":
+        with open(data_path, "rb") as f:
             return pickle.load(f)
     else:
         raise ValueError(f"Unsupported file format: {data_path.suffix}. Must be .pkl")
 
+
 def extract_topic_data(pkl_data, topic_name):
     """Extract data for a specific topic from pkl format."""
-    if topic_name not in pkl_data['data']:
+    if topic_name not in pkl_data["data"]:
         return None, None
-    
-    data = pkl_data['data'][topic_name]
-    timestamps = pkl_data['timestamps'][topic_name]
-    
+
+    data = pkl_data["data"][topic_name]
+    timestamps = pkl_data["timestamps"][topic_name]
+
     return data, timestamps
+
 
 def safe_extract_7d_data(data_list: List[Any], key: str) -> np.ndarray:
     """
-    Safely extracts 7-dimensional joint data ('position' or 'effort') 
-    from the list of dictionary entries. 
+    Safely extracts 7-dimensional joint data ('position' or 'effort')
+    from the list of dictionary entries.
     Guarantees a 2D array (N, 7), padding with NaN for corrupt/missing entries.
     """
     processed_data = []
-        
+
     if data_list is None:
         print("Data list is None. Returning empty array.")
         return np.full((0, 7), np.nan, dtype=np.float32)
@@ -53,12 +53,11 @@ def safe_extract_7d_data(data_list: List[Any], key: str) -> np.ndarray:
             # Missing key
             print(f"Missing key: {key} in data entry: {d}")
             processed_data.append([np.nan] * 7)
-            
+
     # Convert to NumPy array with float dtype to allow NaNs
     result = np.array(processed_data, dtype=np.float32)
     print(f"Processed data shape: {result.shape}")
     return result
-
 
 
 def plot_all_traj_in_one_plot(data_path, output_dir, step=1):
@@ -78,11 +77,11 @@ def plot_all_traj_in_one_plot(data_path, output_dir, step=1):
 
     topics = {
         # 'franka_state': '/franka/right/obs_franka_state',
-        'external_torques_broadcaster': '/franka_robot_state_broadcaster/external_joint_torques',
+        "external_torques_broadcaster": "/franka_robot_state_broadcaster/external_joint_torques",
         # 'franka_torque_leader': '/franka/right/obs_franka_torque',
         # 'impedance_cmd': '/joint_impedance_command_controller/joint_trajectory',
-        'impedance_cmd': '/joint_impedance_dynamic_gain_controller/joint_impedance_command',
-        'measured_joints': '/franka_robot_state_broadcaster/measured_joint_states',
+        "impedance_cmd": "/joint_impedance_dynamic_gain_controller/joint_impedance_command",
+        "measured_joints": "/franka_robot_state_broadcaster/measured_joint_states",
     }
 
     pkl_files = sorted(data_path.glob("*.pkl"))
@@ -96,18 +95,18 @@ def plot_all_traj_in_one_plot(data_path, output_dir, step=1):
         pkl_data = load_data(pkl_file)
 
         # Extract per-topic raw data (ignore timestamps entirely)
-        meas_data, _ = extract_topic_data(pkl_data, topics['measured_joints'])
-        cmd_data, _ = extract_topic_data(pkl_data, topics['impedance_cmd'])
+        meas_data, _ = extract_topic_data(pkl_data, topics["measured_joints"])
+        cmd_data, _ = extract_topic_data(pkl_data, topics["impedance_cmd"])
         # obs_state_data, _ = extract_topic_data(pkl_data, topics['franka_state'])
-        torq_brd_data, _ = extract_topic_data(pkl_data, topics['external_torques_broadcaster'])
+        torq_brd_data, _ = extract_topic_data(pkl_data, topics["external_torques_broadcaster"])
         # torq_obs_data, _ = extract_topic_data(pkl_data, topics['franka_torque_leader'])
 
         # Convert to (N, 7) arrays; allow None if missing
-        meas_pos = safe_extract_7d_data(meas_data, 'position')            # (N,7) or None
-        cmd_pos = safe_extract_7d_data(cmd_data, 'position')              # (N,7) or None
-        # obs_pos = safe_extract_7d_data(obs_state_data, 'position')        # (N,7) or None
-        brd_torq = safe_extract_7d_data(torq_brd_data, 'effort')          # (N,7) or None
-        # obs_torq = safe_extract_7d_data(torq_obs_data, 'effort')          # (N,7) or None
+        meas_pos = safe_extract_7d_data(meas_data, "position")  # (N,7) or None # type: ignore
+        cmd_pos = safe_extract_7d_data(cmd_data, "position")  # (N,7) or None # type: ignore
+        # obs_pos = safe_extract_7d_data(obs_state_data, 'position')        # (N,7) or None # type: ignore
+        brd_torq = safe_extract_7d_data(torq_brd_data, "effort")  # (N,7) or None # type: ignore
+        # obs_torq = safe_extract_7d_data(torq_obs_data, 'effort')          # (N,7) or None # type: ignore
 
         # Trim by min length so each group shares the SAME x indices within this file
         def trim_minlen(arrs):
@@ -140,16 +139,18 @@ def plot_all_traj_in_one_plot(data_path, output_dir, step=1):
         #         # if obs_torq_t is not None: obs_torq_t = obs_torq_t[::step]
 
         if any(v is not None for v in [cmd_pos_t, brd_torq_t]):
-            entries.append({
-                'name': pkl_file.stem,
-                'x_pos': x_pos,
-                'meas_pos': meas_pos_t,
-                'cmd_pos': cmd_pos_t,
-                # 'obs_pos': obs_pos_t,
-                'x_tq': x_tq,
-                'brd_torq': brd_torq_t,
-                # 'obs_torq': obs_torq_t
-            })
+            entries.append(
+                {
+                    "name": pkl_file.stem,
+                    "x_pos": x_pos,
+                    "meas_pos": meas_pos_t,
+                    "cmd_pos": cmd_pos_t,
+                    # 'obs_pos': obs_pos_t,
+                    "x_tq": x_tq,
+                    "brd_torq": brd_torq_t,
+                    # 'obs_torq': obs_torq_t
+                }
+            )
         else:
             print(f"⚠️ {pkl_file.name}: no usable arrays after trimming.")
 
@@ -166,7 +167,7 @@ def plot_all_traj_in_one_plot(data_path, output_dir, step=1):
 
     for j in range(7):
         # all_obs_pos_j = np.concatenate([e['obs_pos'][:, j] for e in entries if e['obs_pos'] is not None], axis=0)
-        all_cmd_pos_j = np.concatenate([e['cmd_pos'][:, j] for e in entries if e['cmd_pos'] is not None], axis=0)
+        all_cmd_pos_j = np.concatenate([e["cmd_pos"][:, j] for e in entries if e["cmd_pos"] is not None], axis=0)
         y_min_pos.append(all_cmd_pos_j.min() - 0.1)
         y_max_pos.append(all_cmd_pos_j.max() + 0.1)
     # Overlay plot: Positions
@@ -177,7 +178,7 @@ def plot_all_traj_in_one_plot(data_path, output_dir, step=1):
     # for j in range(7):
     #     ax = axes[j]
     #     for e in entries:
-    #         if e['x_pos'] is None: 
+    #         if e['x_pos'] is None:
     #             continue
     #         if e['obs_pos'] is not None:
     #             ax.plot(e['x_pos'], e['obs_pos'][:, j],   alpha=0.3, linewidth=1.0, color='blue', label=f"{e['name']} obs")
@@ -195,7 +196,7 @@ def plot_all_traj_in_one_plot(data_path, output_dir, step=1):
     # plt.savefig(out_pos, dpi=150)
     # plt.close(fig)
     # print(f"✅ Saved {out_pos}")
-    
+
     colours_direction = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728"]
     labels_direction = ["right", "front", "left", "back"]
 
@@ -205,16 +206,23 @@ def plot_all_traj_in_one_plot(data_path, output_dir, step=1):
     for j in range(7):
         ax = axes[j]
         for idx, e in enumerate(entries):
-            if e['x_pos'] is None: 
+            if e["x_pos"] is None:
                 continue
-            if e['cmd_pos'] is not None:
-                ax.plot(e['x_pos'], e['cmd_pos'][:, j], alpha=0.5, linewidth=1.0, color=colours_direction[idx % len(colours_direction)], label=labels_direction[idx % len(labels_direction)] if idx < len(labels_direction) else None)
+            if e["cmd_pos"] is not None:
+                ax.plot(
+                    e["x_pos"],
+                    e["cmd_pos"][:, j],
+                    alpha=0.5,
+                    linewidth=1.0,
+                    color=colours_direction[idx % len(colours_direction)],
+                    label=labels_direction[idx % len(labels_direction)] if idx < len(labels_direction) else None,
+                )
                 ax.set_ylim(y_min_pos[j], y_max_pos[j])
-        ax.set_ylabel(f"J{j+1} [rad]")
+        ax.set_ylabel(f"J{j + 1} [rad]")
         ax.grid(True, alpha=0.3)
-        ax.legend(loc='upper left', fontsize=10)
+        ax.legend(loc="upper left", fontsize=10)
     axes[-1].set_xlabel("Dataset Index")
-    plt.tight_layout(rect=[0.03, 0.03, 0.97, 0.96])
+    plt.tight_layout(rect=(0.03, 0.03, 0.97, 0.96))
     out_pos = output_dir / f"allplot_{dataset_name}_positions_traj.png"
     plt.savefig(out_pos, dpi=150)
     plt.close(fig)
@@ -226,7 +234,7 @@ def plot_all_traj_in_one_plot(data_path, output_dir, step=1):
     # for j in range(7):
     #     ax = axes[j]
     #     for e in entries[:20]:
-    #         if e['x_pos'] is None: 
+    #         if e['x_pos'] is None:
     #             continue
     #         if e['cmd_pos'] is not None:
     #             ax.plot(e['x_pos'], e['cmd_pos'][:, j],   alpha=0.5, linewidth=1.8, color='red', label=f"{e['name']} cmd")
@@ -241,7 +249,6 @@ def plot_all_traj_in_one_plot(data_path, output_dir, step=1):
     # plt.close(fig)
     # print(f"✅ Saved {out_pos}")
 
-
     # ------------------------------
     # Overlay plot: Torques
     # ------------------------------
@@ -251,15 +258,22 @@ def plot_all_traj_in_one_plot(data_path, output_dir, step=1):
     for j in range(7):
         ax = axes[j]
         for idx, e in enumerate(entries):
-            if e['x_tq'] is None:
+            if e["x_tq"] is None:
                 continue
-            if e['brd_torq'] is not None:
-                ax.plot(e['x_tq'], e['brd_torq'][:, j], alpha=0.4, linewidth=1.0, color=colours_direction[idx % len(colours_direction)], label=labels_direction[idx % len(labels_direction)] if idx < len(labels_direction) else None)
-        ax.set_ylabel(f"J{j+1} [Nm]")
+            if e["brd_torq"] is not None:
+                ax.plot(
+                    e["x_tq"],
+                    e["brd_torq"][:, j],
+                    alpha=0.4,
+                    linewidth=1.0,
+                    color=colours_direction[idx % len(colours_direction)],
+                    label=labels_direction[idx % len(labels_direction)] if idx < len(labels_direction) else None,
+                )
+        ax.set_ylabel(f"J{j + 1} [Nm]")
         ax.grid(True, alpha=0.3)
-        ax.legend(loc='upper left', fontsize=10)
+        ax.legend(loc="upper left", fontsize=10)
     axes[-1].set_xlabel("Dataset Index")
-    plt.tight_layout(rect=[0.03, 0.03, 0.97, 0.96])
+    plt.tight_layout(rect=(0.03, 0.03, 0.97, 0.96))
     out_tq = output_dir / f"allplot_{dataset_name}_torques_broadcasted.png"
     plt.savefig(out_tq, dpi=150)
     plt.close(fig)
@@ -287,10 +301,7 @@ def plot_all_traj_in_one_plot(data_path, output_dir, step=1):
     print("🎯 Done: All all-plots created.")
 
 
-
-
-if __name__ == '__main__':
-
+if __name__ == "__main__":
     ################### All Data in one plot ###################
 
     dataset_folder = Path("/home/ferdinand/factr_project/factr/process_data/data_to_process/bld_soft/data/")

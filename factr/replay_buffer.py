@@ -16,11 +16,14 @@ from robobuf import ReplayBuffer as RB
 from tensorflow.io import gfile
 from torch.utils.data import Dataset, IterableDataset
 
+
 # helper functions
-_img_to_tensor = (
-    lambda x: torch.from_numpy(x.copy()).permute((0, 3, 1, 2)).float() / 255
-)
-_to_tensor = lambda x: torch.from_numpy(x).float()
+def _img_to_tensor(x):
+    return torch.from_numpy(x.copy()).permute((0, 3, 1, 2)).float() / 255
+
+
+def _to_tensor(x):
+    return torch.from_numpy(x).float()
 
 
 # cache loading from the buffer list to half memory overhead
@@ -71,24 +74,14 @@ class ReplayBuffer(Dataset):
         rng.shuffle(buffer_data)
 
         # split data according to mode
-        buffer_data = (
-            buffer_data[:n_train_demos]
-            if mode == "train"
-            else buffer_data[n_train_demos:]
-        )
+        buffer_data = buffer_data[:n_train_demos] if mode == "train" else buffer_data[n_train_demos:]
 
         self.transform = transform
-        self.use_indices = (
-            np.asarray(use_indices, dtype=np.int64)
-            if use_indices is not None
-            else None
-        )
+        self.use_indices = np.asarray(use_indices, dtype=np.int64) if use_indices is not None else None
         self.s_a_mask = []
         for traj in tqdm.tqdm(buffer_data):
             imgs, obs, acs = traj["images"], traj["observations"], traj["actions"]
-            assert len(obs) == len(acs) and len(acs) == len(
-                imgs
-            ), "All time dimensions must match!"
+            assert len(obs) == len(acs) and len(acs) == len(imgs), "All time dimensions must match!"
 
             # pad camera dimension if needed
             if len(imgs.shape) == 4:
@@ -121,9 +114,7 @@ class ReplayBuffer(Dataset):
 
         o_t, a_t = _to_tensor(o_t), _to_tensor(a_t)
         loss_mask = _to_tensor(loss_mask)[:, None].repeat((1, a_t.shape[-1]))
-        assert (
-            loss_mask.shape[0] == a_t.shape[0]
-        ), "a_t and mask shape must be ac_chunk!"
+        assert loss_mask.shape[0] == a_t.shape[0], "a_t and mask shape must be ac_chunk!"
 
         return (i_t, o_t), a_t, loss_mask
 
@@ -162,7 +153,7 @@ class RobobufReplayBuffer(ReplayBuffer):
     ):
         assert mode in ("train", "test"), "Mode must be train/test"
         buf = _cached_load(buffer_path)
-        
+
         n_test_trans = int(len(buf) * n_test_ratio)
 
         norm_file = os.path.join(os.path.dirname(buffer_path), "ac_norm.json")
@@ -174,27 +165,20 @@ class RobobufReplayBuffer(ReplayBuffer):
 
         index_list = list(range(len(buf)))
         # split data according to mode
-        index_list = (
-            index_list[:-n_test_trans] if mode == "train" else index_list[-n_test_trans:]
-        )
-        
+        index_list = index_list[:-n_test_trans] if mode == "train" else index_list[-n_test_trans:]
+
         # get and shuffle list of buf indices
         if shuffle:
             rng.shuffle(index_list)
-            
+
         self.transform = transform
-        self.use_indices = (
-            np.asarray(use_indices, dtype=np.int64)
-            if use_indices is not None
-            else None
-        )
+        self.use_indices = np.asarray(use_indices, dtype=np.int64) if use_indices is not None else None
         self.s_a_mask = []
 
         self.cam_indexes = cam_indexes = list(cam_indexes)
         self.past_frames = past_frames
         print(f"Building {mode} buffer with cam_indexes={cam_indexes}")
 
-    
         for idx in tqdm.tqdm(index_list):
             t = buf[idx]
 
@@ -237,7 +221,5 @@ class RobobufReplayBuffer(ReplayBuffer):
             o_t = o_t[self.use_indices]
         o_t, a_t = _to_tensor(o_t), _to_tensor(a_t)
         loss_mask = _to_tensor(loss_mask)[:, None].repeat((1, a_t.shape[-1]))
-        assert (
-            loss_mask.shape[0] == a_t.shape[0]
-        ), "a_t and mask shape must be ac_chunk!"
+        assert loss_mask.shape[0] == a_t.shape[0], "a_t and mask shape must be ac_chunk!"
         return (i_t, o_t), a_t, loss_mask

@@ -12,6 +12,20 @@ The following topics are included in the `.pkl` file:
 - `/realsense/arm/depth`
 ```
 
+[tool.black]
+
+line-length = 120
+
+target-version = ['py39']
+
+include = '\.pyi?$'
+
+extend-exclude = '/(\.git|\.hg|\.mypy_cache|\.tox|\.venv|build|dist)/'
+
+
+
+
+
 # 🦾 FACTR Teleoperation Topics Overview
 
 | **Topic** | **Publisher** | **Type** | **Direction** | **Description** |

@@ -8,32 +8,32 @@
 # ELECTRA https://github.com/google-research/electra
 # BEiT: https://github.com/microsoft/unilm/tree/master/beit
 # --------------------------------------------------------
-#From MAE codebase #
-import json
+# From MAE codebase #
 
 
-
-def param_groups_lrd(model, weight_decay=0.05, no_weight_decay_list=[], layer_decay=.75,):
-    '''Currently only supports vit-transformer model'''
+def param_groups_lrd(
+    model,
+    weight_decay=0.05,
+    no_weight_decay_list=[],
+    layer_decay=0.75,
+):
+    """Currently only supports vit-transformer model"""
     vit_groups = []
     for vit_model in model.visual_features:
-        vit_groups += vit_param_groups_lrd(vit_model,  weight_decay, no_weight_decay_list, layer_decay)
-    
-    rem_group = {   "lr_scale": 1,
-                    "weight_decay": weight_decay,
-                    "params": [] 
-                }
+        vit_groups += vit_param_groups_lrd(vit_model, weight_decay, no_weight_decay_list, layer_decay)
+
+    rem_group = {"lr_scale": 1, "weight_decay": weight_decay, "params": []}
     for n, p in model.named_parameters():
         if not p.requires_grad:
             continue
 
-        if not n.startswith('visual_features.'):
+        if not n.startswith("visual_features."):
             rem_group["params"].append(p)
-    
+
     return vit_groups + [rem_group]
 
 
-def vit_param_groups_lrd(vit_model, weight_decay=0.05, no_weight_decay_list=[], layer_decay=.75, name_prefix=''):
+def vit_param_groups_lrd(vit_model, weight_decay=0.05, no_weight_decay_list=[], layer_decay=0.75, name_prefix=""):
     """
     Parameter groups for layer-wise lr decay
     Following BEiT: https://github.com/microsoft/unilm/blob/master/beit/optim_factory.py#L58
@@ -52,11 +52,11 @@ def vit_param_groups_lrd(vit_model, weight_decay=0.05, no_weight_decay_list=[], 
         # no decay: all 1D parameters and model specific ones
         if p.ndim == 1 or n in no_weight_decay_list:
             g_decay = "no_decay"
-            this_decay = 0.
+            this_decay = 0.0
         else:
             g_decay = "decay"
             this_decay = weight_decay
-            
+
         layer_id = get_layer_id_for_vit(n, num_layers)
         group_name = name_prefix + "_layer_%d_%s" % (layer_id, g_decay)
 
@@ -86,11 +86,11 @@ def get_layer_id_for_vit(name, num_layers):
     Assign a parameter with its layer id
     Following BEiT: https://github.com/microsoft/unilm/blob/master/beit/optim_factory.py#L33
     """
-    if name in ['cls_token', 'pos_embed']:
+    if name in ["cls_token", "pos_embed"]:
         return 0
-    elif name.startswith('patch_embed'):
+    elif name.startswith("patch_embed"):
         return 0
-    elif name.startswith('blocks'):
-        return int(name.split('.')[1]) + 1
+    elif name.startswith("blocks"):
+        return int(name.split(".")[1]) + 1
     else:
         return num_layers

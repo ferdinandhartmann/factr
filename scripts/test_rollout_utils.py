@@ -1,19 +1,14 @@
-import torch
 import pickle
-import numpy as np
-import cv2
 from pathlib import Path
-import matplotlib.pyplot as plt
-from tqdm import tqdm
-from omegaconf import OmegaConf
+from typing import Any, List
+
+import cv2
+import numpy as np
+import roboticstoolbox as rtb
+import torch
 from hydra.utils import instantiate
 from omegaconf import OmegaConf
-import yaml
-import os
-import copy
-from typing import List, Any
-import roboticstoolbox as rtb
-from mpl_toolkits.mplot3d import Axes3D
+
 
 def load_and_prepare_policy(exp_cfg_path, ckpt_path, device):
     """
@@ -75,22 +70,29 @@ def load_and_prepare_policy(exp_cfg_path, ckpt_path, device):
 
     return policy
 
-def load_and_extract_raw_data(pkl_path: Path, downsample=False, image_topic="/realsense/front/im", obs_topic="/franka_robot_state_broadcaster/external_joint_torques", action_topic="/joint_impedance_dynamic_gain_controller/joint_impedance_command"):
+
+def load_and_extract_raw_data(
+    pkl_path: Path,
+    downsample=False,
+    image_topic="/realsense/front/im",
+    obs_topic="/franka_robot_state_broadcaster/external_joint_torques",
+    action_topic="/joint_impedance_dynamic_gain_controller/joint_impedance_command",
+):
     """
-    Load the raw pickle file and extract/process image, state (torque), 
+    Load the raw pickle file and extract/process image, state (torque),
     and action data, ensuring images are proper NumPy arrays.
     """
     with open(pkl_path, "rb") as f:
         raw_data = pickle.load(f)
     print(f"✅ Loaded raw data from {pkl_path}")
-    
+
     image_obs, torque_obs, actions = [], [], []
 
     if "data" not in raw_data:
         raise ValueError("Unknown data structure: 'data' key not found in raw PKL file.")
 
     entries = raw_data["data"]
-    
+
     # --- 1. Extract Data ---
     for topic, values in entries.items():
         if image_topic in topic:
@@ -101,21 +103,21 @@ def load_and_extract_raw_data(pkl_path: Path, downsample=False, image_topic="/re
                     try:
                         # 1. Load raw buffer as a flat uint8 array
                         img_flat = np.frombuffer(v["data"], dtype=np.uint8)
-                        
+
                         # 2. Reshape the 1D buffer into a 2D/3D image array (H, W, C)
                         # -1 calculates the number of channels (C) automatically.
                         img = img_flat.reshape((v["height"], v["width"], -1))
-                        
+
                         # 3. Validation: Ensure it is a valid multi-dimensional array
                         if img.ndim >= 2 and img.dtype == np.uint8:
                             imgs.append(img)
                         else:
-                            print(f"⚠️ Image skip: Reshape failed or incorrect type.")
+                            print("⚠️ Image skip: Reshape failed or incorrect type.")
                     except Exception as e:
                         # Catches errors like dimension mismatch during reshape
                         print(f"⚠️ Image skip due to reshape error: {e}")
             image_obs.extend(imgs)
-            
+
         elif action_topic in topic:
             for v in values:
                 if isinstance(v, dict) and "position" in v:
@@ -132,7 +134,7 @@ def load_and_extract_raw_data(pkl_path: Path, downsample=False, image_topic="/re
     # Convert lists to NumPy arrays
     torque_obs = np.array(torque_obs)
     actions = np.array(actions)
-    final_image_obs = image_obs # Use dtype=object to hold different HxWxC arrays
+    final_image_obs = image_obs  # Use dtype=object to hold different HxWxC arrays
 
     # Dummy state check (simplified, assuming this is handled robustly in the full script)
     if len(torque_obs) == 0 and len(actions) > 0:
@@ -143,8 +145,8 @@ def load_and_extract_raw_data(pkl_path: Path, downsample=False, image_topic="/re
     if downsample:
         # Downsampling logic (as per your original script's output, simplified for this function block)
         target_freq = 25.0
-        avg_freq = 50.0 # Assumed default from your log output  
-        step = int(np.floor(avg_freq / target_freq)) # step = 2
+        avg_freq = 50.0  # Assumed default from your log output
+        step = int(np.floor(avg_freq / target_freq))  # step = 2
         final_image_obs = final_image_obs[::step]
         torque_obs = torque_obs[::step]
         actions = actions[::step]
@@ -155,14 +157,14 @@ def load_and_extract_raw_data(pkl_path: Path, downsample=False, image_topic="/re
     final_image_obs = final_image_obs[:N]
     torque_obs = torque_obs[:N]
     actions = actions[:N]
-        
+
     print(f"✅ Extracted image_obs: {len(final_image_obs)} | torque_obs: {torque_obs.shape} | actions: {actions.shape}")
-    
+
     # The returned image array elements are now guaranteed to be np.uint8 arrays
     return final_image_obs, torque_obs, actions
 
-def preprocess_image(img):
 
+def preprocess_image(img):
     # --- FIX: ensure uint8 RGB ---
     if img.dtype == bool:
         img = img.astype(np.uint8) * 255
@@ -177,7 +179,7 @@ def preprocess_image(img):
     if img.shape[:2] != (224, 224):
         img = cv2.resize(img, (224, 224))
 
-    img_tensor = torch.from_numpy(img).float().permute(2, 0, 1)[None] / 255.
+    img_tensor = torch.from_numpy(img).float().permute(2, 0, 1)[None] / 255.0
 
     # normalization
     mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
@@ -186,17 +188,20 @@ def preprocess_image(img):
 
     return img_tensor
 
+
 def load_pkl(path: Path):
     """Load pickle file."""
-    with open(path, 'rb') as f:
+    with open(path, "rb") as f:
         return pickle.load(f)
+
 
 def extract_topic(pkl_data, topic: str):
     """Return (data, timestamps) for topic if exists."""
     return (
-        pkl_data['data'].get(topic, []),
-        pkl_data['timestamps'].get(topic, []),
+        pkl_data["data"].get(topic, []),
+        pkl_data["timestamps"].get(topic, []),
     )
+
 
 def extract_7d(data_list: List[Any], key: str) -> np.ndarray:
     """Extract (N,7) data safely, padding invalid with NaN."""
@@ -208,6 +213,7 @@ def extract_7d(data_list: List[Any], key: str) -> np.ndarray:
         else:
             arr.append([np.nan] * 7)
     return np.array(arr, dtype=np.float32)
+
 
 def get_all_joint_cmds_np(data_path, action_mean, action_std, downsample=False):
     """
@@ -244,8 +250,8 @@ def get_all_joint_cmds_np(data_path, action_mean, action_std, downsample=False):
 
             if downsample:
                 target_freq = 25.0
-                avg_freq = 50.0 # Assumed default from your log output  
-                step = int(np.floor(avg_freq / target_freq)) # step = 2
+                avg_freq = 50.0  # Assumed default from your log output
+                step = int(np.floor(avg_freq / target_freq))  # step = 2
                 # Downsample from 50Hz to 25Hz
                 cmd_pos = cmd_pos[::step]
                 # print(f"🔻 Downsampled joint commands in {pkl_file.name} from ~{avg_freq:.1f} Hz to ~{target_freq:.1f} Hz (step={step})")
@@ -262,13 +268,12 @@ def get_all_joint_cmds_np(data_path, action_mean, action_std, downsample=False):
 
 
 def load_episode_from_buffer(buf_path, episode_idx, cam_key="enc_cam_0"):
-
     with open(buf_path, "rb") as f:
         traj_list = pickle.load(f)
 
     print(f"✅ Loaded buffer from {buf_path}, total episodes: {len(traj_list)}, episode_idx: {episode_idx}")
-    
-    traj = traj_list[episode_idx-1]  # zero-indexed
+
+    traj = traj_list[episode_idx - 1]  # zero-indexed
 
     print(f"--- Extracting episode {episode_idx}, length: {len(traj)} steps ---")
 
@@ -276,12 +281,12 @@ def load_episode_from_buffer(buf_path, episode_idx, cam_key="enc_cam_0"):
     states = []
     actions = []
 
-    for (obs, act, done) in traj:
+    for obs, act, done in traj:
         # ----- 1. Load image -----
         if cam_key not in obs:
             raise KeyError(f"{cam_key} not found in obs dict keys={obs.keys()}")
 
-        enc = obs[cam_key]   # encoded JPEG bytes (np.uint8 array)
+        enc = obs[cam_key]  # encoded JPEG bytes (np.uint8 array)
         img = cv2.imdecode(enc, cv2.IMREAD_COLOR)  # decode JPEG
         if img is None:
             raise ValueError("Failed to decode JPEG from buffer!")
@@ -303,19 +308,18 @@ def load_episode_from_buffer(buf_path, episode_idx, cam_key="enc_cam_0"):
     return images, states, actions
 
 
-
 def calculate_franka_fk(joint_angles_timeseries):
     """
     Calculates the end-effector position (x, y, z) for the Franka Panda robot.
     """
-    robot = rtb.models.Panda() # 1. Load the Franka Panda model (which FR3 uses)
-    
+    robot = rtb.models.Panda()  # 1. Load the Franka Panda model (which FR3 uses)
+
     num_timesteps = joint_angles_timeseries.shape[0]
     ee_positions = np.zeros((num_timesteps, 3))
 
     for t in range(num_timesteps):
         q = joint_angles_timeseries[t, :]
         T = robot.fkine(q)
-        ee_positions[t, :] = T.t 
-        
+        ee_positions[t, :] = T.t
+
     return ee_positions

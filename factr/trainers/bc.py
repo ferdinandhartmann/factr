@@ -28,4 +28,3 @@ class BehaviorCloning(BaseTrainer):
         self.last_train_loss = loss.item()
 
         return loss
-

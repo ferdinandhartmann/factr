@@ -22,9 +22,7 @@ from timm.models.vision_transformer import resize_pos_embed
 class VisionTransformer(timm.models.vision_transformer.VisionTransformer):
     """Vision Transformer with support for global average pooling"""
 
-    def __init__(
-        self, global_pool=False, use_cls=True, mask_ratio=None, del_head=True, **kwargs
-    ):
+    def __init__(self, global_pool=False, use_cls=True, mask_ratio=None, del_head=True, **kwargs):
         super(VisionTransformer, self).__init__(**kwargs)
         assert use_cls and not global_pool, "token counting only works for use_cls mode"
         self.classifier_feature = "use_cls_token"
@@ -61,9 +59,7 @@ class VisionTransformer(timm.models.vision_transformer.VisionTransformer):
         noise = torch.rand(N, L, device=x.device)  # noise in [0, 1]
 
         # sort noise for each sample
-        ids_shuffle = torch.argsort(
-            noise, dim=1
-        )  # ascend: small is keep, large is remove
+        ids_shuffle = torch.argsort(noise, dim=1)  # ascend: small is keep, large is remove
         ids_restore = torch.argsort(ids_shuffle, dim=1)
 
         # keep the first subset
@@ -87,9 +83,7 @@ class VisionTransformer(timm.models.vision_transformer.VisionTransformer):
             outcome = x[:, :1]  # use cls token
         elif self.classifier_feature == "reshape_embedding":
             x = self.norm(x)
-            outcome = reshape_embedding(
-                x[:, 1:]
-            )  # remove cls token and reshape embedding
+            outcome = reshape_embedding(x[:, 1:])  # remove cls token and reshape embedding
         else:
             raise NotImplementedError
 
@@ -128,8 +122,7 @@ class ClipVisionTransformer(VisionTransformer):
         x = self.patch_embed(x)
         x = torch.cat(
             [
-                self.cls_token.squeeze()
-                + torch.zeros(B, 1, x.shape[-1], device=x.device),
+                self.cls_token.squeeze() + torch.zeros(B, 1, x.shape[-1], device=x.device),
                 x,
             ],
             dim=1,
@@ -227,15 +220,11 @@ def load_vit(model, restore_path):
     if restore_path:
         print("Restoring model from", restore_path)
         state_dict = torch.load(restore_path, map_location="cpu", weights_only=False)
-        state_dict = (
-            state_dict["features"] if "features" in state_dict else state_dict["model"]
-        )
+        state_dict = state_dict["features"] if "features" in state_dict else state_dict["model"]
 
         # resize pos_embed if required
         if state_dict["pos_embed"].shape != model.pos_embed.shape:
-            print(
-                f"resizing pos_embed from {state_dict['pos_embed'].shape} to {model.pos_embed.shape}"
-            )
+            print(f"resizing pos_embed from {state_dict['pos_embed'].shape} to {model.pos_embed.shape}")
             state_dict["pos_embed"] = resize_pos_embed(
                 state_dict["pos_embed"],
                 model.pos_embed,
@@ -244,19 +233,13 @@ def load_vit(model, restore_path):
             )
 
         # filter out keys with name decoder or mask_token
-        state_dict = {
-            k: v
-            for k, v in state_dict.items()
-            if "decoder" not in k and "mask_token" not in k
-        }
+        state_dict = {k: v for k, v in state_dict.items() if "decoder" not in k and "mask_token" not in k}
 
         # remove norm if using global_pool instead of class token
         if model.classifier_feature == "global_pool":
             print("Removing extra weights for global_pool")
             # remove layer that start with norm
-            state_dict = {
-                k: v for k, v in state_dict.items() if not k.startswith("norm")
-            }
+            state_dict = {k: v for k, v in state_dict.items() if not k.startswith("norm")}
             # add fc_norm in the state dict from the model
             state_dict["fc_norm.weight"] = model.fc_norm.weight
             state_dict["fc_norm.bias"] = model.fc_norm.bias

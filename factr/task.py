@@ -5,14 +5,13 @@
 
 
 import numpy as np
+import pytorch_lightning as pl
 import torch
 import wandb
 from torch.utils.data import DataLoader, IterableDataset
-import random
-import pytorch_lightning as pl
-from factr.train_bc_policy import train_bc
 
 from factr.replay_buffer import IterableWrapper
+
 
 def seed_worker(_worker_id: int) -> None:
     """
@@ -38,7 +37,6 @@ def _build_data_loader(buffer, batch_size, num_workers, is_train=False, shuffle=
         drop_last=True,
         # worker_init_fn=lambda _: np.random.seed(),
         worker_init_fn=seed_worker,
-
     )
 
 
@@ -55,10 +53,8 @@ class DefaultTask:
         num_workers,
     ):
         self.n_cams, self.obs_dim, self.ac_dim = n_cams, obs_dim, ac_dim
-        self.train_loader = _build_data_loader(
-            train_buffer, batch_size, num_workers, is_train=True
-        )
-        
+        self.train_loader = _build_data_loader(train_buffer, batch_size, num_workers, is_train=True)
+
         self.weights_history = []
         self.weights_steps = []
         # make sure no randomization and shuffling
@@ -82,9 +78,8 @@ class DefaultTask:
             wandb.log({"eval/task_loss": mean_val_loss}, step=global_step)
 
 
-
 def canonicalize_attn(cross_w, batch_size):
-# Want (B, H, Tq, Tk)
+    # Want (B, H, Tq, Tk)
     if cross_w.dim() == 4:
         # Assume already (B, H, Tq, Tk)
         return cross_w
@@ -94,7 +89,6 @@ def canonicalize_attn(cross_w, batch_size):
         return cross_w.unsqueeze(0).expand(batch_size, H, Tq, Tk)
     else:
         raise ValueError(f"Unexpected attention shape: {tuple(cross_w.shape)}")
-
 
 
 class BCTask(DefaultTask):
@@ -123,18 +117,14 @@ class BCTask(DefaultTask):
         self.use_indices = tuple(use_indices) if use_indices is not None else None
 
     def eval(self, trainer, global_step):
-        
         losses = []
         action_l2, action_lsig = [], []
         l2_per_joint_all = []
-        weights = []
 
         for batch in self.test_loader:
             (imgs, obs), actions, mask = batch
             imgs = {k: v.to(trainer.device_id) for k, v in imgs.items()}
-            obs, actions, mask = [
-                ar.to(trainer.device_id) for ar in (obs, actions, mask)
-            ]
+            obs, actions, mask = [ar.to(trainer.device_id) for ar in (obs, actions, mask)]
 
             with torch.no_grad():
                 loss = trainer.training_step(batch, global_step)
@@ -146,14 +136,14 @@ class BCTask(DefaultTask):
                 # compare predicted actions versus GT
                 # pred_actions, cross_w = trainer.model.get_actions(imgs, obs, return_weights=False)
                 pred_actions = trainer.model.get_actions(imgs, obs, return_weights=False)
-                
+
                 # calculate l2 loss between pred_action and action
                 l2_loss = torch.square(mask * (pred_actions - actions))
                 l2_loss = l2_loss.sum((1, 2)) / mask.sum((1, 2))
                 losses.append(loss.mean().item())
 
                 # per-joint error for this batch
-                l2_per_joint = (mask * (pred_actions - actions)**2).sum(1) / mask.sum(1)
+                l2_per_joint = (mask * (pred_actions - actions) ** 2).sum(1) / mask.sum(1)
                 l2_per_joint_all.append(l2_per_joint.mean(0).cpu().numpy())
 
                 # calculate the % of time the signs agree
@@ -170,19 +160,19 @@ class BCTask(DefaultTask):
         mean_val_loss = np.mean(losses)
         ac_l2, ac_lsig = np.mean(action_l2), np.mean(action_lsig)
         l2_per_joint_mean = np.mean(np.stack(l2_per_joint_all, axis=0), axis=0)
-        
+
         if self.use_indices:
             full_joint_indices = list(range(max(self.use_indices) + 1))
             missing_indices = set(full_joint_indices) - set(self.use_indices)
             for idx in sorted(missing_indices):
                 l2_per_joint_mean = np.insert(l2_per_joint_mean, idx, 0)
-        
+
         print(f"Step: {global_step}\tVal Loss: {mean_val_loss:.4f}\tAC L2={ac_l2:.3f}\tAC LSig={ac_lsig:.3f}")
 
         if wandb.run is not None:
             # Log scalar metrics
             for i, v in enumerate(l2_per_joint_mean):
-                wandb.log({f"eval/joint{i+1}_l2": v}, step=global_step)
+                wandb.log({f"eval/joint{i + 1}_l2": v}, step=global_step)
 
             log_dict = {
                 "eval/task_loss": mean_val_loss,

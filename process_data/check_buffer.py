@@ -4,11 +4,11 @@
 # ---------------------------------------------------------------------------
 
 import pickle
-import numpy as np
-import matplotlib.pyplot as plt
 from pathlib import Path
-import cv2
 
+import cv2
+import matplotlib.pyplot as plt
+import numpy as np
 
 
 def load_buffer(buf_path):
@@ -19,6 +19,7 @@ def load_buffer(buf_path):
         buf = pickle.load(f)
     print(f"Loaded buffer with {len(buf)} trajectories")
     return buf
+
 
 def save_camera_images(buffer, output_dir, plot_index=20):
     """
@@ -62,10 +63,11 @@ def save_camera_images(buffer, output_dir, plot_index=20):
 
     print(f"✅ Saved {saved} images to: {output_dir}")
 
+
 def plot_buffer(buf_path, output_dir=None, step=1):
     dataset_name = buf_path.split("/")[-2]
     print(f"Checking buffer from {dataset_name}")
-    
+
     buf_path = Path(buf_path)
     buffer = load_buffer(buf_path)
 
@@ -122,10 +124,10 @@ def plot_buffer(buf_path, output_dir=None, step=1):
     for j in range(min(7, states.shape[1])):
         ax = axes[j]
         ax.plot(t, states[:, j], color="blue", linewidth=1.0, alpha=0.7)
-        ax.set_ylabel(f"State {j+1}")
+        ax.set_ylabel(f"State {j + 1}")
         ax.grid(True, alpha=0.3)
     axes[-1].set_xlabel("Frame index")
-    plt.tight_layout(rect=[0.03, 0.03, 0.97, 0.96])
+    plt.tight_layout(rect=(0.03, 0.03, 0.97, 0.96))
     out_state = output_dir / f"{dataset_name}_buffer_states.png"
     plt.savefig(out_state, dpi=150)
     plt.close(fig)
@@ -137,10 +139,10 @@ def plot_buffer(buf_path, output_dir=None, step=1):
     for j in range(min(7, actions.shape[1])):
         ax = axes[j]
         ax.plot(t, actions[:, j], color="red", linewidth=1.0, alpha=0.7)
-        ax.set_ylabel(f"Act {j+1} [rad]")
+        ax.set_ylabel(f"Act {j + 1} [rad]")
         ax.grid(True, alpha=0.3)
     axes[-1].set_xlabel("Frame index")
-    plt.tight_layout(rect=[0.03, 0.03, 0.97, 0.96])
+    plt.tight_layout(rect=(0.03, 0.03, 0.97, 0.96))
     out_act = output_dir / f"{dataset_name}_buffer_actions.png"
     plt.savefig(out_act, dpi=150)
     plt.close(fig)
@@ -150,14 +152,24 @@ def plot_buffer(buf_path, output_dir=None, step=1):
     from_first_datapoints = 1000
     only_first_datapoints = 1800
     fig, axes = plt.subplots(7, 1, figsize=(12, 14), sharex=True)
-    fig.suptitle(f"All States (Ext. Torques) from Buffer of {dataset_name} (first {only_first_datapoints} datapoints)", fontsize=16, y=0.96)
+    fig.suptitle(
+        f"All States (Ext. Torques) from Buffer of {dataset_name} (first {only_first_datapoints} datapoints)",
+        fontsize=16,
+        y=0.96,
+    )
     for j in range(min(7, states.shape[1])):
         ax = axes[j]
-        ax.plot(t[from_first_datapoints:only_first_datapoints], states[from_first_datapoints:only_first_datapoints, j], color="blue", linewidth=1.0, alpha=0.7)
-        ax.set_ylabel(f"State {j+1}")
+        ax.plot(
+            t[from_first_datapoints:only_first_datapoints],
+            states[from_first_datapoints:only_first_datapoints, j],
+            color="blue",
+            linewidth=1.0,
+            alpha=0.7,
+        )
+        ax.set_ylabel(f"State {j + 1}")
         ax.grid(True, alpha=0.3)
     axes[-1].set_xlabel("Frame index")
-    plt.tight_layout(rect=[0.03, 0.03, 0.97, 0.96])
+    plt.tight_layout(rect=(0.03, 0.03, 0.97, 0.96))
     out_state = output_dir / f"{dataset_name}_buffer_states_zoomed.png"
     plt.savefig(out_state, dpi=150)
     plt.close(fig)
@@ -165,14 +177,24 @@ def plot_buffer(buf_path, output_dir=None, step=1):
 
     # Plot: Actions zoomed in
     fig, axes = plt.subplots(7, 1, figsize=(12, 14), sharex=True)
-    fig.suptitle(f"All Actions (Joint Angles) from Buffer of {dataset_name} (first {only_first_datapoints} datapoints)", fontsize=16, y=0.96)
+    fig.suptitle(
+        f"All Actions (Joint Angles) from Buffer of {dataset_name} (first {only_first_datapoints} datapoints)",
+        fontsize=16,
+        y=0.96,
+    )
     for j in range(min(7, actions.shape[1])):
         ax = axes[j]
-        ax.plot(t[from_first_datapoints:only_first_datapoints], actions[from_first_datapoints:only_first_datapoints, j], color="red", linewidth=1.0, alpha=0.7)
-        ax.set_ylabel(f"Act {j+1} [rad]")
+        ax.plot(
+            t[from_first_datapoints:only_first_datapoints],
+            actions[from_first_datapoints:only_first_datapoints, j],
+            color="red",
+            linewidth=1.0,
+            alpha=0.7,
+        )
+        ax.set_ylabel(f"Act {j + 1} [rad]")
         ax.grid(True, alpha=0.3)
     axes[-1].set_xlabel("Frame index")
-    plt.tight_layout(rect=[0.03, 0.03, 0.97, 0.96])
+    plt.tight_layout(rect=(0.03, 0.03, 0.97, 0.96))
     out_state = output_dir / f"{dataset_name}_buffer_actions_zoomed.png"
     plt.savefig(out_state, dpi=150)
     plt.close(fig)
@@ -182,8 +204,8 @@ def plot_buffer(buf_path, output_dir=None, step=1):
 
     print("🎯 Done: All buffer plots created.")
 
-if __name__ == "__main__":
 
+if __name__ == "__main__":
     buf_path = "/home/ferdinand/factr_project/factr/process_data/training_data/bld_both_52_filt/buf.pkl"
 
     plot_buffer(buf_path)

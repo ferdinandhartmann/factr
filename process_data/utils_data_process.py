@@ -19,13 +19,14 @@
 
 import cv2
 import numpy as np
-from robobuf.buffers import ObsWrapper, Transition, ReplayBuffer
+from robobuf.buffers import ObsWrapper, ReplayBuffer, Transition
 from scipy.signal import butter, filtfilt, medfilt
+
 
 def gaussian_norm(list_of_array):
     data_array = np.concatenate(list_of_array, axis=0)
-    
-    print('Using in-place gaussian norm')
+
+    print("Using in-place gaussian norm")
     mean = np.mean(data_array, axis=0)
     std = np.std(data_array, axis=0)
     if not std.all():  # handle situation with all 0 actions
@@ -34,38 +35,38 @@ def gaussian_norm(list_of_array):
     for array in list_of_array:
         array -= mean
         array /= std
-    normalization_stats = dict(
-        mean=[float(x) for x in mean],
-        std=[float(x) for x in std]
-    )
+    normalization_stats = dict(mean=[float(x) for x in mean], std=[float(x) for x in std])
     return normalization_stats
+
 
 def generate_robobuf(trajectories):
     buffer = ReplayBuffer()
     for traj in trajectories:
-        num_steps = traj['num_steps']
-        actions = traj['actions']
-        states = traj['states']
+        num_steps = traj["num_steps"]
+        actions = traj["actions"]
+        states = traj["states"]
         for i in range(num_steps):
             obs = {
-                'state': states[i],
+                "state": states[i],
             }
             for k, v in traj.items():
-                if k.startswith('enc_cam_'):
+                if k.startswith("enc_cam_"):
                     obs[k] = v[i]
             transition = Transition(
-                obs = ObsWrapper(obs), 
-                action = actions[i], 
-                reward = (i==num_steps-1), 
+                obs=ObsWrapper(obs),
+                action=actions[i],
+                reward=(i == num_steps - 1),
             )
-            buffer.add(transition, is_first = (i==0))
+            buffer.add(transition, is_first=(i == 0))
 
     return buffer
+
 
 def get_diff_timestamps(timestamps):
     timestamps = np.array(timestamps)
     diff_timestamps = np.diff(timestamps)
     return diff_timestamps * 1e-9
+
 
 def sync_data_slowest(traj_data, all_topics):
     timestamps = traj_data["timestamps"]
@@ -76,10 +77,10 @@ def sync_data_slowest(traj_data, all_topics):
     synced_data = {topic: [] for topic in all_topics}
     message_counts = [len(timestamps[topic]) for topic in all_topics]
     min_freq_topic = all_topics[int(np.argmin(message_counts))]
-    
+
     timestamp_diffs = get_diff_timestamps(timestamps[min_freq_topic])
-    avg_freq = 1/np.mean(timestamp_diffs)
-    
+    avg_freq = 1 / np.mean(timestamp_diffs)
+
     for i, target_ts in enumerate(timestamps[min_freq_topic]):
         for topic in all_topics:
             if topic == min_freq_topic:
@@ -87,15 +88,16 @@ def sync_data_slowest(traj_data, all_topics):
             else:
                 closest_idx = np.argmin(np.abs(timestamps[topic] - target_ts))
                 synced_data[topic].append(data[topic][closest_idx])
-                
+
     return synced_data, avg_freq
-    
+
+
 def process_decoded_image(img):
     img = cv2.resize(img, (256, 256))
     return img
-        
-def process_image(img_enc):
 
+
+def process_image(img_enc):
     ###################
     """Handle both raw RGB list images and encoded JPEG images."""
     # Case 1 – Your raw RGB dictionary (list of ints)
@@ -111,16 +113,17 @@ def process_image(img_enc):
             img_enc = np.frombuffer(img_enc, np.uint8)
         decoded_image = cv2.imdecode(img_enc, cv2.IMREAD_COLOR)
 
-
     # decode, process, and encode
-    # decoded_image = cv2.imdecode(img_enc, cv2.IMREAD_COLOR)    
+    # decoded_image = cv2.imdecode(img_enc, cv2.IMREAD_COLOR)
     decoded_image = process_decoded_image(decoded_image)
     encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 50]
-    _, compressed_image = cv2.imencode('.jpg', decoded_image, encode_param)
+    _, compressed_image = cv2.imencode(".jpg", decoded_image, encode_param)
     return compressed_image
 
 
-def lowpass_filter(traj_data, cutoff_freq, fs, topic_name=None, key_options=("effort", "position", "data"), vector_size=7):
+def lowpass_filter(
+    traj_data, cutoff_freq, fs, topic_name=None, key_options=("effort", "position", "data"), vector_size=7
+):
     """
     Apply a low-pass Butterworth filter to a numeric topic inside traj_data.
 
@@ -170,7 +173,6 @@ def lowpass_filter(traj_data, cutoff_freq, fs, topic_name=None, key_options=("ef
     return filtered
 
 
-
 def medianfilter(data_array, kernel_size=3, key=None):
     """
     Apply a median filter to joint data.
@@ -209,8 +211,7 @@ def medianfilter(data_array, kernel_size=3, key=None):
         filtered = medfilt(data_array, kernel_size=kernel_size)
     elif data_array.ndim == 2:
         filtered = np.stack(
-            [medfilt(data_array[:, j], kernel_size=kernel_size) for j in range(data_array.shape[1])],
-            axis=1
+            [medfilt(data_array[:, j], kernel_size=kernel_size) for j in range(data_array.shape[1])], axis=1
         )
     else:
         raise ValueError(f"Unsupported shape {data_array.shape} for medianfilter")
@@ -257,9 +258,10 @@ def downsample_data(data, avg_freq, target_downsampling_freq):
     else:
         raise TypeError(f"Unsupported data type: {type(data)}")
 
+
 def ema_filter(x, alpha=0.1):
     y = np.zeros_like(x)
     y[0] = x[0]
     for i in range(1, len(x)):
-        y[i] = alpha * x[i] + (1 - alpha) * y[i-1]
+        y[i] = alpha * x[i] + (1 - alpha) * y[i - 1]
     return y

@@ -7,12 +7,13 @@
 import copy
 
 import torch
+import wandb
 from torch import nn
 
-from factr.utils import get_scale, gaussian_2d_smoothing, gaussian_1d_smoothing, downsample_2d, downsample_1d
 from factr import misc
+from factr.utils import downsample_1d, downsample_2d, gaussian_1d_smoothing, gaussian_2d_smoothing, get_scale
 
-import wandb
+
 class _BatchNorm1DHelper(nn.BatchNorm1d):
     def forward(self, x):
         if len(x.shape) == 3:
@@ -41,7 +42,7 @@ class BaseAgent(nn.Module):
         super().__init__()
 
         self.curriculum = curriculum
-        
+
         # store visual features (duplicate weights if shared)
         self._share_cam_features = share_cam_features
         if self._share_cam_features:
@@ -59,9 +60,7 @@ class BaseAgent(nn.Module):
         if use_obs == "add_token":
             self._obs_strat = "add_token"
             self._n_tokens += 1
-            self._obs_proc = nn.Sequential(
-                nn.Dropout(p=0.2), nn.Linear(odim, self._token_dim)
-            )
+            self._obs_proc = nn.Sequential(nn.Dropout(p=0.2), nn.Linear(odim, self._token_dim))
         elif use_obs == "pad_img_tokens":
             self._obs_strat = "pad_img_tokens"
             self._token_dim += odim
@@ -96,30 +95,29 @@ class BaseAgent(nn.Module):
         raise NotImplementedError
 
     def tokenize_obs(self, imgs, obs, flatten=False):
-            
         scale = get_scale(
-            scheduler=self.curriculum.scheduler, 
-            start=self.curriculum.start_scale, 
-            end=self.curriculum.stop_scale, 
-            cur_step=misc.GLOBAL_STEP, 
+            scheduler=self.curriculum.scheduler,
+            start=self.curriculum.start_scale,
+            end=self.curriculum.stop_scale,
+            cur_step=misc.GLOBAL_STEP,
             max_step=self.curriculum.max_step,
-            ratio=self.curriculum.ratio
+            ratio=self.curriculum.ratio,
         )
         if wandb.run is not None:
             wandb.log({"train/scale": scale}, step=misc.GLOBAL_STEP)
-        
-        if not hasattr(self.curriculum, 'operator'):
-            self.curriculum.operator = 'blur'
-        
+
+        if not hasattr(self.curriculum, "operator"):
+            self.curriculum.operator = "blur"
+
         if self.curriculum.space == "pixel":
             for k, v in imgs.items():
-                if self.curriculum.operator == 'blur':
+                if self.curriculum.operator == "blur":
                     imgs[k] = gaussian_2d_smoothing(v, scale)
-                elif self.curriculum.operator == 'downsample':
+                elif self.curriculum.operator == "downsample":
                     imgs[k] = downsample_2d(v.squeeze(1), scale).unsqueeze(1)
                 else:
                     raise ValueError(f"Unknown operator: {self.curriculum.operator}")
-        
+
         # start by getting image tokens
         tokens = self.embed(imgs)
         if self.curriculum.space == "latent":
@@ -130,7 +128,7 @@ class BaseAgent(nn.Module):
             else:
                 raise ValueError(f"Unknown operator: {self.curriculum.operator}")
         tokens = self._img_dropout(tokens)
-        
+
         if self._obs_strat == "add_token":
             obs_token = self._obs_proc(obs)[:, None]
             tokens = torch.cat((tokens, obs_token), 1)
@@ -162,15 +160,9 @@ class BaseAgent(nn.Module):
             return net(im)
 
         if self._share_cam_features:
-            embeds = [
-                embed_helper(self.visual_features, imgs[f"cam{i}"])
-                for i in range(self._n_cams)
-            ]
+            embeds = [embed_helper(self.visual_features, imgs[f"cam{i}"]) for i in range(self._n_cams)]
         else:
-            embeds = [
-                embed_helper(net, imgs[f"cam{i}"])
-                for i, net in enumerate(self.visual_features)
-            ]
+            embeds = [embed_helper(net, imgs[f"cam{i}"]) for i, net in enumerate(self.visual_features)]
         return torch.cat(embeds, dim=1)
 
     @property
@@ -206,7 +198,6 @@ class MLPAgent(BaseAgent):
         feat_norm="layer_norm",
         token_dim=None,
     ):
-
         # initialize obs and img tokenizers
         super().__init__(
             odim=odim,

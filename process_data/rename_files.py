@@ -7,12 +7,14 @@ prefix = "data_log_"  # current prefix of the files
 exts = [".pkl"]
 pad = 1  # how many digits: ep_01, ep_02, ...
 
+
 # --- 1️⃣ find all episode numbers ---
 def extract_num(name):
     m = re.search(rf"{prefix}(\d+)\.pkl", name)
     return int(m.group(1)) if m else None
 
-pkl_files = sorted([f for f in folder.glob(f"{prefix}*.pkl")], key=lambda f: extract_num(f.name))
+
+pkl_files = sorted([f for f in folder.glob(f"{prefix}*.pkl")], key=lambda f: extract_num(f.name) or -1)
 nums = [extract_num(f.name) for f in pkl_files if extract_num(f.name) is not None]
 print(f"Found {len(nums)} PKL files:", nums[:10], "...")
 
@@ -46,4 +48,3 @@ for f in folder.glob("tmp_*"):
     f.rename(f.name.replace("tmp_", ""))
 
 print("\n✅ All files renumbered sequentially and safely.")
-

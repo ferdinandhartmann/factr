@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 import pickle
-import numpy as np
-import cv2
-from PIL import Image
-import imageio.v2 as imageio
 from pathlib import Path
+
+import cv2
+import imageio.v2 as imageio
+import numpy as np
+from PIL import Image
 
 
 def load_pkl(pkl_path):
@@ -28,10 +29,18 @@ def extract_topic_images(pkl_data, topic_name):
         raw = msg["data"]
 
         if encoding == "rgb8":
-            img = np.frombuffer(raw, dtype=np.uint8).reshape(height, width, 3)
+            if height is not None and width is not None:
+                img = np.frombuffer(raw, dtype=np.uint8).reshape(height, width, 3)
+            else:
+                print(f"⚠️ Skipping frame due to missing dimensions: height={height}, width={width}")
+                continue
         elif encoding == "32FC1":
-            depth = np.frombuffer(raw, dtype=np.float32).reshape(height, width)
-            # Normalize and apply colormap for visualization
+            if height is not None and width is not None:
+                depth = np.frombuffer(raw, dtype=np.float32).reshape(height, width)
+                # Normalize and apply colormap for visualization
+            else:
+                print(f"⚠️ Skipping depth frame due to missing dimensions: height={height}, width={width}")
+                continue
             depth = np.nan_to_num(depth, nan=0.0, posinf=0.0, neginf=0.0)
             depth = (depth - np.min(depth)) / (np.max(depth) - np.min(depth) + 1e-8)
             depth = (depth * 255).astype(np.uint8)
@@ -67,7 +76,6 @@ def save_gif(frames, output_path, fps=25, scale=0.5, drop_ratio=2):
     print(f"✅ Saved GIF: {output_path}")
 
 
-
 def main():
     episode = "ep_0_no_movement"
     data_fps = 50
@@ -82,11 +90,23 @@ def main():
 
     # RGB
     rgb_frames = extract_topic_images(data, "/realsense/front/im")
-    save_gif(rgb_frames, output_dir / f"{episode}_rgb_preview.gif", fps=gif_fps, scale=scale_factor, drop_ratio=int(data_fps/gif_fps))
+    save_gif(
+        rgb_frames,
+        output_dir / f"{episode}_rgb_preview.gif",
+        fps=gif_fps,
+        scale=scale_factor,
+        drop_ratio=int(data_fps / gif_fps),
+    )
 
     # Depth
     depth_frames = extract_topic_images(data, "/realsense/front/depth")
-    save_gif(depth_frames, output_dir / f"{episode}_depth_preview.gif", fps=gif_fps, scale=scale_factor, drop_ratio=int(data_fps/gif_fps))
+    save_gif(
+        depth_frames,
+        output_dir / f"{episode}_depth_preview.gif",
+        fps=gif_fps,
+        scale=scale_factor,
+        drop_ratio=int(data_fps / gif_fps),
+    )
 
     print("🎉 Done! GIFs saved in:", output_dir)
 

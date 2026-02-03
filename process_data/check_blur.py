@@ -1,13 +1,13 @@
-import torch
-import math
-import torch.nn.functional as F
-import matplotlib.pyplot as plt
-from PIL import Image
-import numpy as np
 import os
 from pathlib import Path
+
+import matplotlib.pyplot as plt
+import numpy as np
+import torch
+from PIL import Image
 from torchvision import transforms
-from factr.utils import gaussian_2d_smoothing, gaussian_2d_kernel
+
+from factr.utils import gaussian_2d_smoothing
 
 H, W = 224, 224
 
@@ -56,5 +56,3 @@ plt.imsave(orig_path, img_np)
 plt.imsave(blur_path, blurred_np)
 print(f"Saved original to {orig_path}")
 print(f"Saved blurred to {blur_path}")
-
-

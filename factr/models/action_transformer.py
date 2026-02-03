@@ -41,10 +41,7 @@ class _PositionalEncoding(nn.Module):
         # Compute the positional encodings once in log space
         pe = torch.zeros(max_len, d_model)
         position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
-        div_term = torch.exp(
-            torch.arange(0, d_model, 2, dtype=torch.float)
-            * -(np.log(10000.0) / d_model)
-        )
+        div_term = torch.exp(torch.arange(0, d_model, 2, dtype=torch.float) * -(np.log(10000.0) / d_model))
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
         pe = pe.unsqueeze(0).transpose(0, 1)
@@ -64,9 +61,7 @@ class _PositionalEncoding(nn.Module):
 
 
 class _TransformerEncoderLayer(nn.Module):
-    def __init__(
-        self, d_model, nhead, dim_feedforward=2048, dropout=0.1, activation="relu"
-    ):
+    def __init__(self, d_model, nhead, dim_feedforward=2048, dropout=0.1, activation="relu"):
         super().__init__()
         self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
         # Implementation of Feedforward model
@@ -94,9 +89,7 @@ class _TransformerEncoderLayer(nn.Module):
 
 
 class _TransformerDecoderLayer(nn.Module):
-    def __init__(
-        self, d_model, nhead, dim_feedforward=2048, dropout=0.1, activation="relu"
-    ):
+    def __init__(self, d_model, nhead, dim_feedforward=2048, dropout=0.1, activation="relu"):
         super().__init__()
         self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
         self.multihead_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
@@ -167,7 +160,9 @@ class _TransformerDecoder(nn.Module):
         all_cross_w = []
         for layer in self.layers:
             if return_weights:
-                output, cross_w = layer(output, memory, pos=pos, query_pos=query_pos, return_weights=True, nheads=nheads)
+                output, cross_w = layer(
+                    output, memory, pos=pos, query_pos=query_pos, return_weights=True, nheads=nheads
+                )
                 all_cross_w.append(cross_w.unsqueeze(0))
             else:
                 output = layer(output, memory, pos=pos, query_pos=query_pos)
@@ -206,14 +201,10 @@ class _ACT(nn.Module):
     ):
         super().__init__()
 
-        encoder_layer = _TransformerEncoderLayer(
-            d_model, nhead, dim_feedforward, dropout, activation
-        )
+        encoder_layer = _TransformerEncoderLayer(d_model, nhead, dim_feedforward, dropout, activation)
         self.encoder = _TransformerEncoder(encoder_layer, num_encoder_layers)
 
-        decoder_layer = _TransformerDecoderLayer(
-            d_model, nhead, dim_feedforward, dropout, activation
-        )
+        decoder_layer = _TransformerDecoderLayer(d_model, nhead, dim_feedforward, dropout, activation)
         self.decoder = _TransformerDecoder(decoder_layer, num_decoder_layers)
 
         self._reset_parameters()
@@ -263,7 +254,6 @@ class TransformerAgent(BaseAgent):
         transformer_kwargs=dict(),
         curriculum=dict(),
     ):
-
         # initialize obs and img tokenizers
         super().__init__(
             odim=odim,
@@ -315,4 +305,3 @@ class TransformerAgent(BaseAgent):
     @property
     def ac_dim(self):
         return self._ac_dim
-

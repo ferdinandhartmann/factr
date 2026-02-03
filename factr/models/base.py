@@ -15,11 +15,7 @@ class BaseModel(nn.Module):
         if restore_path:
             print("Restoring model from", restore_path)
             state_dict = torch.load(restore_path, map_location="cpu", weights_only=False)
-            state_dict = (
-                state_dict["features"]
-                if "features" in state_dict
-                else state_dict["model"]
-            )
+            state_dict = state_dict["features"] if "features" in state_dict else state_dict["model"]
             self.load_state_dict(state_dict)
 
     @property

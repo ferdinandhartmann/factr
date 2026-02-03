@@ -1,0 +1,18 @@
+[tool.ruff]
+# Same as Black setting
+line-length = 120
+target-version = "py39"
+
+[tool.ruff.lint]
+# "E" and "F" are the standard Flake8 rules (errors and bugs)
+# "I" handles automatic import sorting (replaces isort)
+select = ["E", "F", "I"]
+unfixable = ["B"]
+ignore = ["E501"]
+
+[tool.ruff.format]
+# This ensures it looks exactly like Black
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"

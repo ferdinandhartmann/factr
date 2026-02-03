@@ -68,11 +68,7 @@ class Gaussian(ActionDistribution):
         # bound the action means and convert scale to std
         if self._tanh_mean:
             mean = torch.tanh(mean)
-        std = (
-            torch.ones_like(scale) * self._min_std
-            if zero_std
-            else F.softplus(scale) + self._min_std
-        )
+        std = torch.ones_like(scale) * self._min_std if zero_std else F.softplus(scale) + self._min_std
 
         # create Normal action distributions
         return D.Normal(loc=mean, scale=std)
@@ -95,9 +91,7 @@ class GaussianSharedScale(ActionDistribution):
 
         # create log_std vector and store as param
         log_std = torch.Tensor([log_std_init] * ac_dim)
-        self.register_parameter(
-            "log_std", nn.Parameter(log_std, requires_grad=not std_fixed)
-        )
+        self.register_parameter("log_std", nn.Parameter(log_std, requires_grad=not std_fixed))
 
     def forward(self, in_repr, zero_std=False):
         B = in_repr.shape[0]
@@ -106,11 +100,7 @@ class GaussianSharedScale(ActionDistribution):
 
         if self._tanh_mean:
             mean = torch.tanh(mean)
-        std = (
-            torch.ones_like(scale) * self._min_std
-            if zero_std
-            else torch.exp(scale) + self._min_std
-        )
+        std = torch.ones_like(scale) * self._min_std if zero_std else torch.exp(scale) + self._min_std
 
         # create Normal action distributions
         return D.Normal(loc=mean, scale=std)
@@ -128,16 +118,12 @@ class _MixtureHelper(D.MixtureSameFamily):
             self._validate_sample(x)
         x, mask = self._pad(x), mask[:, None]
         log_prob_x = self.component_distribution.masked_log_prob(x, mask)  # [S, B, k]
-        log_mix_prob = torch.log_softmax(
-            self.mixture_distribution.logits, dim=-1
-        )  # [B, k]
+        log_mix_prob = torch.log_softmax(self.mixture_distribution.logits, dim=-1)  # [B, k]
         return torch.logsumexp(log_prob_x + log_mix_prob, dim=-1)  # [S, B]
 
 
 class GaussianMixture(ActionDistribution):
-    def __init__(
-        self, num_modes, in_dim, ac_dim, ac_chunk=1, min_std=1e-4, tanh_mean=False
-    ):
+    def __init__(self, num_modes, in_dim, ac_dim, ac_chunk=1, min_std=1e-4, tanh_mean=False):
         super().__init__(ac_dim, ac_chunk)
         self._min_std, self._tanh_mean = min_std, tanh_mean
         self._num_modes = num_modes
@@ -155,11 +141,7 @@ class GaussianMixture(ActionDistribution):
         # bound the action means and convert scale to std
         if self._tanh_mean:
             mean = torch.tanh(mean)
-        std = (
-            torch.ones_like(scale) * self._min_std
-            if zero_std
-            else F.softplus(scale) + self._min_std
-        )
+        std = torch.ones_like(scale) * self._min_std if zero_std else F.softplus(scale) + self._min_std
 
         # create num_modes independent action distributions
         ac_dist = D.Normal(loc=mean, scale=std)
@@ -167,7 +149,5 @@ class GaussianMixture(ActionDistribution):
 
         # parameterize the mixing distribution and the final GMM
         mix_dist = D.Categorical(logits=logits)
-        gmm_dist = _MixtureHelper(
-            mixture_distribution=mix_dist, component_distribution=ac_dist
-        )
+        gmm_dist = _MixtureHelper(mixture_distribution=mix_dist, component_distribution=ac_dist)
         return gmm_dist

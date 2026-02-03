@@ -17,9 +17,7 @@ from omegaconf import OmegaConf
 from factr.transforms import get_transform_by_name
 
 OmegaConf.register_new_resolver("env", lambda x: os.environ[x])
-OmegaConf.register_new_resolver(
-    "base", lambda: os.path.dirname(os.path.abspath(__file__))
-)
+OmegaConf.register_new_resolver("base", lambda: os.path.dirname(os.path.abspath(__file__)))
 OmegaConf.register_new_resolver("transform", lambda name: get_transform_by_name(name))
 OmegaConf.register_new_resolver("mult", lambda x, y: int(x) * int(y))
 OmegaConf.register_new_resolver("add", lambda x, y: int(x) + int(y))
@@ -65,7 +63,7 @@ def create_wandb_run(wandb_cfg, job_config, run_id=None):
         override_dirname = HydraConfig().get().job.override_dirname
         name = f"{wandb_cfg.sweep_name_prefix}-{job_id}"
         notes = f"{override_dirname}"
-    except:
+    except Exception:
         name, notes = wandb_cfg.name, None
 
     wandb_run = wandb.init(

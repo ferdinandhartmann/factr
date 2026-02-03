@@ -8,9 +8,10 @@ Usage:
 
 import pickle
 import sys
-import numpy as np
-from pprint import pprint
 from pathlib import Path
+from pprint import pprint
+
+import numpy as np
 
 
 def summarize_pkl(path: Path):
@@ -88,9 +89,7 @@ def summarize_pkl(path: Path):
         if not v:
             print(f"  {k:60s}  len=0")
             continue
-        print(
-            f"  {k:60s}  len={len(v):5d}  sample_type={type(v[0]).__name__}"
-        )
+        print(f"  {k:60s}  len={len(v):5d}  sample_type={type(v[0]).__name__}")
 
     # Show a small sample from the first topic
     first_topic = next(iter(data["data"]))
@@ -110,8 +109,14 @@ def summarize_pkl(path: Path):
     elif isinstance(first_entry, np.ndarray):
         print("  → numpy array shape:", first_entry.shape)
 
+
 if __name__ == "__main__":
     # Use command-line argument if provided, otherwise use the default test file
     import sys
-    p = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("/home/ferdinand/factr_project/factr/process_data/data_to_process/bld_soft/data/ep_02.pkl")
+
+    p = (
+        Path(sys.argv[1])
+        if len(sys.argv) > 1
+        else Path("/home/ferdinand/factr_project/factr/process_data/data_to_process/bld_soft/data/ep_02.pkl")
+    )
     summarize_pkl(p)

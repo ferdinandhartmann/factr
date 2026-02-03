@@ -2,7 +2,7 @@ import os
 import re
 
 # Folder with your files
-FOLDER = "/home/ferdinand/factr_project/factr/process_data/raw_data_eval/bld_both"   # change if needed
+FOLDER = "/home/ferdinand/factr_project/factr/process_data/raw_data_eval/bld_both"  # change if needed
 
 pattern = re.compile(r"ep_(\d+)\.pkl")
 
