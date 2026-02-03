@@ -1,14 +1,14 @@
 
-input_path: /home/ferdinand/factr_project/factr/process_data/raw_data_train/bld_both
-output_path: /home/ferdinand/factr_project/factr/process_data/training_data/bld_both_52_filt
+input_path: /home/ferdinand/activeinference/factr/process_data/data_to_process/fourgoals_1/data
+output_path: /home/ferdinand/activeinference/factr/process_data/training_data/fourgoals_1
 
 median_filter_torque: False
 median_filter_kernel_size_torque: 3
-median_filter_position: True
+median_filter_position: False
 median_filter_kernel_size_position: 7
 filter_torque: False
 cutoff_freq_torque: 10.0
-filter_position: True
+filter_position: False
 cutoff_freq_position: 12.0
 
 downsample: False
@@ -17,13 +17,16 @@ target_downsampling_freq: 25.0
 
 
 cameras_topics:
-  - /realsense/front/im
+#   - /realsense/im
 
 obs_topics:
-# - /franka/right/obs_franka_torque
-  - /franka_robot_state_broadcaster/external_joint_torques
+  - /franka_robot_state_broadcaster/robot_state
+  - /cartesian_impedance_controller/ee_velocity
+  - /franka_robot_state_broadcaster/external_wrench_in_stiffness_frame
+  - /cartesian_impedance_controller/tracking_error
 
 action_config:
-# /factr_teleop/right/cmd_franka_pos: 7
-  # /joint_impedance_command_controller/joint_trajectory: 7
-  /joint_impedance_dynamic_gain_controller/joint_impedance_command: 7
+  /cartesian_impedance_controller/pose_command: 9
+
+goal_topic: 
+  - /goal

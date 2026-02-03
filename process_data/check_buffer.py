@@ -77,6 +77,7 @@ def plot_buffer(buf_path, output_dir=None, step=1):
 
     all_states = []
     all_actions = []
+    all_goals = []
 
     for traj_idx, traj in enumerate(buffer):
         # each traj = list of (obs_dict, action, reward)
@@ -86,11 +87,17 @@ def plot_buffer(buf_path, output_dir=None, step=1):
 
         states = []
         actions = []
+        goals = []
         for entry in traj:
             try:
                 obs_dict, action, reward = entry
                 if isinstance(obs_dict, dict) and "state" in obs_dict:
                     states.append(np.array(obs_dict["state"], dtype=float))
+                if isinstance(obs_dict, dict):
+                    if "goals" in obs_dict:
+                        goals.append(np.array(obs_dict["goals"], dtype=float))
+                    elif "goal" in obs_dict:
+                        goals.append(np.array(obs_dict["goal"], dtype=float))
                 actions.append(np.array(action, dtype=float))
             except Exception as e:
                 print(f"⚠️ Skipping bad entry in traj {traj_idx}: {e}")
@@ -102,62 +109,71 @@ def plot_buffer(buf_path, output_dir=None, step=1):
             actions = np.stack(actions[:min_len])
             all_states.append(states)
             all_actions.append(actions)
+            if len(goals) > 0:
+                goals = np.stack(goals[:min_len])
+                all_goals.append(goals)
 
     if not all_states or not all_actions:
         raise ValueError("❌ No valid 'states' or 'actions' found in buffer!")
 
     states = np.concatenate(all_states, axis=0)
     actions = np.concatenate(all_actions, axis=0)
+    goals = np.concatenate(all_goals, axis=0) if all_goals else None
     print(f"📊 States shape: {states.shape}, Actions shape: {actions.shape}")
 
     if step > 1:
         states = states[::step]
         actions = actions[::step]
+        if goals is not None:
+            goals = goals[::step]
 
     t = np.arange(len(states))
 
     # -------------------------
 
+    plot_length_scale_state = 1.2
+    plot_length_scale_action = 1.3
+
     # Plot: States
-    fig, axes = plt.subplots(7, 1, figsize=(12, 14), sharex=True)
-    fig.suptitle(f"All States (Ext. Torques) from Buffer of {dataset_name}", fontsize=16, y=0.96)
-    for j in range(min(7, states.shape[1])):
+    fig, axes = plt.subplots(states.shape[1], 1, figsize=(12, plot_length_scale_state * states.shape[1]), sharex=True)
+    fig.suptitle(f"All States from Buffer of {dataset_name}", fontsize=16, y=0.96)
+    for j in range(states.shape[1]):
         ax = axes[j]
         ax.plot(t, states[:, j], color="blue", linewidth=1.0, alpha=0.7)
-        ax.set_ylabel(f"State {j + 1}")
+        ax.set_ylabel(f"{j + 1}")
         ax.grid(True, alpha=0.3)
     axes[-1].set_xlabel("Frame index")
     plt.tight_layout(rect=(0.03, 0.03, 0.97, 0.96))
     out_state = output_dir / f"{dataset_name}_buffer_states.png"
-    plt.savefig(out_state, dpi=150)
+    plt.savefig(out_state, dpi=300)
     plt.close(fig)
     print(f"✅ Saved {out_state}")
 
     # Plot: Actions
-    fig, axes = plt.subplots(7, 1, figsize=(12, 14), sharex=True)
-    fig.suptitle(f"All Actions (Joint Angles) from Buffer of {dataset_name}", fontsize=16, y=0.96)
-    for j in range(min(7, actions.shape[1])):
+    fig, axes = plt.subplots(
+        actions.shape[1], 1, figsize=(12, plot_length_scale_action * actions.shape[1]), sharex=True
+    )
+    fig.suptitle(f"All Actions from Buffer of {dataset_name}", fontsize=16, y=0.96)
+    for j in range(actions.shape[1]):
         ax = axes[j]
         ax.plot(t, actions[:, j], color="red", linewidth=1.0, alpha=0.7)
-        ax.set_ylabel(f"Act {j + 1} [rad]")
+        ax.set_ylabel(f"Act {j + 1}")
         ax.grid(True, alpha=0.3)
     axes[-1].set_xlabel("Frame index")
     plt.tight_layout(rect=(0.03, 0.03, 0.97, 0.96))
     out_act = output_dir / f"{dataset_name}_buffer_actions.png"
-    plt.savefig(out_act, dpi=150)
+    plt.savefig(out_act, dpi=300)
     plt.close(fig)
     print(f"✅ Saved {out_act}")
 
     # Plot: States zoomed in
     from_first_datapoints = 1000
     only_first_datapoints = 1800
-    fig, axes = plt.subplots(7, 1, figsize=(12, 14), sharex=True)
+    fig, axes = plt.subplots(states.shape[1], 1, figsize=(12, plot_length_scale_state * states.shape[1]), sharex=True)
     fig.suptitle(
-        f"All States (Ext. Torques) from Buffer of {dataset_name} (first {only_first_datapoints} datapoints)",
-        fontsize=16,
-        y=0.96,
+        f"All States from Buffer of {dataset_name} (first {only_first_datapoints} datapoints)", fontsize=16, y=0.96
     )
-    for j in range(min(7, states.shape[1])):
+    for j in range(states.shape[1]):
         ax = axes[j]
         ax.plot(
             t[from_first_datapoints:only_first_datapoints],
@@ -166,23 +182,23 @@ def plot_buffer(buf_path, output_dir=None, step=1):
             linewidth=1.0,
             alpha=0.7,
         )
-        ax.set_ylabel(f"State {j + 1}")
+        ax.set_ylabel(f"{j + 1}")
         ax.grid(True, alpha=0.3)
     axes[-1].set_xlabel("Frame index")
     plt.tight_layout(rect=(0.03, 0.03, 0.97, 0.96))
     out_state = output_dir / f"{dataset_name}_buffer_states_zoomed.png"
-    plt.savefig(out_state, dpi=150)
+    plt.savefig(out_state, dpi=300)
     plt.close(fig)
     print(f"✅ Saved {out_state}")
 
     # Plot: Actions zoomed in
-    fig, axes = plt.subplots(7, 1, figsize=(12, 14), sharex=True)
-    fig.suptitle(
-        f"All Actions (Joint Angles) from Buffer of {dataset_name} (first {only_first_datapoints} datapoints)",
-        fontsize=16,
-        y=0.96,
+    fig, axes = plt.subplots(
+        actions.shape[1], 1, figsize=(12, plot_length_scale_action * actions.shape[1]), sharex=True
     )
-    for j in range(min(7, actions.shape[1])):
+    fig.suptitle(
+        f"All Actions from Buffer of {dataset_name} (first {only_first_datapoints} datapoints)", fontsize=16, y=0.96
+    )
+    for j in range(actions.shape[1]):
         ax = axes[j]
         ax.plot(
             t[from_first_datapoints:only_first_datapoints],
@@ -191,14 +207,35 @@ def plot_buffer(buf_path, output_dir=None, step=1):
             linewidth=1.0,
             alpha=0.7,
         )
-        ax.set_ylabel(f"Act {j + 1} [rad]")
+        ax.set_ylabel(f"Act {j + 1}")
         ax.grid(True, alpha=0.3)
     axes[-1].set_xlabel("Frame index")
     plt.tight_layout(rect=(0.03, 0.03, 0.97, 0.96))
     out_state = output_dir / f"{dataset_name}_buffer_actions_zoomed.png"
-    plt.savefig(out_state, dpi=150)
+    plt.savefig(out_state, dpi=300)
     plt.close(fig)
     print(f"✅ Saved {out_state}")
+
+    # Plot: Goals (if present)
+    if goals is not None:
+        goals = np.atleast_2d(goals)
+        if goals.shape[0] != len(t):
+            goals = goals[: len(t)]
+        fig, axes = plt.subplots(goals.shape[1], 1, figsize=(12, 4), sharex=True)
+        fig.suptitle(f"Goals from Buffer of {dataset_name}", fontsize=16, y=0.96)
+        if goals.shape[1] == 1:
+            axes = [axes]
+        for j in range(goals.shape[1]):
+            ax = axes[j]
+            ax.plot(t, goals[:, j], color="black", linewidth=1.0, alpha=0.7)
+            ax.set_ylabel(f"Goal {j + 1}")
+            ax.grid(True, alpha=0.3)
+        axes[-1].set_xlabel("Frame index")
+        plt.tight_layout(rect=(0.03, 0.03, 0.97, 0.96))
+        out_goal = output_dir / f"{dataset_name}_buffer_goals.png"
+        plt.savefig(out_goal, dpi=300)
+        plt.close(fig)
+        print(f"✅ Saved {out_goal}")
 
     # save_camera_images(buffer, output_dir / "camera_images")
 
@@ -206,6 +243,6 @@ def plot_buffer(buf_path, output_dir=None, step=1):
 
 
 if __name__ == "__main__":
-    buf_path = "/home/ferdinand/factr_project/factr/process_data/training_data/bld_both_52_filt/buf.pkl"
+    buf_path = "/home/ferdinand/activeinference/factr/process_data/training_data/fourgoals_1/buf.pkl"
 
     plot_buffer(buf_path)

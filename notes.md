@@ -1,4 +1,16 @@
-```markdown
+## Copy folders from other computer to this computer
+
+### Copy one folder to the currect folder
+
+```bash
+rsync -avzP --inplace --nocompression otake@192.168.1.172:/home/otake/factr_ws/raw_data/fourgoals_1_stiff .
+```
+### Copy multiple folders at once to the currect folder
+
+```bash
+rsync -avP otake@192.168.1.172:/home/otake/factr_ws/raw_data/{fourgoals_1_stiff,fourgoals_1_medium,fourgoals_1_soft} .
+```
+
 ## Topics in .pkl File
 
 The following topics are included in the `.pkl` file:
@@ -10,7 +22,7 @@ The following topics are included in the `.pkl` file:
 - `/franka_robot_state_broadcaster/external_joint_torques` from follower 
 - `/realsense/arm/im`  
 - `/realsense/arm/depth`
-```
+
 
 [tool.black]
 

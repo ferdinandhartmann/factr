@@ -269,8 +269,8 @@ def visualize_data(data_path, output_dir=None):
 if __name__ == "__main__":
     import sys
 
-    base_data_dir = Path("/home/ferdinand/factr_project/factr/process_data/data_to_process/bld_soft/data")
-    base_output_dir = Path("/home/ferdinand/factr_project/factr/process_data/data_to_process/bld_soft/visualizations")
+    base_data_dir = Path("/home/ferdinand/activeinference/factr/process_data/data_to_process/bld_soft/data")
+    base_output_dir = Path("/home/ferdinand/activeinference/factr/process_data/data_to_process/bld_soft/visualizations")
 
     # Allow overriding from CLI
     if len(sys.argv) >= 2:

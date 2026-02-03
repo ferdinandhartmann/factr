@@ -11,7 +11,7 @@ from factr.utils import gaussian_2d_smoothing
 
 H, W = 224, 224
 
-img_path = "/home/ferdinand/factr_project/factr/process_data/data_to_process/20251107/visualizations/ep_4/curriculum_scale_0.png"
+img_path = "/home/ferdinand/activeinference/factr/process_data/data_to_process/20251107/visualizations/ep_4/curriculum_scale_0.png"
 
 pil_img = Image.open(img_path).convert("RGB").resize((W, H))
 img_np = np.array(pil_img).astype(np.float32) / 255.0

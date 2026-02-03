@@ -34,7 +34,7 @@ suffix: _
 #              = (64 * 10000) / 16200 = 39.5
 
 buffer_path: ./buffer.pkl
-# buffer_path: /home/ferdinand/factr_project/factr/process_data/processed_data/20251024_train_60_filtered/buf.pkl
+# buffer_path: /home/ferdinand/activeinference/factr/process_data/processed_data/20251024_train_60_filtered/buf.pkl
 ac_chunk: 30
 img_chunk: 1  # number of image timesteps to use (including current one)
 train_transform: medium
