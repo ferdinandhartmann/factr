@@ -2,13 +2,13 @@
 #!/bin/bash
 
 # cuda id
-CUDA_DEVICE_ID=1
+CUDA_DEVICE_ID=0
 
 # task configuration, setup under cfg/task/
 task_config=single_franka
 
 # # path to dataset buffer
-buffer_path=/home/ferdinand/factr/process_data/training_data/20251112_60_25hz_filt2/buf.pkl
+buffer_path=/home/ferdinand/factr_project/factr/process_data/training_data/bld_stiff_52_filt/buf.pkl
 
 # # curriculum parameters
 # space_config=pixel # pixel, latent
@@ -18,12 +18,12 @@ buffer_path=/home/ferdinand/factr/process_data/training_data/20251112_60_25hz_fi
 # stop_scale=0
 
 # pretrained visual features
-feature_path=/home/ferdinand/factr/scripts/visual_features/vit_base/SOUP_1M_DH.pth
+feature_path=/home/ferdinand/factr_project/factr/scripts/visual_features/vit_base/SOUP_1M_DH.pth
 
 # wandb
 wandb_entity=ferdinand-hartmann-keio-university-org
 
-CUDA_VISIBLE_DEVICES=$CUDA_DEVICE_ID python /home/ferdinand/factr/factr/train_bc_policy.py \
+CUDA_VISIBLE_DEVICES=$CUDA_DEVICE_ID python /home/ferdinand/factr_project/factr/factr/train_bc_policy.py \
 agent.features.restore_path=$feature_path \
 buffer_path=$buffer_path \
 task=$task_config \

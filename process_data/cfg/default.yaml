@@ -1,17 +1,17 @@
 
-input_path: /home/ferdinand/factr/process_data/raw_data_train/20251112_60
-output_path: /home/ferdinand/factr/process_data/training_data/20251112_60_25hz_filt2
+input_path: /home/ferdinand/factr_project/factr/process_data/raw_data_train/bld_both
+output_path: /home/ferdinand/factr_project/factr/process_data/training_data/bld_both_52_filt
 
 median_filter_torque: False
 median_filter_kernel_size_torque: 3
 median_filter_position: True
-median_filter_kernel_size_position: 9
+median_filter_kernel_size_position: 7
 filter_torque: False
 cutoff_freq_torque: 10.0
 filter_position: True
-cutoff_freq_position: 3.0
+cutoff_freq_position: 12.0
 
-downsample: True
+downsample: False
 data_frequency: 50.0
 target_downsampling_freq: 25.0
 

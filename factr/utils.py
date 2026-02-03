@@ -133,7 +133,7 @@ def downsample_2d(img, scale=2):
     x_up = F.interpolate(x_down, size=original_shape[-2:], mode='nearest')  # or 'bilinear'
     return x_up
 
-def get_scale(scheduler, start, end, cur_step, max_step, ratio=2/3):
+def get_scale(scheduler, start, end, cur_step, max_step, ratio):
     assert start >= end, "Start scale must be larger than end scale"
     assert cur_step <= max_step, "Current step must be less than or equal to max step"
     assert cur_step >= 0 and max_step > 0, "Steps must be non-negative and max_step must be positive"

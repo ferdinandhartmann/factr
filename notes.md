@@ -105,3 +105,8 @@ rm *.json
 **Caution:** This command is irreversible. Double-check the folder contents before running it.
 
 conda install -c conda-forge roboticstoolbox-python
+
+
+when moving folder and the factr library doesnt work anymore:
+python -m pip uninstall -y factr
+python -m pip install -e .

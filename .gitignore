@@ -28,3 +28,6 @@ test_rollout_output/
 training_data/
 raw_data_train/
 raw_data_eval/
+check_blur_outputs/
+checkpoints_bld/
+test_rollout_output_bld/

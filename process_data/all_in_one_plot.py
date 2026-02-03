@@ -127,17 +127,17 @@ def plot_all_traj_in_one_plot(data_path, output_dir, step=1):
         x_tq, trimmed_tqs = trim_minlen([brd_torq])
         brd_torq_t = trimmed_tqs[0] if trimmed_tqs else None
 
-        # Downsample if requested
-        if step > 1:
-            if x_pos is not None:
-                x_pos = x_pos[::step]
-                if meas_pos_t is not None: meas_pos_t = meas_pos_t[::step]
-                if cmd_pos_t is not None:  cmd_pos_t  = cmd_pos_t[::step]
-                # if obs_pos_t is not None:  obs_pos_t  = obs_pos_t[::step]
-            if x_tq is not None:
-                x_tq = x_tq[::step]
-                if brd_torq_t is not None: brd_torq_t = brd_torq_t[::step]
-                # if obs_torq_t is not None: obs_torq_t = obs_torq_t[::step]
+        # # Downsample if requested
+        # if step > 1:
+        #     if x_pos is not None:
+        #         x_pos = x_pos[::step]
+        #         if meas_pos_t is not None: meas_pos_t = meas_pos_t[::step]
+        #         if cmd_pos_t is not None:  cmd_pos_t  = cmd_pos_t[::step]
+        #         # if obs_pos_t is not None:  obs_pos_t  = obs_pos_t[::step]
+        #     if x_tq is not None:
+        #         x_tq = x_tq[::step]
+        #         if brd_torq_t is not None: brd_torq_t = brd_torq_t[::step]
+        #         # if obs_torq_t is not None: obs_torq_t = obs_torq_t[::step]
 
         if any(v is not None for v in [cmd_pos_t, brd_torq_t]):
             entries.append({
@@ -195,20 +195,24 @@ def plot_all_traj_in_one_plot(data_path, output_dir, step=1):
     # plt.savefig(out_pos, dpi=150)
     # plt.close(fig)
     # print(f"✅ Saved {out_pos}")
+    
+    colours_direction = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728"]
+    labels_direction = ["right", "front", "left", "back"]
 
     fig, axes = plt.subplots(7, 1, figsize=(12, 14), sharex=True)
     fig.suptitle(f"All Joint Positions of /traj topic of {dataset_name} dataset", fontsize=16, y=0.96)
 
     for j in range(7):
         ax = axes[j]
-        for e in entries:
+        for idx, e in enumerate(entries):
             if e['x_pos'] is None: 
                 continue
             if e['cmd_pos'] is not None:
-                ax.plot(e['x_pos'], e['cmd_pos'][:, j],   alpha=0.3, linewidth=1.0, color='red', label=f"{e['name']} cmd")
+                ax.plot(e['x_pos'], e['cmd_pos'][:, j], alpha=0.5, linewidth=1.0, color=colours_direction[idx % len(colours_direction)], label=labels_direction[idx % len(labels_direction)] if idx < len(labels_direction) else None)
                 ax.set_ylim(y_min_pos[j], y_max_pos[j])
         ax.set_ylabel(f"J{j+1} [rad]")
         ax.grid(True, alpha=0.3)
+        ax.legend(loc='upper left', fontsize=10)
     axes[-1].set_xlabel("Dataset Index")
     plt.tight_layout(rect=[0.03, 0.03, 0.97, 0.96])
     out_pos = output_dir / f"allplot_{dataset_name}_positions_traj.png"
@@ -246,13 +250,14 @@ def plot_all_traj_in_one_plot(data_path, output_dir, step=1):
 
     for j in range(7):
         ax = axes[j]
-        for e in entries:
+        for idx, e in enumerate(entries):
             if e['x_tq'] is None:
                 continue
             if e['brd_torq'] is not None:
-                ax.plot(e['x_tq'], e['brd_torq'][:, j], alpha=0.3, linewidth=1.0, color="blue", label=f"{e['name']} brd")
+                ax.plot(e['x_tq'], e['brd_torq'][:, j], alpha=0.4, linewidth=1.0, color=colours_direction[idx % len(colours_direction)], label=labels_direction[idx % len(labels_direction)] if idx < len(labels_direction) else None)
         ax.set_ylabel(f"J{j+1} [Nm]")
         ax.grid(True, alpha=0.3)
+        ax.legend(loc='upper left', fontsize=10)
     axes[-1].set_xlabel("Dataset Index")
     plt.tight_layout(rect=[0.03, 0.03, 0.97, 0.96])
     out_tq = output_dir / f"allplot_{dataset_name}_torques_broadcasted.png"
@@ -288,6 +293,6 @@ if __name__ == '__main__':
 
     ################### All Data in one plot ###################
 
-    dataset_folder = Path("/home/ferdinand/factr/process_data/data_to_process/20251112/data/")
+    dataset_folder = Path("/home/ferdinand/factr_project/factr/process_data/data_to_process/bld_soft/data/")
     output_folder_allplots = dataset_folder.parent / "visualizations" / "all_in_one_plots"
     plot_all_traj_in_one_plot(dataset_folder, output_folder_allplots)

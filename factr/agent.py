@@ -102,7 +102,8 @@ class BaseAgent(nn.Module):
             start=self.curriculum.start_scale, 
             end=self.curriculum.stop_scale, 
             cur_step=misc.GLOBAL_STEP, 
-            max_step=self.curriculum.max_step
+            max_step=self.curriculum.max_step,
+            ratio=self.curriculum.ratio
         )
         if wandb.run is not None:
             wandb.log({"train/scale": scale}, step=misc.GLOBAL_STEP)

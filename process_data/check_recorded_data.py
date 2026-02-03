@@ -404,19 +404,19 @@ if __name__ == '__main__':
 
     ################# Single File Visualization #################
 
-    episode_name = "ep_45"  ## SELECT EPISODE HERE ####
-    pkl_path = Path(f"/home/ferdinand/factr/process_data/data_to_process/20251112/data/{episode_name}.pkl")
+    episode_name = "ep_04"  ## SELECT EPISODE HERE ####
+    pkl_path = Path(f"/home/ferdinand/factr_project/factr/process_data/data_to_process/bld_stiff/data/{episode_name}.pkl")
 
     median_filter_torque = False
     median_filter_kernel_size_torque = 3
     median_filter_position = True
-    median_filter_kernel_size_position = 9
+    median_filter_kernel_size_position = 7
     filter_torque = False
-    cutoff_freq_torque = 10.0
+    cutoff_freq_torque = 12.0
     filter_position = True
-    cutoff_freq_position = 3.0
+    cutoff_freq_position = 12.0
 
-    downsample = True
+    downsample = False
     data_frequency = 50.0
     target_downsampling_freq = 25.0
 

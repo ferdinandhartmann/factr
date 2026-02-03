@@ -1,6 +1,8 @@
 import torch
 import numpy as np
 from pathlib import Path
+import matplotlib
+matplotlib.use('Agg')   # non-GUI backend, fastest
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 from hydra.utils import instantiate
@@ -26,16 +28,16 @@ warnings.filterwarnings("ignore", message=".*torch.load.*weights_only.*")
 plt.rcParams.update(plt.rcParamsDefault)
 
 # ---------- CONFIG ---------- # Select model, checkpoint, and episode here
-model_name = "20251112_60_25hz_filt2_7dof_s42_ac25_b64_lr0.0002_iter6000_"
+model_name = "bld_both_52_filt2_s52_ac30_b64_lr0.00022_iter8000_"
 checkpoint = "latest"
-episode_names = ["ep_08", "ep_25", "ep_40", "ep_45", "ep_61", "ep_62", "ep_63", "ep_64", "ep_65", "ep_66"] # List of episode names to test
+episode_names = ["ep_41_stiff","ep_42_stiff","ep_43_soft","ep_44_soft", "ep_53_stiff", "ep_54_stiff", "ep_55_stiff", "ep_56_stiff", "ep_57_soft", "ep_58_soft", "ep_59_soft", "ep_60_soft"] # List of episode names to test
 
-downsample = True # from 50Hz to 25Hz
-vs_all_plot = False # whether to load all joint commands from dataset for visualization
+downsample = False # from 50Hz to 25Hz
+vs_all_plot = True # whether to load all joint commands from dataset for visualization
 use_buffer = False  # !!!!!!!!! somehow different results, i dont know why. load from buffer.pkl instead of raw PKL files 
 remove_joints = [] # zero-indexed joints to remove
-interactive_3d_plot = True
-endeffector_plot = True
+interactive_3d_plot = False
+endeffector_plot = False
 
 # ---------- PATHS & DEVICE ----------
 FACTR_REPO = Path(__file__).resolve().parents[1]
@@ -44,21 +46,21 @@ print(f"Detected FACTR repo folder: {FACTR_REPO}")
 # Checkpoint and configs
 CKPT_PATH = None
 if checkpoint == "latest":
-    CKPT_PATH = Path(f"{FACTR_REPO}/scripts/checkpoints/{model_name}/rollout/latest_ckpt.ckpt")
+    CKPT_PATH = Path(f"{FACTR_REPO}/scripts/checkpoints_bld/{model_name}/rollout/latest_ckpt.ckpt")
 else:
-    CKPT_PATH = Path(f"{FACTR_REPO}/scripts/checkpoints/{model_name}/{checkpoint}.ckpt")
-EXP_CFG_PATH = Path(f"{FACTR_REPO}/scripts/checkpoints/{model_name}/rollout/exp_config.yaml")
-ROLLOUT_CFG_PATH = Path(f"{FACTR_REPO}/scripts/checkpoints/{model_name}/rollout/rollout_config.yaml")
+    CKPT_PATH = Path(f"{FACTR_REPO}/scripts/checkpoints_bld/{model_name}/{checkpoint}.ckpt")
+EXP_CFG_PATH = Path(f"{FACTR_REPO}/scripts/checkpoints_bld/{model_name}/rollout/exp_config.yaml")
+ROLLOUT_CFG_PATH = Path(f"{FACTR_REPO}/scripts/checkpoints_bld/{model_name}/rollout/rollout_config.yaml")
 
 # Raw data
-RAW_DATA_PATH_TRAIN = Path(f"{FACTR_REPO}/process_data/raw_data_train/20251112_60/")
-RAW_DATA_PATH_EVAL = Path(f"{FACTR_REPO}/process_data/raw_data_eval/20251112_7/")
+RAW_DATA_PATH_TRAIN = Path(f"{FACTR_REPO}/process_data/raw_data_train/bld_both_104/")
+RAW_DATA_PATH_EVAL = Path(f"{FACTR_REPO}/process_data/raw_data_eval/bld_both_16/")
 
 # Buffer
-BUF_PATH = Path(f"{FACTR_REPO}/process_data/training_data/20251112_60_25hz_filt2/buf.pkl")
+BUF_PATH = Path(f"{FACTR_REPO}/process_data/training_data/bld_both_52_filt/buf.pkl")
 
 # Output folder
-output_folder = Path(f"{FACTR_REPO}/scripts/test_rollout_output/{model_name}_{checkpoint}")
+output_folder = Path(f"{FACTR_REPO}/scripts/test_rollout_output_bld/{model_name}_{checkpoint}")
 output_folder.mkdir(parents=True, exist_ok=True)
 
 # Topics in PKL files
@@ -89,7 +91,7 @@ print(f"✅ Loaded normalization stats from {ROLLOUT_CFG_PATH}")
 
 if vs_all_plot:
     print("Loading all joint commands from dataset for visualization...")
-    joint_cmds_all, joint_cmds_all_norm = get_all_joint_cmds_np(RAW_DATA_PATH_TRAIN, action_mean, action_std)
+    joint_cmds_all, joint_cmds_all_norm = get_all_joint_cmds_np(RAW_DATA_PATH_TRAIN, action_mean, action_std, downsample=downsample)
     print(f"✅ Loaded and normalized all joint commands from dataset folder.")
 
 image_obs = []

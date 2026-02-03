@@ -11,21 +11,20 @@ defaults:
 
 hydra:
   run:
-    dir: checkpoints/${exp_name}
+    dir: checkpoints_bld/${exp_name}
 
 rt: ${hydra:runtime.choices.agent/features}
 
-exp_base_name: 20251112_60_25hz_filt2_7dof
-# exp_name: 20251107_60_25hz_s40_ac25_b64_lr28_10
+exp_base_name: bld_stiff_52_filt2
 batch_size: 64
 num_workers: 8
-lr: 0.0002
-max_iterations: 6000 # 20/50 epochs good maybe, (batch_size*max_iterations) / dataset_size , datasetsize=(54 episodes × (300 raw steps)=16,200)
-eval_freq: 200
+lr: 0.00022
+max_iterations: 8000 # 20/50 epochs good maybe, (batch_size*max_iterations) / dataset_size , datasetsize=(54 episodes × (300 raw steps)=16,200)
+eval_freq: 250
 save_freq: 2000
 schedule_freq: 1
 devices: 1
-seed: 42
+seed: 52
 
 suffix: _
 
@@ -35,8 +34,8 @@ suffix: _
 #              = (64 * 10000) / 16200 = 39.5
 
 buffer_path: ./buffer.pkl
-# buffer_path: /home/ferdinand/factr/process_data/processed_data/20251024_train_60_filtered/buf.pkl
-ac_chunk: 25
+# buffer_path: /home/ferdinand/factr_project/factr/process_data/processed_data/20251024_train_60_filtered/buf.pkl
+ac_chunk: 30
 img_chunk: 1  # number of image timesteps to use (including current one)
 train_transform: medium
 test_transform: preproc
@@ -48,6 +47,7 @@ curriculum:
   start_scale: 5
   stop_scale: 0
   max_step: ${max_iterations}
+  ratio: 0.667
 
 use_indices: [0,1,2,3,4,5,6] 
 

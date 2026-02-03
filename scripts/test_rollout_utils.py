@@ -209,7 +209,7 @@ def extract_7d(data_list: List[Any], key: str) -> np.ndarray:
             arr.append([np.nan] * 7)
     return np.array(arr, dtype=np.float32)
 
-def get_all_joint_cmds_np(data_path, action_mean, action_std):
+def get_all_joint_cmds_np(data_path, action_mean, action_std, downsample=False):
     """
     Load each episode's joint commands separately (not concatenated)
     and normalize them using rollout_config.yaml stats.

@@ -2,7 +2,7 @@ import os
 import re
 from pathlib import Path
 
-folder = Path("/home/ferdinand/factr/process_data/data_to_process/20251107/data")
+folder = Path("/home/ferdinand/factr_project/factr/process_data/data_to_process/20251107/data")
 prefix = "data_log_"  # current prefix of the files
 exts = [".pkl"]
 pad = 1  # how many digits: ep_01, ep_02, ...

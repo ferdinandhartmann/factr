@@ -184,6 +184,6 @@ def plot_buffer(buf_path, output_dir=None, step=1):
 
 if __name__ == "__main__":
 
-    buf_path = "/home/ferdinand/factr/process_data/training_data/20251112_60_25hz_filt2/buf.pkl"
+    buf_path = "/home/ferdinand/factr_project/factr/process_data/training_data/bld_both_52_filt/buf.pkl"
 
     plot_buffer(buf_path)

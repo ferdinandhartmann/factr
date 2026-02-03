@@ -12,14 +12,14 @@ odim: ${task.obs_dim}
 n_cams: ${task.n_cams}
 use_obs: add_token
 dropout: 0.1 #Inside Transformer layers (self-attn & FFN)
-img_dropout: 0.2 #0 #On the visual embeddings before fusion
+img_dropout: 0.1 #0 #On the visual embeddings before fusion
 ac_dim: ${task.ac_dim}
 ac_chunk: ${ac_chunk}
 imgs_per_cam: ${img_chunk}
 share_cam_features: False
 early_fusion: True
 feat_norm: layer_norm
-token_dim: 256 #(512)
+token_dim: 512 #512 #256
 curriculum: ${curriculum}
 transformer_kwargs:
   d_model: ${agent.token_dim}
@@ -27,5 +27,5 @@ transformer_kwargs:
   nhead: 8 # has token_dim/nhead number of dimesnions per head
   num_encoder_layers: 4 #6
   num_decoder_layers: 6
-  dim_feedforward: 1536 #2048
+  dim_feedforward: 2048 #2048 #1536
   activation: gelu #relu
