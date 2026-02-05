@@ -1,0 +1,66 @@
+# @package _global_
+
+hydra:
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+
+data:
+  buffer_path: /home/ferdinand/activeinference/factr/process_data/training_data/fourgoals_1_newnorm_train/buf.pkl
+  stats_path: /home/ferdinand/activeinference/factr/process_data/training_data/fourgoals_1_newnorm_train/rollout_config.yaml
+  # seq_len here is the number of actions returned. Observations are seq_len + 1.
+  seq_len: 45 # future prediction length
+  obs_keys:
+    - state
+  include_goals: false
+  normalize_obs: false
+  normalize_action: false
+
+model:
+  stoch_dim: 64    # uncertainty / extra information channel
+  deter_dim: 128   # memory size
+  hidden_dim: 128  # MLP width
+  obs_window: 1 # just for training, how many previous obs to give the encoder
+  # Smaller than the common Dreamer image-default; low-dim state transitions are often nearly deterministic.
+  min_std: 0.01
+
+  # For low-dimensional state observations, start WITHOUT a VAE.
+  use_vae: false
+  vae_latent_dim: 8
+  vae_hidden_dim: 64
+  vae_min_std: 0.1
+
+logging:
+  enabled: true
+  project: world-model-test
+  entity: null
+  name: rssm_newnorm_train_6
+  tags: []
+  log_every: 200
+
+train:
+  seed: 7
+  # Number of optimizer updates. Prefer this over "epochs" because dataset size can vary a lot.
+  max_steps: 10000
+  batch_size: 128
+  lr: 0.0003
+  # For state-only buffers, start with a small KL weight to prevent the model from ignoring reconstruction.
+  kl_weight: 0.5
+  kl_warmup_steps: 300 # Helps prevent the KL term from dominating early training so recon learns first
+  kl_balance: true     # Dreamer-style KL balancing often improves stability.
+  kl_balance_scale: 0.8
+  rssm_sample: true   # Low-dim states often train better with deterministic posterior latents.
+  free_nats: 0.05
+  grad_clip: 100.0
+  device: cuda
+  num_workers: 12
+  pin_memory: true
+
+  # Save checkpoint settings
+  save_every: 1000
+  keep_last: 1
+
+  vae_recon_weight: 1.0
+  # With low-dimensional state observations, a strong VAE KL tends to collapse the latent: Keep this small (or disable VAE)
+  vae_kl_weight: 0.01
+  print_every: 100
+  print_updates: true

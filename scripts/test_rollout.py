@@ -94,13 +94,22 @@ policy = load_and_prepare_policy(EXP_CFG_PATH, CKPT_PATH, DEVICE)
 with open(ROLLOUT_CFG_PATH, "r") as f:
     rollout_config = yaml.safe_load(f)
 
-# Torque
-obs_mean = torch.tensor(rollout_config["norm_stats"]["state"]["mean"]).float().to(DEVICE)
-obs_std = torch.tensor(rollout_config["norm_stats"]["state"]["std"]).float().to(DEVICE)
+# NOTE:
+# Newer buffers may store grouped normalization under `norm_stats.{state,action}.groups` (no global mean/std).
+state_stats = rollout_config.get("norm_stats", {}).get("state", {}) or {}
+action_stats = rollout_config.get("norm_stats", {}).get("action", {}) or {}
 
-# Policy output (action)
-action_mean = torch.tensor(rollout_config["norm_stats"]["action"]["mean"]).float().to(DEVICE)
-action_std = torch.tensor(rollout_config["norm_stats"]["action"]["std"]).float().to(DEVICE)
+obs_mean = None
+obs_std = None
+if "mean" in state_stats and "std" in state_stats:
+    obs_mean = torch.tensor(state_stats["mean"]).float().to(DEVICE)
+    obs_std = torch.tensor(state_stats["std"]).float().to(DEVICE)
+
+action_mean = None
+action_std = None
+if "mean" in action_stats and "std" in action_stats:
+    action_mean = torch.tensor(action_stats["mean"]).float().to(DEVICE)
+    action_std = torch.tensor(action_stats["std"]).float().to(DEVICE)
 print(f"✅ Loaded normalization stats from {ROLLOUT_CFG_PATH}")
 
 if vs_all_plot:
@@ -179,7 +188,8 @@ for episode_name in episode_names:
 
         # Normalize Torque Observation
         torque_tensor = torch.from_numpy(torque).float().to(DEVICE)
-        torque_tensor = (torque_tensor - obs_mean) / obs_std  # normalization
+        if obs_mean is not None and obs_std is not None and obs_mean.numel() == torque_tensor.numel():
+            torque_tensor = (torque_tensor - obs_mean) / obs_std  # normalization
         torque_tensor = torque_tensor.unsqueeze(0)
         torque_tensor = torque_tensor[:, use_indicies]
 
@@ -188,9 +198,15 @@ for episode_name in episode_names:
         true_action_tensor = torch.from_numpy(np.array(true_action)).float().to(DEVICE)
         normalized_true_action = []
         if not use_buffer or use_eval:
-            normalized_true_action = (true_action_tensor - action_mean) / action_std  # normalization
+            if action_mean is not None and action_std is not None and action_mean.numel() == true_action_tensor.numel():
+                normalized_true_action = (true_action_tensor - action_mean) / action_std  # normalization
+            else:
+                normalized_true_action = true_action_tensor
         else:
-            true_action = true_action_tensor * action_std + action_mean  # denormalize from buffer
+            if action_mean is not None and action_std is not None and action_mean.numel() == true_action_tensor.numel():
+                true_action = true_action_tensor * action_std + action_mean  # denormalize from buffer
+            else:
+                true_action = true_action_tensor
             true_action = true_action.unsqueeze(0).cpu().numpy()[0]
             normalized_true_action = true_action_tensor
         true_action_list.append(true_action)

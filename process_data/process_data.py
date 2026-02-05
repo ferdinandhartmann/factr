@@ -22,7 +22,7 @@ from pathlib import Path
 import hydra
 import numpy as np
 import yaml
-from omegaconf import DictConfig
+from omegaconf import DictConfig, ListConfig, OmegaConf
 from tqdm import tqdm
 from utils_data_process import (
     downsample_data,
@@ -32,6 +32,335 @@ from utils_data_process import (
     medianfilter,
     sync_data_slowest,
 )
+
+
+def _build_topic_slices(state_obs_topics, state_topic_dims):
+    if len(state_obs_topics) != len(state_topic_dims):
+        raise ValueError("State topics and dims length mismatch.")
+    topic_slices = {}
+    offset = 0
+    for topic, dim in zip(state_obs_topics, state_topic_dims):
+        topic_slices[topic] = slice(offset, offset + dim)
+        offset += dim
+    return topic_slices, offset
+
+
+def _resolve_pose_topic(state_obs_topics, topic_slices, cfg):
+    pose_topic = cfg.get("pose_topic", None)
+    if pose_topic and pose_topic in topic_slices:
+        return pose_topic
+
+    preferred = [
+        "/cartesian_impedance_controller/pose_command",
+        "/cartesian_impedance_controller/ee_pose",
+        "/cartesian_impedance_controller/ee_pose_commanded",
+        "/franka_robot_state_broadcaster/robot_state",
+    ]
+    for topic in preferred:
+        if topic in topic_slices:
+            return topic
+
+    candidates = [
+        topic
+        for topic in state_obs_topics
+        if (topic in topic_slices) and (topic_slices[topic].stop - topic_slices[topic].start == 9) and ("pose" in topic)
+    ]
+    if len(candidates) == 1:
+        return candidates[0]
+    if len(candidates) > 1:
+        print(f"⚠️ Multiple pose topic candidates found: {candidates}. Using {candidates[0]}.")
+        return candidates[0]
+    return None
+
+
+def _parse_workspace_limits(cfg):
+    workspace_limits = cfg.get("workspace_limits", None)
+    if workspace_limits is None:
+        return None
+
+    if isinstance(workspace_limits, (DictConfig, ListConfig)):
+        workspace_limits = OmegaConf.to_container(workspace_limits, resolve=True)
+
+    if isinstance(workspace_limits, (list, tuple)) and len(workspace_limits) == 3:
+        mins = [float(v[0]) for v in workspace_limits]
+        maxs = [float(v[1]) for v in workspace_limits]
+        return np.array(mins, dtype=float), np.array(maxs, dtype=float), "list"
+
+    def _axis_limits(axis):
+        if axis in workspace_limits:
+            val = workspace_limits[axis]
+            if isinstance(val, (list, tuple)) and len(val) == 2:
+                return float(val[0]), float(val[1])
+        min_key, max_key = f"{axis}_min", f"{axis}_max"
+        if min_key in workspace_limits and max_key in workspace_limits:
+            return float(workspace_limits[min_key]), float(workspace_limits[max_key])
+        return None
+
+    limits = [_axis_limits(axis) for axis in ("x", "y", "z")]
+    if any(v is None for v in limits):
+        return None
+    mins = [v[0] for v in limits]
+    maxs = [v[1] for v in limits]
+    return np.array(mins, dtype=float), np.array(maxs, dtype=float), "mapping"
+
+
+def _compute_minmax_from_data(list_of_arrays, feature_slice):
+    data = np.concatenate([arr[:, feature_slice] for arr in list_of_arrays], axis=0)
+    mins = np.nanmin(data, axis=0)
+    maxs = np.nanmax(data, axis=0)
+    return mins, maxs
+
+
+def _compute_gaussian_stats(list_of_arrays, feature_slice):
+    data = np.concatenate([arr[:, feature_slice] for arr in list_of_arrays], axis=0)
+    mean = np.nanmean(data, axis=0)
+    std = np.nanstd(data, axis=0)
+    std[std == 0] = 1e-17
+    return mean, std
+
+
+def _apply_minmax(list_of_arrays, feature_slice, mins, maxs):
+    mins = np.asarray(mins, dtype=float)
+    maxs = np.asarray(maxs, dtype=float)
+    denom = maxs - mins
+    denom[denom == 0] = 1e-17
+    for array in list_of_arrays:
+        array[:, feature_slice] = (2.0 * (array[:, feature_slice] - mins) / denom) - 1.0
+
+
+def _apply_gaussian(list_of_arrays, feature_slice, mean, std):
+    for array in list_of_arrays:
+        array[:, feature_slice] = (array[:, feature_slice] - mean) / std
+
+
+def _apply_log1p(list_of_arrays, feature_slice):
+    for array in list_of_arrays:
+        values = array[:, feature_slice]
+        array[:, feature_slice] = np.sign(values) * np.log1p(np.abs(values))
+
+
+def _apply_clip(list_of_arrays, feature_slice, clip_value):
+    if clip_value is None:
+        return
+    c = float(clip_value)
+    if c <= 0:
+        return
+    for array in list_of_arrays:
+        array[:, feature_slice] = np.clip(array[:, feature_slice], -c, c)
+
+
+def _apply_fixed_scale(list_of_arrays, feature_slice, scales, clip_value=None):
+    scales = np.asarray(scales, dtype=float).reshape(-1)
+    if scales.size != (feature_slice.stop - feature_slice.start):
+        raise ValueError("Scale vector length must match slice width.")
+    scales[scales == 0] = 1e-17
+    for array in list_of_arrays:
+        array[:, feature_slice] = array[:, feature_slice] / scales
+    if clip_value is not None:
+        _apply_clip(list_of_arrays, feature_slice, clip_value)
+
+
+def _parse_tracking_error_scales(cfg):
+    """
+    Returns (pos_scale, rot_scale).
+    Defaults chosen per user spec: pos=0.1m, rot=0.5rad.
+    """
+    scales = cfg.get("tracking_error_scales", None)
+    if scales is None:
+        return 0.1, 0.5
+    if isinstance(scales, (DictConfig, ListConfig)):
+        scales = OmegaConf.to_container(scales, resolve=True)
+    if isinstance(scales, dict):
+        pos = float(scales.get("pos", 0.1))
+        rot = float(scales.get("rot", 0.5))
+        return pos, rot
+    if isinstance(scales, (list, tuple)) and len(scales) == 2:
+        return float(scales[0]), float(scales[1])
+    return 0.1, 0.5
+
+
+def normalize_states_groupwise(all_states_for_norm, state_obs_topics, state_topic_dims, cfg):
+    topic_slices, state_dim = _build_topic_slices(state_obs_topics, state_topic_dims)
+
+    pose_topic = _resolve_pose_topic(state_obs_topics, topic_slices, cfg)
+    vel_topic = "/cartesian_impedance_controller/ee_velocity"
+    track_topic = "/cartesian_impedance_controller/tracking_error"
+    wrench_topic = "/franka_robot_state_broadcaster/external_wrench_in_stiffness_frame"
+
+    required_topics = [pose_topic, vel_topic, track_topic, wrench_topic]
+    missing_topics = [t for t in required_topics if t is None or t not in topic_slices]
+    if missing_topics:
+        print(f"⚠️ Missing topics for grouped normalization: {missing_topics}. Falling back to gaussian norm.")
+        return gaussian_norm(all_states_for_norm)
+
+    pose_slice = topic_slices[pose_topic]
+    if (pose_slice.stop - pose_slice.start) != 9:
+        raise ValueError(f"Pose topic {pose_topic} must be 9-dim, got {pose_slice.stop - pose_slice.start}.")
+
+    vel_slice = topic_slices[vel_topic]
+    if (vel_slice.stop - vel_slice.start) != 6:
+        raise ValueError(f"EE velocity topic {vel_topic} must be 6-dim.")
+
+    track_slice = topic_slices[track_topic]
+    if (track_slice.stop - track_slice.start) != 6:
+        raise ValueError(f"Tracking error topic {track_topic} must be 6-dim.")
+
+    wrench_slice = topic_slices[wrench_topic]
+    if (wrench_slice.stop - wrench_slice.start) != 6:
+        raise ValueError(f"External wrench topic {wrench_topic} must be 6-dim.")
+
+    pos_slice = slice(pose_slice.start, pose_slice.start + 3)
+    ori_slice = slice(pose_slice.start + 3, pose_slice.start + 9)
+
+    stats = {"mode": "grouped", "state_dim": state_dim, "groups": []}
+
+    pose_clip = float(cfg.get("pose_clip", 5.0))
+    pos_mean, pos_std = _compute_gaussian_stats(all_states_for_norm, pos_slice)
+    _apply_gaussian(all_states_for_norm, pos_slice, pos_mean, pos_std)
+    _apply_clip(all_states_for_norm, pos_slice, pose_clip)
+    stats["groups"].append(
+        {
+            "name": "ee_position",
+            "type": "zscore_clip",
+            "indices": [pos_slice.start, pos_slice.stop],
+            "mean": [float(x) for x in pos_mean],
+            "std": [float(x) for x in pos_std],
+            "clip": pose_clip,
+        }
+    )
+    stats["groups"].append(
+        {
+            "name": "ee_orientation",
+            "type": "identity",
+            "indices": [ori_slice.start, ori_slice.stop],
+        }
+    )
+
+    vel_mean, vel_std = _compute_gaussian_stats(all_states_for_norm, vel_slice)
+    _apply_gaussian(all_states_for_norm, vel_slice, vel_mean, vel_std)
+    stats["groups"].append(
+        {
+            "name": "ee_velocity",
+            "type": "gaussian",
+            "indices": [vel_slice.start, vel_slice.stop],
+            "mean": [float(x) for x in vel_mean],
+            "std": [float(x) for x in vel_std],
+        }
+    )
+
+    pos_scale, rot_scale = _parse_tracking_error_scales(cfg)
+    track_clip = float(cfg.get("tracking_error_clip", 1.0))
+    track_scales = np.array([pos_scale, pos_scale, pos_scale, rot_scale, rot_scale, rot_scale], dtype=float)
+    _apply_fixed_scale(all_states_for_norm, track_slice, track_scales, clip_value=track_clip)
+    stats["groups"].append(
+        {
+            "name": "tracking_error",
+            "type": "fixed_scale_clip",
+            "indices": [track_slice.start, track_slice.stop],
+            "scales": [float(x) for x in track_scales],
+            "clip": track_clip,
+        }
+    )
+
+    wrench_clip = float(cfg.get("wrench_clip", 5.0))
+    _apply_log1p(all_states_for_norm, wrench_slice)
+    wrench_mean, wrench_std = _compute_gaussian_stats(all_states_for_norm, wrench_slice)
+    _apply_gaussian(all_states_for_norm, wrench_slice, wrench_mean, wrench_std)
+    _apply_clip(all_states_for_norm, wrench_slice, wrench_clip)
+    stats["groups"].append(
+        {
+            "name": "external_wrench",
+            "type": "log1p_zscore_clip",
+            "indices": [wrench_slice.start, wrench_slice.stop],
+            "mean": [float(x) for x in wrench_mean],
+            "std": [float(x) for x in wrench_std],
+            "clip": wrench_clip,
+            "formula": "clip((sign(x)*log1p(abs(x)) - mean)/std, ±clip)",
+        }
+    )
+
+    used = np.zeros(state_dim, dtype=bool)
+    for group in stats["groups"]:
+        start, stop = group["indices"]
+        used[start:stop] = True
+    if not np.all(used):
+        remaining = np.where(~used)[0]
+        rem_slice = slice(int(remaining[0]), int(remaining[-1]) + 1)
+        rem_mean, rem_std = _compute_gaussian_stats(all_states_for_norm, rem_slice)
+        _apply_gaussian(all_states_for_norm, rem_slice, rem_mean, rem_std)
+        stats["groups"].append(
+            {
+                "name": "residual_features",
+                "type": "gaussian",
+                "indices": [rem_slice.start, rem_slice.stop],
+                "mean": [float(x) for x in rem_mean],
+                "std": [float(x) for x in rem_std],
+            }
+        )
+
+    return stats
+
+
+def normalize_actions_groupwise(all_actions_for_norm, cfg):
+    """
+    Normalize actions assuming commanded EE pose actions:
+      - position (x,y,z) min-max -> [-1, 1] using workspace_limits
+      - orientation (6 dims) identity (rotation-matrix columns already in [-1, 1])
+    Falls back to gaussian normalization if the action dimensionality is not compatible.
+    """
+    if not all_actions_for_norm:
+        return {"mode": "none", "action_dim": 0, "groups": []}
+
+    action_dim = int(all_actions_for_norm[0].shape[1])
+    if any(arr.shape[1] != action_dim for arr in all_actions_for_norm):
+        raise ValueError("Action dimensions changed across episodes; cannot build consistent normalization stats.")
+
+    if action_dim < 9:
+        print(f"⚠️ Action dim {action_dim} < 9; falling back to gaussian norm.")
+        return gaussian_norm(all_actions_for_norm)
+
+    pos_slice = slice(0, 3)
+    ori_slice = slice(3, 9)
+
+    stats = {"mode": "grouped", "action_dim": action_dim, "groups": []}
+
+    pose_clip = float(cfg.get("pose_clip", 5.0))
+    pos_mean, pos_std = _compute_gaussian_stats(all_actions_for_norm, pos_slice)
+    _apply_gaussian(all_actions_for_norm, pos_slice, pos_mean, pos_std)
+    _apply_clip(all_actions_for_norm, pos_slice, pose_clip)
+    stats["groups"].append(
+        {
+            "name": "ee_position",
+            "type": "zscore_clip",
+            "indices": [pos_slice.start, pos_slice.stop],
+            "mean": [float(x) for x in pos_mean],
+            "std": [float(x) for x in pos_std],
+            "clip": pose_clip,
+        }
+    )
+    stats["groups"].append(
+        {
+            "name": "ee_orientation",
+            "type": "identity",
+            "indices": [ori_slice.start, ori_slice.stop],
+        }
+    )
+
+    if action_dim > 9:
+        rem_slice = slice(9, action_dim)
+        rem_mean, rem_std = _compute_gaussian_stats(all_actions_for_norm, rem_slice)
+        _apply_gaussian(all_actions_for_norm, rem_slice, rem_mean, rem_std)
+        stats["groups"].append(
+            {
+                "name": "residual_features",
+                "type": "gaussian",
+                "indices": [rem_slice.start, rem_slice.stop],
+                "mean": [float(x) for x in rem_mean],
+                "std": [float(x) for x in rem_std],
+            }
+        )
+
+    return stats
 
 
 @hydra.main(version_base=None, config_path="cfg", config_name="default")
@@ -282,8 +611,8 @@ def main(cfg: DictConfig):
         trajectories.append(traj)
 
     # normalize states and actions
-    state_norm_stats = gaussian_norm(all_states_for_norm)
-    action_norm_stats = gaussian_norm(all_actions)
+    state_norm_stats = normalize_states_groupwise(all_states_for_norm, state_obs_topics, state_topic_dims, cfg)
+    action_norm_stats = normalize_actions_groupwise(all_actions, cfg)
     norm_stats = dict(state=state_norm_stats, action=action_norm_stats)
 
     # dump data buffer

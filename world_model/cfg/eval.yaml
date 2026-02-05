@@ -1,0 +1,18 @@
+defaults:
+  - train: train_defualt
+  - _self_
+
+eval:
+  checkpoint_path: checkpoints/${logging.name}/rssm_step_10000.pt
+  seq_len: 1000
+  batch_size: 64
+  device: cuda
+  num_workers: 0
+  pin_memory: false
+  max_batches: 50
+  print_every: 5
+  seed: 7
+  plot:
+    enabled: true
+    output_dir: plots
+    max_dims: 28
