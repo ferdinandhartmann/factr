@@ -147,7 +147,7 @@ def main(cfg: DictConfig) -> None:
                 posterior_output = model(obs_windowed[:, 1:], actions, sample=False)
 
                 # Posterior recon predicts obs[1:].
-                post_obs = vae.decode(posterior_output.obs_pred.reshape(-1, rssm_obs_dim)).view(
+                post_obs = vae.decode(posterior_output.obs_pred_mean.reshape(-1, rssm_obs_dim)).view(
                     obs.shape[0], actions.shape[1], obs.shape[-1]
                 )
 
@@ -178,7 +178,7 @@ def main(cfg: DictConfig) -> None:
                 obs_windowed = build_obs_window(obs, cfg.model.obs_window)
                 posterior_output = model(obs_windowed[:, 1:], actions, sample=False)
 
-                post_pred = posterior_output.obs_pred
+                post_pred = posterior_output.obs_pred_mean
                 prior_pred_uncond = model.rollout_prior(actions, sample=False)
 
                 prior_pred_open = None

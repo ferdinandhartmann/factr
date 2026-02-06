@@ -14,6 +14,8 @@ from .modules import MLP
 @dataclass
 class RSSMOutput:
     obs_pred: torch.Tensor
+    obs_pred_mean: torch.Tensor
+    obs_pred_std: torch.Tensor
     prior_mean: torch.Tensor
     prior_std: torch.Tensor
     post_mean: torch.Tensor
@@ -48,7 +50,7 @@ class RSSM(nn.Module):
 
         self.prior_net = MLP(deter_dim, 2 * stoch_dim, hidden_dim, num_layers=2)
         self.post_net = MLP(deter_dim + hidden_dim, 2 * stoch_dim, hidden_dim, num_layers=2)
-        self.decoder = MLP(deter_dim + stoch_dim, obs_dim, hidden_dim, num_layers=3)
+        self.obs_head = MLP(deter_dim + stoch_dim, 2 * obs_dim, hidden_dim, num_layers=3)
 
     def _stats(self, params: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         mean, std = torch.chunk(params, 2, dim=-1)
@@ -69,6 +71,8 @@ class RSSM(nn.Module):
         deter_states = []
         stoch_states = []
         obs_preds = []
+        obs_means = []
+        obs_stds = []
 
         for t in range(seq_len):
             act_embed = self.action_encoder(actions[:, t])
@@ -90,7 +94,9 @@ class RSSM(nn.Module):
                 z = post_mean
 
             dec_in = torch.cat([h, z], dim=-1)
-            obs_pred = self.decoder(dec_in)
+            obs_params = self.obs_head(dec_in)
+            obs_mean, obs_std = self._stats(obs_params)
+            obs_pred = obs_mean
 
             prior_means.append(prior_mean)
             prior_stds.append(prior_std)
@@ -99,9 +105,13 @@ class RSSM(nn.Module):
             deter_states.append(h)
             stoch_states.append(z)
             obs_preds.append(obs_pred)
+            obs_means.append(obs_mean)
+            obs_stds.append(obs_std)
 
         return RSSMOutput(
             obs_pred=torch.stack(obs_preds, dim=1),
+            obs_pred_mean=torch.stack(obs_means, dim=1),
+            obs_pred_std=torch.stack(obs_stds, dim=1),
             prior_mean=torch.stack(prior_means, dim=1),
             prior_std=torch.stack(prior_stds, dim=1),
             post_mean=torch.stack(post_means, dim=1),
@@ -146,7 +156,9 @@ class RSSM(nn.Module):
                 z = prior_mean
 
             dec_in = torch.cat([h, z], dim=-1)
-            obs_pred = self.decoder(dec_in)
+            obs_params = self.obs_head(dec_in)
+            obs_mean, _ = self._stats(obs_params)
+            obs_pred = obs_mean
             obs_preds.append(obs_pred)
 
         return torch.stack(obs_preds, dim=1)

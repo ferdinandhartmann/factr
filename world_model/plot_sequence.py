@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -130,7 +129,7 @@ def _plot_sequences(
         if idx < len(grouped_dims) - 1:
             height_ratios.append(0.35)
 
-    fig = plt.figure(figsize=(10, 1.8 * (total_rows - (len(grouped_dims) - 1)) + 0.25 * (len(grouped_dims) - 1)))
+    fig = plt.figure(figsize=(15, 1.8 * (total_rows - (len(grouped_dims) - 1)) + 0.25 * (len(grouped_dims) - 1)))
     gs = GridSpec(total_rows, 1, height_ratios=height_ratios, hspace=0.18)
 
     axes: List[plt.Axes] = []
@@ -175,54 +174,33 @@ def _plot_sequences(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Plot true vs predicted trajectories for one sequence.")
-    parser.add_argument(
-        "--buffer-path",
-        type=str,
-        default="/home/ferdinand/activeinference/factr/process_data/training_data/fourgoals_1_newnorm_train/buf.pkl",
-        help="Path to buf.pkl",
-    )
-    parser.add_argument(
-        "--stats-path",
-        type=str,
-        default="/home/ferdinand/activeinference/factr/process_data/training_data/fourgoals_1_newnorm_train/rollout_config.yaml",
-        help="Path to rollout_config.yaml",
-    )
-    parser.add_argument(
-        "--checkpoint-path",
-        type=str,
-        default="checkpoints/rssm_newnorm_train_1/rssm_step_7000.pt",
-        help="Path to checkpoint .pt file",
-    )
-    parser.add_argument("--seq-len", type=int, default=300)
-    parser.add_argument("--seq-index", type=int, default=0)
-    parser.add_argument("--device", type=str, default="cpu")
-    parser.add_argument("--seed", type=int, default=7)
-    parser.add_argument("--output-path", type=str, default="plots/sequence_plot.png")
-    parser.add_argument("--max-dims", type=int, default=28)
-    parser.add_argument("--dims", type=int, nargs="*", default=None)
-    parser.add_argument("--include-goals", dest="include_goals", action="store_true")
-    parser.add_argument("--no-include-goals", dest="include_goals", action="store_false")
-    parser.add_argument("--normalize-obs", dest="normalize_obs", action="store_true")
-    parser.add_argument("--no-normalize-obs", dest="normalize_obs", action="store_false")
-    parser.add_argument("--normalize-action", dest="normalize_action", action="store_true")
-    parser.add_argument("--no-normalize-action", dest="normalize_action", action="store_false")
-    parser.add_argument("--use-vae", dest="use_vae", action="store_true")
-    parser.add_argument("--no-vae", dest="use_vae", action="store_false")
-    parser.add_argument("--vae-latent-dim", type=int, default=16)
-    parser.add_argument("--vae-hidden-dim", type=int, default=128)
-    parser.add_argument("--vae-min-std", type=float, default=0.1)
-    parser.add_argument("--rssm-stoch-dim", type=int, default=32)
-    parser.add_argument("--rssm-deter-dim", type=int, default=128)
-    parser.add_argument("--rssm-hidden-dim", type=int, default=128)
-    parser.add_argument("--rssm-min-std", type=float, default=0.1)
-    parser.add_argument("--obs-window", type=int, default=1)
-    # Use None defaults so we can pull the exact training settings from the checkpoint cfg.
-    parser.set_defaults(include_goals=None, normalize_obs=None, normalize_action=None, use_vae=None)
-    args = parser.parse_args()
+    seq_len = 500
+    episode_index = 0
+    start_index = 10
 
-    set_seed(args.seed)
-    device = torch.device(args.device)
+    max_dims = 28
+    dims = None
+    seed = 7
+
+    training_run_name = "rssm_newnorm_train_10"
+    ckpt_step = None  # number of ckpt step or None for latest
+
+    if ckpt_step is None:
+        checkpoint_path = Path(f"checkpoints/{training_run_name}/ckpt_latest.ckpt")
+    else:
+        checkpoint_path = Path(f"checkpoints/{training_run_name}/ckpt_{ckpt_step}.ckpt")
+
+    if ckpt_step is None:
+        output_path = Path(f"plots/{training_run_name}_latest_sequence.png")
+    else:
+        output_path = Path(f"plots/{training_run_name}_{ckpt_step}_sequence.png")
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    
+    ###############################################################
+
+    set_seed(seed)
+    device = torch.device(device)
 
     def _torch_load(path: Path) -> dict:
         # Prefer safe loading if supported by this PyTorch version.
@@ -231,60 +209,60 @@ def main() -> None:
         except TypeError:
             return torch.load(path, map_location=device)
 
-    ckpt = _torch_load(Path(args.checkpoint_path))
+    if not checkpoint_path.exists():
+        if ckpt_step is None:
+            run_dir = Path("checkpoints") / training_run_name
+            candidates = sorted(run_dir.glob("rssm_step_*.pt"), key=lambda p: int(p.stem.split("_")[-1]))
+            if candidates:
+                checkpoint_path = candidates[-1]
+        if not checkpoint_path.exists():
+            raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
+
+    ckpt = _torch_load(checkpoint_path)
     ckpt_cfg = ckpt.get("cfg", None)
 
     # Default to the checkpoint config to avoid subtle mismatches (e.g., include_goals changing obs_dim).
-    if isinstance(ckpt_cfg, dict):
-        if args.include_goals is None:
-            args.include_goals = bool(ckpt_cfg.get("data", {}).get("include_goals", False))
-        if args.normalize_obs is None:
-            args.normalize_obs = bool(ckpt_cfg.get("data", {}).get("normalize_obs", False))
-        if args.normalize_action is None:
-            args.normalize_action = bool(ckpt_cfg.get("data", {}).get("normalize_action", False))
-        if args.use_vae is None:
-            args.use_vae = bool(ckpt_cfg.get("model", {}).get("use_vae", False))
+    data_cfg = ckpt_cfg.get("data", {}) if isinstance(ckpt_cfg, dict) else {}
+    model_cfg = ckpt_cfg.get("model", {}) if isinstance(ckpt_cfg, dict) else {}
 
-        # Model hyperparams must match the checkpoint to load weights.
-        mcfg = ckpt_cfg.get("model", {})
-        args.vae_latent_dim = int(mcfg.get("vae_latent_dim", args.vae_latent_dim))
-        args.vae_hidden_dim = int(mcfg.get("vae_hidden_dim", args.vae_hidden_dim))
-        args.vae_min_std = float(mcfg.get("vae_min_std", args.vae_min_std))
-        args.rssm_stoch_dim = int(mcfg.get("stoch_dim", args.rssm_stoch_dim))
-        args.rssm_deter_dim = int(mcfg.get("deter_dim", args.rssm_deter_dim))
-        args.rssm_hidden_dim = int(mcfg.get("hidden_dim", args.rssm_hidden_dim))
-        args.rssm_min_std = float(mcfg.get("min_std", args.rssm_min_std))
-        args.obs_window = int(mcfg.get("obs_window", args.obs_window))
+    buffer_path = data_cfg.get("buffer_path")
+    stats_path = data_cfg.get("stats_path")
+    if not buffer_path:
+        raise ValueError("buffer_path is required (ensure checkpoint cfg has data.buffer_path).")
 
-    # Fall back if still None (e.g., older checkpoint without cfg).
-    if args.include_goals is None:
-        args.include_goals = False
-    if args.normalize_obs is None:
-        args.normalize_obs = False
-    if args.normalize_action is None:
-        args.normalize_action = False
-    if args.use_vae is None:
-        args.use_vae = True
+    include_goals = bool(data_cfg.get("include_goals", False))
+    normalize_obs = bool(data_cfg.get("normalize_obs", False))
+    normalize_action = bool(data_cfg.get("normalize_action", False))
+    use_vae = bool(model_cfg.get("use_vae", True))
+
+    # Model hyperparams must match the checkpoint to load weights.
+    vae_latent_dim = int(model_cfg.get("vae_latent_dim", 16))
+    vae_hidden_dim = int(model_cfg.get("vae_hidden_dim", 128))
+    vae_min_std = float(model_cfg.get("vae_min_std", 0.1))
+    rssm_stoch_dim = int(model_cfg.get("stoch_dim", 32))
+    rssm_deter_dim = int(model_cfg.get("deter_dim", 128))
+    rssm_hidden_dim = int(model_cfg.get("hidden_dim", 128))
+    rssm_min_std = float(model_cfg.get("min_std", 0.1))
+    obs_window = int(model_cfg.get("obs_window", 1))
 
     obs_keys = ("state",)
-    if isinstance(ckpt_cfg, dict):
-        ok = ckpt_cfg.get("data", {}).get("obs_keys", None)
-        if isinstance(ok, (list, tuple)) and all(isinstance(x, str) for x in ok):
-            obs_keys = tuple(ok)
+    ok = data_cfg.get("obs_keys", None)
+    if isinstance(ok, (list, tuple)) and all(isinstance(x, str) for x in ok):
+        obs_keys = tuple(ok)
 
     dataset = BufferSequenceDataset(
-        buffer_path=Path(args.buffer_path),
-        seq_len=args.seq_len,
+        buffer_path=Path(buffer_path),
+        seq_len=seq_len,
         obs_keys=obs_keys,
-        include_goals=args.include_goals,
-        normalize_obs=args.normalize_obs,
-        normalize_action=args.normalize_action,
-        stats_path=Path(args.stats_path) if args.stats_path else None,
+        include_goals=include_goals,
+        normalize_obs=normalize_obs,
+        normalize_action=normalize_action,
+        stats_path=Path(stats_path) if stats_path else None,
     )
 
     obs_dim = dataset.obs_dim
     action_dim = dataset.action_dim
-    rollout_cfg = _load_rollout_config(Path(args.stats_path) if args.stats_path else None)
+    rollout_cfg = _load_rollout_config(Path(stats_path) if stats_path else None)
     norm_stats = None
     if isinstance(rollout_cfg, dict):
         norm_stats = rollout_cfg.get("norm_stats", {}).get("state", None)
@@ -296,7 +274,7 @@ def main() -> None:
         raise RuntimeError(
             f"Observation dim mismatch: dataset obs_dim={obs_dim} but checkpoint obs_dim={int(ckpt_obs_dim)}. "
             f"This is usually caused by include_goals/obs_keys differing from training. "
-            f"Try rerunning with '--no-include-goals' (or ensure obs_keys match training)."
+            f"Ensure obs_keys/include_goals match training."
         )
     if ckpt_action_dim is not None and int(ckpt_action_dim) != action_dim:
         raise RuntimeError(
@@ -305,23 +283,23 @@ def main() -> None:
 
     vae = None
     rssm_obs_dim = obs_dim
-    if args.use_vae:
+    if use_vae:
         vae = VAE(
             obs_dim=obs_dim,
-            latent_dim=args.vae_latent_dim,
-            hidden_dim=args.vae_hidden_dim,
-            min_std=args.vae_min_std,
+            latent_dim=vae_latent_dim,
+            hidden_dim=vae_hidden_dim,
+            min_std=vae_min_std,
         ).to(device)
-        rssm_obs_dim = args.vae_latent_dim
+        rssm_obs_dim = vae_latent_dim
 
     model = RSSM(
         obs_dim=rssm_obs_dim,
         action_dim=action_dim,
-        stoch_dim=args.rssm_stoch_dim,
-        deter_dim=args.rssm_deter_dim,
-        hidden_dim=args.rssm_hidden_dim,
-        obs_window=args.obs_window,
-        min_std=args.rssm_min_std,
+        stoch_dim=rssm_stoch_dim,
+        deter_dim=rssm_deter_dim,
+        hidden_dim=rssm_hidden_dim,
+        obs_window=obs_window,
+        min_std=rssm_min_std,
     ).to(device)
 
     model.load_state_dict(ckpt["model"])
@@ -331,7 +309,18 @@ def main() -> None:
     if vae is not None:
         vae.eval()
 
-    sample = dataset[args.seq_index]
+    target_index = None
+    if hasattr(dataset, "_index"):
+        for i, (ep_idx, start) in enumerate(dataset._index):
+            if ep_idx == episode_index and start == start_index:
+                target_index = i
+                break
+    if target_index is None:
+        raise IndexError(
+            f"(episode_index={episode_index}, start_index={start_index}) not found for seq_len={seq_len}."
+        )
+
+    sample = dataset[target_index]
     obs = sample["obs"].to(device)
     actions = sample["action"].to(device)
     # Dataset returns: obs (L+1, D), actions (L, A). We predict obs[1:].
@@ -341,9 +330,9 @@ def main() -> None:
             obs_flat = obs.view(-1, obs.shape[-1])
             _, _, latent = vae.encode(obs_flat, sample=False)
             obs_embed = latent.view(1, obs.shape[0], -1)
-            obs_windowed = build_obs_window(obs_embed, args.obs_window)
+            obs_windowed = build_obs_window(obs_embed, obs_window)
             posterior_out = model(obs_windowed[:, 1:], actions.unsqueeze(0), sample=False)
-            post_latent = posterior_out.obs_pred.squeeze(0)
+            post_latent = posterior_out.obs_pred_mean.squeeze(0)
             post = vae.decode(post_latent.reshape(-1, rssm_obs_dim)).view(actions.shape[0], obs.shape[-1])
 
             # Prior rollout: prefer open-loop conditioned on the first posterior state.
@@ -362,9 +351,9 @@ def main() -> None:
             else:
                 prior = prior_uncond
         else:
-            obs_windowed = build_obs_window(obs.unsqueeze(0), args.obs_window)
+            obs_windowed = build_obs_window(obs.unsqueeze(0), obs_window)
             posterior_out = model(obs_windowed[:, 1:], actions.unsqueeze(0), sample=False)
-            post = posterior_out.obs_pred.squeeze(0)
+            post = posterior_out.obs_pred_mean.squeeze(0)
 
             prior_uncond = model.rollout_prior(actions.unsqueeze(0), sample=False).squeeze(0)
             if actions.shape[0] >= 2:
@@ -375,8 +364,7 @@ def main() -> None:
             else:
                 prior = prior_uncond
 
-    dims = _select_dims(obs_dim, args.dims, args.max_dims)
-    output_path = Path(args.output_path)
+    dims = _select_dims(obs_dim, dims, max_dims)
     _plot_sequences(true, post, prior, dims, output_path, state_labels, state_groups)
     print(f"Saved plot: {output_path}")
 

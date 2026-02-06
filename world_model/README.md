@@ -21,7 +21,7 @@ It mirrors Dreamer’s world‑model structure but is **offline** and **state‑
   - Hydra‑driven config
   - WandB logging
   - Checkpointing to `checkpoints/<run_name>/` (where `run_name = logging.name`)
-  - Each run folder also stores `config.yaml`, `train_logging.yaml`, and (if provided) `rollout_config.yaml`
+  - Each run folder also stores `config.yaml` and (if provided) `rollout_config.yaml`
 - **Evaluation**: `eval_rollout.py`
   - Posterior vs prior MSE
   - Optional open‑loop error plots
@@ -53,13 +53,6 @@ python factr/world_model/eval_rollout.py eval.checkpoint_path=checkpoints/<run_n
 python factr/world_model/plot_sequence.py --checkpoint-path checkpoints/<run_name>/rssm_step_10000.pt --seq-index 0 --seq-len 128
 ```
 
-## Config layout (Hydra)
-
-- `cfg/train_defualt.yaml` → data + model + training + logging in one file (buffer path, sizes, steps, lr, `logging.name`, etc.)
-- `cfg/eval.yaml` → evaluation + plotting
-- `inspect_buffer.py` has CLI args (no YAML)
-- `plot_sequence.py` has CLI args (no YAML)
-
 ## Observation window
 
 Set `model.obs_window` to control how many recent observations are concatenated for the posterior:
@@ -70,13 +63,6 @@ python factr/world_model/train.py model.obs_window=4
 
 If `obs_window=1` (default), it uses only the current observation.
 
-## WandB
-
-WandB is on by default. Disable with:
-
-```bash
-python factr/world_model/train.py logging.enabled=false
-```
 
 ## Plots
 
@@ -101,30 +87,6 @@ python factr/world_model/plot_sequence.py --dims 0 3 5
 ```
 
 ## How the model works (medium detail)
-
-This implementation follows Dreamer‑style world modeling but is adapted to **offline, low‑dimensional** FACTR data. The flow is:
-
-```mermaid
-flowchart TD
-  A[ReplayBuffer buf.pkl] --> B[Sequence dataset]
-  B --> C[Observation o_t]
-  C -->|optional| D[VAE encoder]
-  D --> E[Latent z_vae]
-  C -->|if no VAE| F[Obs embed]
-  E --> G[RSSM posterior q(z_t|h_t,o_t)]
-  F --> G
-  G --> H[Sample z_t]
-  H --> I[GRU h_t]
-  I --> J[Prior p(z_t|h_t)]
-  H --> K[Decoder p(o_t|h_t,z_t)]
-  K --> L[Recon loss]
-  G --> M[KL loss]
-  D --> N[VAE decoder]
-  N --> O[VAE recon loss]
-  D --> P[VAE KL loss]
-```
-
-If Mermaid isn’t supported in your viewer, here’s a cleaner ASCII version:
 
 ```
 buf.pkl

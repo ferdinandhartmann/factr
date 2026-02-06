@@ -129,13 +129,15 @@ def main() -> None:
             windowed = build_obs_window(emb, obs_window)
             out = rssm(windowed[:, 1:], act, sample=False)
 
-            pred_obs = vae.decode(out.obs_pred.reshape(-1, rssm_obs_dim)).view(obs.shape[0], act.shape[1], obs_dim)
+            pred_obs = vae.decode(out.obs_pred_mean.reshape(-1, rssm_obs_dim)).view(
+                obs.shape[0], act.shape[1], obs_dim
+            )
             post_mse = mse_loss(pred_obs, obs[:, 1:])
             print(f"posterior recon mse (obs space): {post_mse.item():.6f}")
 
             # Action influence check: zero actions should change predictions if actions matter.
             out_zero = rssm(windowed[:, 1:], torch.zeros_like(act), sample=False)
-            pred_zero = vae.decode(out_zero.obs_pred.reshape(-1, rssm_obs_dim)).view(
+            pred_zero = vae.decode(out_zero.obs_pred_mean.reshape(-1, rssm_obs_dim)).view(
                 obs.shape[0], act.shape[1], obs_dim
             )
             delta = mse_loss(pred_obs, pred_zero)
@@ -156,11 +158,11 @@ def main() -> None:
         else:
             windowed = build_obs_window(obs, obs_window)
             out = rssm(windowed[:, 1:], act, sample=False)
-            post_mse = mse_loss(out.obs_pred, obs[:, 1:])
+            post_mse = mse_loss(out.obs_pred_mean, obs[:, 1:])
             print(f"posterior recon mse: {post_mse.item():.6f}")
 
             out_zero = rssm(windowed[:, 1:], torch.zeros_like(act), sample=False)
-            delta = mse_loss(out.obs_pred, out_zero.obs_pred)
+            delta = mse_loss(out.obs_pred_mean, out_zero.obs_pred_mean)
             print(f"mse(pred with real actions vs zero actions): {delta.item():.6f}")
 
             prior_pred = rssm.rollout_prior(act, sample=False)

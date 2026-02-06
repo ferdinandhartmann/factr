@@ -1,15 +1,6 @@
 
-input_path: /home/ferdinand/activeinference/factr/process_data/data_to_process/fourgoals_1_train/data
-output_path: /home/ferdinand/activeinference/factr/process_data/training_data/fourgoals_1_newnorm_train
-
-median_filter_torque: False
-median_filter_kernel_size_torque: 3
-median_filter_position: False
-median_filter_kernel_size_position: 7
-filter_torque: False
-cutoff_freq_torque: 10.0
-filter_position: False
-cutoff_freq_position: 12.0
+input_path: /home/ferdinand/activeinference/factr/process_data/data_to_process/fourgoals_1_test/data
+output_path: /home/ferdinand/activeinference/factr/process_data/training_data/fourgoals_1_newnorm_test
 
 downsample: False
 data_frequency: 50.0

@@ -28,8 +28,6 @@ from utils_data_process import (
     downsample_data,
     gaussian_norm,
     generate_robobuf,
-    lowpass_filter,
-    medianfilter,
     sync_data_slowest,
 )
 
@@ -370,14 +368,6 @@ def main(cfg: DictConfig):
     downsample = cfg.get("downsample", False)
     data_frequency = cfg.get("data_frequency", 50.0)
     target_downsampling_freq = cfg.get("target_downsampling_freq", 50.0)
-    filter_torque = cfg.get("filter_torque", False)
-    filter_position = cfg.get("filter_position", False)
-    cutoff_freq_torque = cfg.get("cutoff_freq_torque", 10.0)
-    cutoff_freq_position = cfg.get("cutoff_freq_position", 5.0)
-    median_filter_torque = cfg.get("median_filter_torque", False)
-    median_filter_position = cfg.get("median_filter_position", False)
-    median_filter_kernel_size_torque = cfg.get("median_filter_kernel_size_torque", 3)
-    median_filter_kernel_size_position = cfg.get("median_filter_kernel_size_position", 7)
 
     # rgb_obs_topics = list(cfg.cameras_topics)
     state_obs_topics = list(cfg.obs_topics)
@@ -451,41 +441,6 @@ def main(cfg: DictConfig):
             traj_data = pickle.load(f)
         traj_data, avg_freq = sync_data_slowest(traj_data, all_topics)
         pbar.set_postfix({"avg_freq": f"{avg_freq:.1f} Hz"})
-
-        print("\n")
-
-        if median_filter_torque:
-            # Apply median filter to torque sensor data
-            traj_data["/franka_robot_state_broadcaster/external_joint_torques"] = medianfilter(
-                np.array(traj_data["/franka_robot_state_broadcaster/external_joint_torques"]),
-                kernel_size=median_filter_kernel_size_torque,
-            ).tolist()
-
-        if median_filter_position:
-            # Apply median filter to position command data
-            traj_data["/joint_impedance_dynamic_gain_controller/joint_impedance_command"] = medianfilter(
-                np.array(traj_data["/joint_impedance_dynamic_gain_controller/joint_impedance_command"]),
-                kernel_size=median_filter_kernel_size_position,
-            ).tolist()
-
-        # Apply low-pass filter to torque sensor data and position
-        if filter_torque:
-            lowpass_filter(
-                traj_data,
-                cutoff_freq_torque,
-                data_frequency,
-                "/franka_robot_state_broadcaster/external_joint_torques",
-                key_options=("effort", "data"),
-            )
-
-        if filter_position:
-            lowpass_filter(
-                traj_data,
-                cutoff_freq_position,
-                data_frequency,
-                "/joint_impedance_dynamic_gain_controller/joint_impedance_command",
-                key_options=("position", "data"),
-            )
 
         # 🕒 Downsample to target rate
         print("Original lengths:", [len(traj_data[key]) for key in traj_data.keys()])
@@ -628,14 +583,6 @@ def main(cfg: DictConfig):
         # 'camera_topics': rgb_obs_topics,
     }
     processing_config = {
-        "median_filter_torque": median_filter_torque,
-        "median_filter_position": median_filter_position,
-        "median_filter_kernel_size_torque": median_filter_kernel_size_torque,
-        "median_filter_kernel_size_position": median_filter_kernel_size_position,
-        "filter_torque": filter_torque,
-        "cutoff_freq_torque": cutoff_freq_torque,
-        "filter_position": filter_position,
-        "cutoff_freq_position": cutoff_freq_position,
         "downsample": downsample,
         "data_frequency": data_frequency,
         "target_downsampling_freq": target_downsampling_freq,
