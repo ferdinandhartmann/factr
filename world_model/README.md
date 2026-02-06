@@ -44,14 +44,59 @@ python factr/world_model/train.py
 3) **Evaluate + plot**
 
 ```bash
-python factr/world_model/eval_rollout.py eval.checkpoint_path=checkpoints/<run_name>/rssm_step_10000.pt
+python factr/world_model/eval_rollout.py
 ```
 
 4) **Plot a single sequence (true vs predicted)**
 
 ```bash
-python factr/world_model/plot_sequence.py --checkpoint-path checkpoints/<run_name>/rssm_step_10000.pt --seq-index 0 --seq-len 128
+python factr/world_model/plot_sequence.py
 ```
+
+5) **Plot an open‑loop rollout from raw episodes**
+
+```bash
+python factr/world_model/plot_rollout.py
+```
+
+## Scripts & example commands
+
+Each script below is runnable from the repo root.  
+For scripts with a **settings block**, edit the values at the top of the file and then run the command.
+
+- **Train world model** (`train.py`)
+  ```bash
+  python factr/world_model/train.py
+  ```
+  Example override:
+  ```bash
+  python factr/world_model/train.py data.seq_len=64 train.batch_size=128
+  ```
+
+- **Evaluate rollouts + error plots** (`eval_rollout.py`)
+  ```bash
+  python factr/world_model/eval_rollout.py
+  ```
+
+- **Plot sequence (posterior + prior vs truth)** (`plot_sequence.py`)
+  ```bash
+  python factr/world_model/plot_sequence.py
+  ```
+
+- **Plot open‑loop rollout from raw episodes** (`plot_rollout.py`)
+  ```bash
+  python factr/world_model/plot_rollout.py
+  ```
+
+- **Inspect buffer metadata** (`inspect_buffer.py`)
+  ```bash
+  python factr/world_model/inspect_buffer.py --buffer-path /path/to/buf.pkl
+  ```
+
+- **Sanity‑check model wiring** (`debug_checks.py`)
+  ```bash
+  python factr/world_model/debug_checks.py --buffer-path /path/to/buf.pkl --seq-len 32
+  ```
 
 ## Observation window
 
@@ -66,25 +111,15 @@ If `obs_window=1` (default), it uses only the current observation.
 
 ## Plots
 
-`eval_rollout.py` can save per‑dimension error curves:
+`eval_rollout.py` can save per‑dimension error curves. Control these via the settings block:
 
-- `eval.plot.enabled`: toggle plots
-- `eval.plot.output_dir`: folder name
-- `eval.plot.max_dims`: number of dims to plot
+- `plot_enabled`: toggle plots
+- `plot_output_dir`: folder name
+- `plot_max_dims`: number of dims to plot
 
-Example:
+Plots are saved into the chosen `plot_output_dir`.
 
-```bash
-python factr/world_model/eval_rollout.py eval.plot.max_dims=8
-```
-
-Plots are saved into the Hydra run directory (e.g. `outputs/YYYY-MM-DD/HH-MM-SS/plots/`).
-
-For single‑sequence plots you can override `--dims` to pick specific dims:
-
-```bash
-python factr/world_model/plot_sequence.py --dims 0 3 5
-```
+For single‑sequence plots, set `dims = [0, 3, 5]` (or similar) in the settings block of `plot_sequence.py`.
 
 ## How the model works (medium detail)
 
@@ -147,9 +182,9 @@ Where it happens in code:
 ## Notes
 
 - The current buffer uses low‑dim `state` (+ optional `goals`).
-- A small MLP VAE is enabled by default (`cfg/model/rssm.yaml`), encoding obs into a latent used by the RSSM.
-  - Disable for training: `model.use_vae=false`
-  - Disable for plotting: `python factr/world_model/plot_sequence.py --no-vae`
+- A small MLP VAE is enabled by default (see `cfg/train_defualt.yaml`), encoding obs into a latent used by the RSSM.
+  - Disable for training: set `model.use_vae=false`
+  - Plotting follows the checkpoint config (use a checkpoint trained without VAE if desired).
 - The current buffer is already Gaussian‑normalized; leave `data.normalize_obs=false` and `data.normalize_action=false` unless you intentionally want to re‑normalize.
 
 

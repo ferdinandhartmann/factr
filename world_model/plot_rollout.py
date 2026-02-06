@@ -418,20 +418,14 @@ def main() -> None:
     dims = None
     seed = 7
 
-    training_run_name = "rssm_newnorm_train_10"
-    ckpt_step = None  # number of ckpt step or None for latest
+    training_run_name = "rssm_newnorm_train_12"
+    ckpt_step = "latest"  # number of ckpt step or "latest"
+
+    checkpoint_path = Path(f"checkpoints/{training_run_name}/ckpt_{ckpt_step}.ckpt")
     
-    
-    if ckpt_step is None:
-        checkpoint_path = Path(f"checkpoints/{training_run_name}/ckpt_latest.ckpt")
-    else:
-        checkpoint_path = Path(f"checkpoints/{training_run_name}/ckpt_{ckpt_step}.ckpt")
     data_dir = Path("~/activeinference/factr/process_data/data_to_process/fourgoals_1_test/data").expanduser()
 
-    if ckpt_step is None:
-        output_path = Path(f"plots/{training_run_name}_latest_rollout.png")
-    else:
-        output_path = Path(f"plots/{training_run_name}_{ckpt_step}_rollout.png")
+    output_path = Path(f"plots/{training_run_name}_{ckpt_step}_rollout.png")
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
 

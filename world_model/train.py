@@ -394,6 +394,9 @@ def main(cfg: DictConfig) -> None:
 
     # Always save a final checkpoint for easy resume/eval.
     torch.save(_build_ckpt_payload(global_step), ckpt_root / "ckpt_latest.ckpt")
+    
+    if keep_last > 0:
+        _prune_checkpoints(ckpt_root, keep_last -1)
 
     if run is not None:
         run.finish()

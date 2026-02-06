@@ -182,18 +182,12 @@ def main() -> None:
     dims = None
     seed = 7
 
-    training_run_name = "rssm_newnorm_train_10"
-    ckpt_step = None  # number of ckpt step or None for latest
+    training_run_name = "rssm_newnorm_train_12"
+    ckpt_step = "latest"  # number of ckpt step or "latest"
 
-    if ckpt_step is None:
-        checkpoint_path = Path(f"checkpoints/{training_run_name}/ckpt_latest.ckpt")
-    else:
-        checkpoint_path = Path(f"checkpoints/{training_run_name}/ckpt_{ckpt_step}.ckpt")
+    checkpoint_path = Path(f"checkpoints/{training_run_name}/ckpt_{ckpt_step}.ckpt")
 
-    if ckpt_step is None:
-        output_path = Path(f"plots/{training_run_name}_latest_sequence.png")
-    else:
-        output_path = Path(f"plots/{training_run_name}_{ckpt_step}_sequence.png")
+    output_path = Path(f"plots/{training_run_name}_{ckpt_step}_sequence.png")
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     

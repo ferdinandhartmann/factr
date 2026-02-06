@@ -11,7 +11,7 @@ def main() -> None:
     parser.add_argument(
         "--buffer-path",
         type=str,
-        default="/home/ferdinand/activeinference/factr/process_data/training_data/fourgoals_1/buf.pkl",
+        default="/home/ferdinand/activeinference/factr/process_data/training_data/fourgoals_1_newnorm_train/buf.pkl",
         help="Path to buf.pkl",
     )
     args = parser.parse_args()
@@ -21,6 +21,16 @@ def main() -> None:
     print("Buffer summary:")
     for key, value in summary.items():
         print(f"  {key}: {value}")
+
+    print("\nTopic names and dimensions:")
+    if "topic_names" in summary:
+        for topic in summary["topic_names"]:
+            print(f"  - {topic}: {summary.get(f'{topic}_dim', 'unknown')}")
+
+    if "obs_shapes" in summary:
+        print("\nObservation shapes:")
+        for obs_key, shape in summary["obs_shapes"].items():
+            print(f"  - {obs_key}: {shape}")
 
 
 if __name__ == "__main__":
