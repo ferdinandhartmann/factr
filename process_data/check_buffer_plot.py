@@ -38,11 +38,11 @@ def _inverse_group_transform(values, group):
         mins = np.asarray(group.get("min", []), dtype=float)
         maxs = np.asarray(group.get("max", []), dtype=float)
         return (values + 1.0) * 0.5 * (maxs - mins) + mins
-    if gtype in ("gaussian", "zscore_clip"):
+    if gtype in ("gaussian", "gaussian_clip", "zscore_clip"):
         mean = np.asarray(group.get("mean", []), dtype=float)
         std = np.asarray(group.get("std", []), dtype=float)
         return values * std + mean
-    if gtype == "fixed_scale_clip":
+    if gtype in ("fixed_scale", "fixed_scale_clip"):
         scales = np.asarray(group.get("scales", []), dtype=float)
         return values * scales
     if gtype == "log1p_zscore_clip":
@@ -53,6 +53,21 @@ def _inverse_group_transform(values, group):
     if gtype == "log1p":
         return np.sign(values) * (np.expm1(np.abs(values)))
     return values
+
+
+def print_state_minmax(states, labels=None, title=None):
+    states = np.asarray(states)
+    if states.ndim != 2:
+        raise ValueError(f"Expected states with shape (N,D), got {states.shape}")
+    mins = states.min(axis=0)
+    maxs = states.max(axis=0)
+    if title:
+        print(title)
+    if labels is None:
+        labels = [f"state[{i:02d}]" for i in range(states.shape[1])]
+    for i, (mn, mx) in enumerate(zip(mins, maxs)):
+        lab = labels[i] if i < len(labels) else f"state[{i:02d}]"
+        print(f"  {lab}: min={mn: .6g}  max={mx: .6g}")
 
 
 def denormalize_states(states, norm_stats):
@@ -96,18 +111,32 @@ def build_state_labels(state_dim, norm_stats):
         return labels
 
     name_map = {
-        "ee_position": ["ee_pos_x", "ee_pos_y", "ee_pos_z"],
+        "ee_position": ["EE_Pos_x", "EE_Pos_y", "EE_Pos_z"],
         "ee_orientation": [
-            "ee_rot_c1_x",
-            "ee_rot_c1_y",
-            "ee_rot_c1_z",
-            "ee_rot_c2_x",
-            "ee_rot_c2_y",
-            "ee_rot_c2_z",
+            "EE_Rot_c1_x",
+            "EE_Rot_c1_y",
+            "EE_Rot_c1_z",
+            "EE_Rot_c2_x",
+            "EE_Rot_c2_y",
+            "EE_Rot_c2_z",
         ],
-        "ee_velocity": ["ee_vel_x", "ee_vel_y", "ee_vel_z", "ee_vel_rx", "ee_vel_ry", "ee_vel_rz"],
-        "tracking_error": ["trk_x", "trk_y", "trk_z", "trk_rx", "trk_ry", "trk_rz"],
-        "external_wrench": ["w_fx", "w_fy", "w_fz", "w_tx", "w_ty", "w_tz"],
+        "ee_velocity": ["EE_Vel_x", "EE_Vel_y", "EE_Vel_z", "EE_Vel_rx", "EE_Vel_ry", "EE_Vel_rz"],
+        "tracking_error": [
+            "Tracking_Err_x",
+            "Tracking_Err_y",
+            "Tracking_Err_z",
+            "Tracking_Err_rx",
+            "Tracking_Err_ry",
+            "Tracking_Err_rz",
+        ],
+        "external_wrench": [
+            "Ext_Wrench_fx",
+            "Ext_Wrench_fy",
+            "Ext_Wrench_fz",
+            "Ext_Wrench_tx",
+            "Ext_Wrench_ty",
+            "Ext_Wrench_tz",
+        ],
     }
 
     for group in norm_stats.get("groups", []):
@@ -161,12 +190,94 @@ def build_state_groups(state_dim, norm_stats):
     return [("State", list(range(state_dim)))]
 
 
-def plot_grouped_series(title, x, data, labels, groups, output_path, color, y_label_fontsize=12):
-    import matplotlib.pyplot as plt
+def build_action_labels(action_dim, action_stats):
+    labels = [f"Act {i + 1}" for i in range(action_dim)]
+    if not action_stats or action_stats.get("mode") != "grouped":
+        return labels
+
+    name_map = {
+        "ee_position": ["EE_Pos_x", "EE_Pos_y", "EE_Pos_z"],
+        "ee_orientation": [
+            "EE_Rot_c1_x",
+            "EE_Rot_c1_y",
+            "EE_Rot_c1_z",
+            "EE_Rot_c2_x",
+            "EE_Rot_c2_y",
+            "EE_Rot_c2_z",
+        ],
+        "impedance_stiffness": [
+            "Stiff_transl_x",
+            "Stiff_transl_y",
+            "Stiff_transl_z",
+            "Stiff_rot_x",
+            "Stiff_rot_y",
+            "Stiff_rot_z",
+        ],
+    }
+
+    for group in action_stats.get("groups", []):
+        indices = group.get("indices", None)
+        if not indices or len(indices) != 2:
+            continue
+        start, stop = int(indices[0]), int(indices[1])
+        gname = group.get("name", "group")
+        names = name_map.get(gname, [])
+        length = stop - start
+        if len(names) != length:
+            names = [f"{gname}_{i}" for i in range(length)]
+        for i in range(length):
+            idx = start + i
+            if 0 <= idx < action_dim:
+                labels[idx] = names[i]
+    return labels
+
+
+def build_action_groups(action_dim, action_stats):
+    if action_stats and action_stats.get("mode") == "grouped":
+        title_map = {
+            "ee_position": "Action Position",
+            "ee_orientation": "Action Orientation",
+            "impedance_stiffness": "Action Stiffness",
+        }
+        groups = []
+        for group in action_stats.get("groups", []):
+            indices = group.get("indices", None)
+            if not indices or len(indices) != 2:
+                continue
+            start, stop = int(indices[0]), int(indices[1])
+            dims = [d for d in range(start, min(stop, action_dim))]
+            if not dims:
+                continue
+            name = str(group.get("name", "group"))
+            title = title_map.get(name, name.replace("_", " ").title())
+            groups.append((title, dims))
+        if groups:
+            return groups
+
+    if action_dim >= 15:
+        dims = list(range(action_dim))
+        return [("Action Pose", dims[0:9]), ("Action Stiffness", dims[9:15])]
+    if action_dim >= 9:
+        return [("Action Pose", list(range(9)))]
+    return [("Actions", list(range(action_dim)))]
+
+
+def plot_grouped_series(
+    title,
+    x,
+    data,
+    labels,
+    groups,
+    output_path,
+    color,
+    y_label_fontsize=12,
+    subplot_top=0.985,
+    suptitle_y=0.995,
+):
     from matplotlib.gridspec import GridSpec
     from matplotlib.ticker import MaxNLocator
 
-    labels = [str(l).replace("_", " ") for l in labels]
+    labels = [str(label).replace("_", " ") for label in labels]
     grouped_dims = []
     data_dim = data.shape[1]
     for gtitle, gdims in groups:
@@ -217,8 +328,8 @@ def plot_grouped_series(title, x, data, labels, groups, output_path, color, y_la
         ax.xaxis.set_major_locator(MaxNLocator(integer=True))
 
     fig.tight_layout(pad=0.05)
-    fig.subplots_adjust(top=0.985, bottom=0.04)
-    fig.suptitle(title, fontsize=14, y=0.995)
+    fig.subplots_adjust(top=float(subplot_top), bottom=0.04)
+    fig.suptitle(title, fontsize=14, y=float(suptitle_y))
     plt.savefig(output_path, dpi=300)
     plt.close(fig)
 
@@ -266,7 +377,7 @@ def save_camera_images(buffer, output_dir, plot_index=20):
     print(f"✅ Saved {saved} images to: {output_dir}")
 
 
-def plot_buffer(buf_path, output_dir=None, step=1, rollout_config_path=None, denormalize=True):
+def plot_buffer(buf_path, output_dir=None, step=1, rollout_config_path=None, denormalize=False):
     dataset_name = buf_path.split("/")[-2]
     print(f"Checking buffer from {dataset_name}")
 
@@ -288,29 +399,61 @@ def plot_buffer(buf_path, output_dir=None, step=1, rollout_config_path=None, den
     all_actions = []
     all_goals = []
 
-    for traj_idx, traj in enumerate(buffer):
-        # each traj = list of (obs_dict, action, reward)
-        if not traj or not isinstance(traj[0], tuple):
-            print(f"⚠️ Skipping traj {traj_idx}: not a tuple-based trajectory")
-            continue
+    def _maybe_add_goal(obs_dict, goals_list):
+        if not isinstance(obs_dict, dict):
+            return
+        if "goals" in obs_dict:
+            goals_list.append(np.array(obs_dict["goals"], dtype=float))
+        elif "goal" in obs_dict:
+            goals_list.append(np.array(obs_dict["goal"], dtype=float))
 
+    # Support both tuple-based trajectories and flat Transition buffers.
+    if isinstance(buffer, (list, tuple)) and buffer and isinstance(buffer[0], (list, tuple)):
+        for traj_idx, traj in enumerate(buffer):
+            # each traj = list of (obs_dict, action, reward)
+            if not traj or not isinstance(traj[0], tuple):
+                print(f"⚠️ Skipping traj {traj_idx}: not a tuple-based trajectory")
+                continue
+
+            states = []
+            actions = []
+            goals = []
+            for entry in traj:
+                try:
+                    obs_dict, action, reward = entry
+                    if isinstance(obs_dict, dict) and "state" in obs_dict:
+                        states.append(np.array(obs_dict["state"], dtype=float))
+                    _maybe_add_goal(obs_dict, goals)
+                    actions.append(np.array(action, dtype=float))
+                except Exception as e:
+                    print(f"⚠️ Skipping bad entry in traj {traj_idx}: {e}")
+                    continue
+
+            if len(states) > 0 and len(actions) > 0:
+                min_len = min(len(states), len(actions))
+                states = np.stack(states[:min_len])
+                actions = np.stack(actions[:min_len])
+                all_states.append(states)
+                all_actions.append(actions)
+                if len(goals) > 0:
+                    goals = np.stack(goals[:min_len])
+                    all_goals.append(goals)
+    else:
+        # Flat buffer: elements with .obs/.action/.reward (robobuf Transition-like)
         states = []
         actions = []
         goals = []
-        for entry in traj:
-            try:
-                obs_dict, action, reward = entry
-                if isinstance(obs_dict, dict) and "state" in obs_dict:
-                    states.append(np.array(obs_dict["state"], dtype=float))
-                if isinstance(obs_dict, dict):
-                    if "goals" in obs_dict:
-                        goals.append(np.array(obs_dict["goals"], dtype=float))
-                    elif "goal" in obs_dict:
-                        goals.append(np.array(obs_dict["goal"], dtype=float))
-                actions.append(np.array(action, dtype=float))
-            except Exception as e:
-                print(f"⚠️ Skipping bad entry in traj {traj_idx}: {e}")
-                continue
+        for idx, t in enumerate(buffer):
+            obs_dict = getattr(t, "obs", None)
+            action = getattr(t, "action", None)
+            if isinstance(obs_dict, dict) and "state" in obs_dict:
+                states.append(np.array(obs_dict["state"], dtype=float))
+                _maybe_add_goal(obs_dict, goals)
+                if action is not None:
+                    actions.append(np.array(action, dtype=float))
+            else:
+                if idx < 5:
+                    print(f"⚠️ Skipping entry {idx}: missing obs['state']")
 
         if len(states) > 0 and len(actions) > 0:
             min_len = min(len(states), len(actions))
@@ -347,6 +490,12 @@ def plot_buffer(buf_path, output_dir=None, step=1, rollout_config_path=None, den
 
     state_labels = build_state_labels(states.shape[1], norm_stats)
 
+    print_state_minmax(
+        states,
+        labels=state_labels,
+        title=f"\nState min/max per dimension ({'denormalized' if (denormalize and norm_stats) else 'raw'}):",
+    )
+
     state_groups = build_state_groups(states.shape[1], norm_stats)
 
     # Plot: States
@@ -365,22 +514,25 @@ def plot_buffer(buf_path, output_dir=None, step=1, rollout_config_path=None, den
 
     # Plot: Actions
     out_act = output_dir / f"{dataset_name}_buffer_actions.png"
-    action_labels = [f"Act {j + 1}" for j in range(actions.shape[1])]
+    action_labels = build_action_labels(actions.shape[1], action_stats)
     plot_grouped_series(
         f"All Actions from Buffer of {dataset_name}",
         t,
         actions,
         action_labels,
-        [("Actions", list(range(actions.shape[1])))],
+        build_action_groups(actions.shape[1], action_stats),
         out_act,
         color="red",
         y_label_fontsize=12,
+        subplot_top=0.96,
+        suptitle_y=0.992,
     )
     print(f"✅ Saved {out_act}")
 
+    from_first_datapoints = 0
+    only_first_datapoints = 3000
+
     # Plot: States zoomed in
-    from_first_datapoints = 1000
-    only_first_datapoints = 1800
     out_state = output_dir / f"{dataset_name}_buffer_states_zoomed.png"
     plot_grouped_series(
         f"All States from Buffer of {dataset_name} (first {only_first_datapoints} datapoints)",
@@ -401,10 +553,12 @@ def plot_buffer(buf_path, output_dir=None, step=1, rollout_config_path=None, den
         t[from_first_datapoints:only_first_datapoints],
         actions[from_first_datapoints:only_first_datapoints],
         action_labels,
-        [("Actions", list(range(actions.shape[1])))],
+        build_action_groups(actions.shape[1], action_stats),
         out_state,
         color="red",
         y_label_fontsize=12,
+        subplot_top=0.96,
+        suptitle_y=0.992,
     )
     print(f"✅ Saved {out_state}")
 
@@ -424,6 +578,8 @@ def plot_buffer(buf_path, output_dir=None, step=1, rollout_config_path=None, den
             out_goal,
             color="black",
             y_label_fontsize=12,
+            subplot_top=0.90,
+            suptitle_y=0.992,
         )
         print(f"✅ Saved {out_goal}")
 
@@ -433,6 +589,6 @@ def plot_buffer(buf_path, output_dir=None, step=1, rollout_config_path=None, den
 
 
 if __name__ == "__main__":
-    buf_path = "/home/ferdinand/activeinference/factr/process_data/training_data/fourgoals_1_newnorm_train/buf.pkl"
+    buf_path = "/home/ferdinand/activeinference/factr/process_data/processed_data/fourgoals_1_norm2/buf.pkl"
 
-    plot_buffer(buf_path)
+    plot_buffer(buf_path, denormalize=False)

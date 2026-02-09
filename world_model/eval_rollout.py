@@ -85,7 +85,7 @@ def main() -> None:
     plot_output_dir = Path("plots")
     plot_max_dims = 28
 
-    training_run_name = "rssm_newnorm_train_12"
+    training_run_name = "rssm_newnorm_train_13"
     ckpt_step = "latest"    # number of ckpt step or "latest"
 
     checkpoint_path = Path(f"checkpoints/{training_run_name}/ckpt_{ckpt_step}.ckpt")

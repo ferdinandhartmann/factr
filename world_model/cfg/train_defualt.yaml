@@ -21,11 +21,11 @@ logging:
   entity: null
   tags: []
   log_every: 100
-  name: rssm_newnorm_train_12
+  name: rssm_newnorm_train_13
 
 
 model:
-  stoch_dim: 64    # uncertainty / extra information channel
+  stoch_dim: 64    # uncertainty / extra information channel, CHECK!
   deter_dim: 128   # memory size
   hidden_dim: 128  # MLP width
   obs_window: 1 # just for training, how many previous obs to give the encoder
@@ -42,12 +42,12 @@ model:
 train:
   seed: 7
   # Number of optimizer updates. Prefer this over "epochs" because dataset size can vary a lot.
-  max_steps: 6000
+  max_steps: 8000
   batch_size: 64
   lr: 0.0003
   
   # For state-only buffers, start with a small KL weight to prevent the model from ignoring reconstruction.
-  kl_weight: 0.25
+  kl_weight: 0.6
   kl_warmup_steps: 800 # Helps prevent the KL term from dominating early training so recon learns first
   kl_balance: true     # Dreamer-style KL balancing often improves stability.
   kl_balance_scale: 0.5
@@ -55,9 +55,9 @@ train:
   free_nats: 0.3
   grad_clip: 80.0
 
-  vae_recon_weight: 1.0
-  vae_kl_weight: 0.02
-  vae_kl_warmup_steps: 800
+  # vae_recon_weight: 1.0
+  # vae_kl_weight: 0.02
+  # vae_kl_warmup_steps: 800
   print_every: 100
   print_updates: true
 

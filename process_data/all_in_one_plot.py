@@ -104,8 +104,8 @@ def plot_all_traj_in_one_plot(data_path, output_dir, step=1):
         meas_pos = safe_extract_vector(meas_data, "position", 7)  # (N,7)
         cmd_pose = safe_extract_vector(cmd_data, "ee_pose_commanded", 9)  # (N,9)
         brd_torq = safe_extract_vector(torq_brd_data, "effort", 7)  # (N,7)
-        ee_vel = safe_extract_vector(ee_vel_data, "data", 6)  # (N,6)
-        tracking_err = safe_extract_vector(tracking_err_data, "data", 6)  # (N,6)
+        ee_vel = safe_extract_vector(ee_vel_data, "ee_velocity", 6)  # (N,6)
+        tracking_err = safe_extract_vector(tracking_err_data, "tracking_error", 6)  # (N,6)
         wrench_stiff = safe_extract_vector(wrench_data, "external_wrench", 6)  # (N,6)
 
         # Trim by min length so each group shares the SAME x indices within this file
@@ -222,7 +222,7 @@ def plot_all_traj_in_one_plot(data_path, output_dir, step=1):
     #     #     handles, labels = ax.get_legend_handles_labels()
     #     #     uniq = dict(zip(labels, handles))
     #     #     ax.legend(uniq.values(), uniq.keys(), fontsize=7, ncol=3)
-    # axes[-1].set_xlabel("Dataset Index")
+    # axes[-1].set_xlabel("Timestep")
     # plt.tight_layout(rect=[0.03, 0.03, 0.97, 0.96])
     # out_pos = output_dir / f"allplot_{dataset_name}_positions_observed.png"
     # plt.savefig(out_pos, dpi=150)
@@ -255,7 +255,7 @@ def plot_all_traj_in_one_plot(data_path, output_dir, step=1):
         ax.set_ylabel(f"EE {j + 1}")
         ax.grid(True, alpha=0.3)
         ax.legend(loc="upper left", fontsize=10)
-    axes[-1].set_xlabel("Dataset Index")
+    axes[-1].set_xlabel("Timestep")
     plt.tight_layout(rect=[0.03, 0.03, 0.97, 0.96])
     out_pos = output_dir / f"allplot_{dataset_name}_ee_pose_command.png"
     plt.savefig(out_pos, dpi=150)
@@ -276,7 +276,7 @@ def plot_all_traj_in_one_plot(data_path, output_dir, step=1):
     #             ax.plot(e['x_pos'], e['obs_pos'][:, j],   alpha=0.5, linewidth=1.8, color='blue', label=f"{e['name']} obs")
     #     ax.set_ylabel(f"J{j+1} [rad]")
     #     ax.grid(True, alpha=0.3)
-    # axes[-1].set_xlabel("Dataset Index")
+    # axes[-1].set_xlabel("Timestep")
     # plt.tight_layout(rect=[0.03, 0.03, 0.97, 0.96])
     # out_pos = output_dir / f"allplot_{dataset_name}_positions_traj_obs.png"
     # plt.savefig(out_pos, dpi=150)
@@ -306,7 +306,7 @@ def plot_all_traj_in_one_plot(data_path, output_dir, step=1):
         ax.set_ylabel(f"J{j + 1} [Nm]")
         ax.grid(True, alpha=0.3)
         ax.legend(loc="upper left", fontsize=10)
-    axes[-1].set_xlabel("Dataset Index")
+    axes[-1].set_xlabel("Timestep")
     plt.tight_layout(rect=(0.03, 0.03, 0.97, 0.96))
     out_tq = output_dir / f"allplot_{dataset_name}_torques_broadcasted.png"
     plt.savefig(out_tq, dpi=150)
@@ -336,7 +336,7 @@ def plot_all_traj_in_one_plot(data_path, output_dir, step=1):
         ax.set_ylabel(f"V{j + 1}")
         ax.grid(True, alpha=0.3)
         ax.legend(loc="upper left", fontsize=10)
-    axes[-1].set_xlabel("Dataset Index")
+    axes[-1].set_xlabel("Timestep")
     plt.tight_layout(rect=[0.03, 0.03, 0.97, 0.96])
     out_vel = output_dir / f"allplot_{dataset_name}_ee_velocity.png"
     plt.savefig(out_vel, dpi=150)
@@ -366,7 +366,7 @@ def plot_all_traj_in_one_plot(data_path, output_dir, step=1):
         ax.set_ylabel(f"E{j + 1}")
         ax.grid(True, alpha=0.3)
         ax.legend(loc="upper left", fontsize=10)
-    axes[-1].set_xlabel("Dataset Index")
+    axes[-1].set_xlabel("Timestep")
     plt.tight_layout(rect=[0.03, 0.03, 0.97, 0.96])
     out_err = output_dir / f"allplot_{dataset_name}_tracking_error.png"
     plt.savefig(out_err, dpi=150)
@@ -396,7 +396,7 @@ def plot_all_traj_in_one_plot(data_path, output_dir, step=1):
         ax.set_ylabel(f"W{j + 1}")
         ax.grid(True, alpha=0.3)
         ax.legend(loc="upper left", fontsize=10)
-    axes[-1].set_xlabel("Dataset Index")
+    axes[-1].set_xlabel("Timestep")
     plt.tight_layout(rect=[0.03, 0.03, 0.97, 0.96])
     out_wrench = output_dir / f"allplot_{dataset_name}_wrench_stiffness.png"
     plt.savefig(out_wrench, dpi=150)
@@ -415,7 +415,7 @@ def plot_all_traj_in_one_plot(data_path, output_dir, step=1):
     #             ax.plot(e['x_tq'], e['obs_torq'][:, j], alpha=0.3, linewidth=1.0, color="red", label=f"{e['name']} obs")
     #     ax.set_ylabel(f"J{j+1} [Nm]")
     #     ax.grid(True, alpha=0.3)
-    # axes[-1].set_xlabel("Dataset Index")
+    # axes[-1].set_xlabel("Timestep")
     # plt.tight_layout(rect=[0.03, 0.03, 0.97, 0.96])
     # out_tq = output_dir / f"allplot_{dataset_name}_torques_observed.png"
     # plt.savefig(out_tq, dpi=150)

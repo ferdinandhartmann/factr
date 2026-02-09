@@ -122,27 +122,19 @@ def _compute_losses(
     kl_balance: bool,
     kl_balance_scale: float,
     free_nats: float,
-    vae_recon_weight: float,
-    vae_kl_weight: float,
-    vae_kl_warmup_steps: int,
 ) -> tuple[TrainMetrics, torch.Tensor]:
     obs = batch["obs"]
     actions = batch["action"]
 
     # Dataset returns Dreamer-style sequences:
     # obs: (B, L+1, D), actions: (B, L, A) so that action[t] predicts obs[t+1].
-    vae_recon = None
-    vae_kl = None
     rssm_recon_latent = None
     if vae is not None:
         obs_flat = obs.reshape(-1, obs.shape[-1])
-        # Train the VAE with stochastic latents, but feed a deterministic embedding (mean)
-        # to the RSSM posterior to reduce target/embedding noise.
-        vae_out = vae(obs_flat, sample=True)
+        # Use the VAE purely as an encoder/decoder; no separate VAE ELBO here.
+        # Feed a deterministic embedding (mean) to the RSSM posterior to reduce embedding noise.
         _, _, obs_latent_det = vae.encode(obs_flat, sample=False)
         obs_embed = obs_latent_det.view(obs.shape[0], obs.shape[1], -1)
-        vae_recon = vae_out.recon.view_as(obs)
-        vae_kl = vae_out.kl.mean()
         obs_for_rssm = obs_embed
     else:
         obs_for_rssm = obs
@@ -201,13 +193,6 @@ def _compute_losses(
     kl_weight_eff = kl_weight * warm_frac
 
     loss = rssm_recon + kl_weight_eff * rssm_kl
-    if vae is not None and vae_recon is not None and vae_kl is not None:
-        if vae_kl_warmup_steps and vae_kl_warmup_steps > 0:
-            vae_warm_frac = min(1.0, float(step) / float(vae_kl_warmup_steps))
-        else:
-            vae_warm_frac = 1.0
-        vae_kl_weight_eff = vae_kl_weight * vae_warm_frac
-        loss = loss + vae_recon_weight * mse_loss(vae_recon, obs) + vae_kl_weight_eff * vae_kl
 
     metrics = TrainMetrics(
         loss=to_float(loss),
@@ -215,8 +200,8 @@ def _compute_losses(
         rssm_kl=to_float(rssm_kl),
         rssm_kl_raw=to_float(rssm_kl_raw),
         rssm_recon_latent=to_float(rssm_recon_latent) if rssm_recon_latent is not None else None,
-        vae_recon=to_float(mse_loss(vae_recon, obs)) if vae_recon is not None else None,
-        vae_kl=to_float(vae_kl) if vae_kl is not None else None,
+        vae_recon=None,
+        vae_kl=None,
     )
     return metrics, loss
 
@@ -339,9 +324,6 @@ def main(cfg: DictConfig) -> None:
                 kl_balance=bool(getattr(cfg.train, "kl_balance", False)),
                 kl_balance_scale=float(getattr(cfg.train, "kl_balance_scale", 0.8)),
                 free_nats=cfg.train.free_nats,
-                vae_recon_weight=cfg.train.vae_recon_weight,
-                vae_kl_weight=cfg.train.vae_kl_weight,
-                vae_kl_warmup_steps=int(getattr(cfg.train, "vae_kl_warmup_steps", 0) or 0),
             )
 
             optimizer.zero_grad()
