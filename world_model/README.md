@@ -21,7 +21,7 @@ It mirrors Dreamer’s world‑model structure but is **offline** and **state‑
   - Hydra‑driven config
   - WandB logging
   - Checkpointing to `checkpoints/<run_name>/` (where `run_name = logging.name`)
-  - Each run folder also stores `config.yaml`, `train_logging.yaml`, and (if provided) `rollout_config.yaml`
+  - Each run folder also stores `config.yaml` and (if provided) `rollout_config.yaml`
 - **Evaluation**: `eval_rollout.py`
   - Posterior vs prior MSE
   - Optional open‑loop error plots
@@ -44,21 +44,59 @@ python factr/world_model/train.py
 3) **Evaluate + plot**
 
 ```bash
-python factr/world_model/eval_rollout.py eval.checkpoint_path=checkpoints/<run_name>/rssm_step_10000.pt
+python factr/world_model/eval_rollout.py
 ```
 
 4) **Plot a single sequence (true vs predicted)**
 
 ```bash
-python factr/world_model/plot_sequence.py --checkpoint-path checkpoints/<run_name>/rssm_step_10000.pt --seq-index 0 --seq-len 128
+python factr/world_model/plot_sequence.py
 ```
 
-## Config layout (Hydra)
+5) **Plot an open‑loop rollout from raw episodes**
 
-- `cfg/train_defualt.yaml` → data + model + training + logging in one file (buffer path, sizes, steps, lr, `logging.name`, etc.)
-- `cfg/eval.yaml` → evaluation + plotting
-- `inspect_buffer.py` has CLI args (no YAML)
-- `plot_sequence.py` has CLI args (no YAML)
+```bash
+python factr/world_model/plot_rollout.py
+```
+
+## Scripts & example commands
+
+Each script below is runnable from the repo root.  
+For scripts with a **settings block**, edit the values at the top of the file and then run the command.
+
+- **Train world model** (`train.py`)
+  ```bash
+  python factr/world_model/train.py
+  ```
+  Example override:
+  ```bash
+  python factr/world_model/train.py data.seq_len=64 train.batch_size=128
+  ```
+
+- **Evaluate rollouts + error plots** (`eval_rollout.py`)
+  ```bash
+  python factr/world_model/eval_rollout.py
+  ```
+
+- **Plot sequence (posterior + prior vs truth)** (`plot_sequence.py`)
+  ```bash
+  python factr/world_model/plot_sequence.py
+  ```
+
+- **Plot open‑loop rollout from raw episodes** (`plot_rollout.py`)
+  ```bash
+  python factr/world_model/plot_rollout.py
+  ```
+
+- **Inspect buffer metadata** (`inspect_buffer.py`)
+  ```bash
+  python factr/world_model/inspect_buffer.py --buffer-path /path/to/buf.pkl
+  ```
+
+- **Sanity‑check model wiring** (`debug_checks.py`)
+  ```bash
+  python factr/world_model/debug_checks.py --buffer-path /path/to/buf.pkl --seq-len 32
+  ```
 
 ## Observation window
 
@@ -70,61 +108,20 @@ python factr/world_model/train.py model.obs_window=4
 
 If `obs_window=1` (default), it uses only the current observation.
 
-## WandB
-
-WandB is on by default. Disable with:
-
-```bash
-python factr/world_model/train.py logging.enabled=false
-```
 
 ## Plots
 
-`eval_rollout.py` can save per‑dimension error curves:
+`eval_rollout.py` can save per‑dimension error curves. Control these via the settings block:
 
-- `eval.plot.enabled`: toggle plots
-- `eval.plot.output_dir`: folder name
-- `eval.plot.max_dims`: number of dims to plot
+- `plot_enabled`: toggle plots
+- `plot_output_dir`: folder name
+- `plot_max_dims`: number of dims to plot
 
-Example:
+Plots are saved into the chosen `plot_output_dir`.
 
-```bash
-python factr/world_model/eval_rollout.py eval.plot.max_dims=8
-```
-
-Plots are saved into the Hydra run directory (e.g. `outputs/YYYY-MM-DD/HH-MM-SS/plots/`).
-
-For single‑sequence plots you can override `--dims` to pick specific dims:
-
-```bash
-python factr/world_model/plot_sequence.py --dims 0 3 5
-```
+For single‑sequence plots, set `dims = [0, 3, 5]` (or similar) in the settings block of `plot_sequence.py`.
 
 ## How the model works (medium detail)
-
-This implementation follows Dreamer‑style world modeling but is adapted to **offline, low‑dimensional** FACTR data. The flow is:
-
-```mermaid
-flowchart TD
-  A[ReplayBuffer buf.pkl] --> B[Sequence dataset]
-  B --> C[Observation o_t]
-  C -->|optional| D[VAE encoder]
-  D --> E[Latent z_vae]
-  C -->|if no VAE| F[Obs embed]
-  E --> G[RSSM posterior q(z_t|h_t,o_t)]
-  F --> G
-  G --> H[Sample z_t]
-  H --> I[GRU h_t]
-  I --> J[Prior p(z_t|h_t)]
-  H --> K[Decoder p(o_t|h_t,z_t)]
-  K --> L[Recon loss]
-  G --> M[KL loss]
-  D --> N[VAE decoder]
-  N --> O[VAE recon loss]
-  D --> P[VAE KL loss]
-```
-
-If Mermaid isn’t supported in your viewer, here’s a cleaner ASCII version:
 
 ```
 buf.pkl
@@ -185,9 +182,9 @@ Where it happens in code:
 ## Notes
 
 - The current buffer uses low‑dim `state` (+ optional `goals`).
-- A small MLP VAE is enabled by default (`cfg/model/rssm.yaml`), encoding obs into a latent used by the RSSM.
-  - Disable for training: `model.use_vae=false`
-  - Disable for plotting: `python factr/world_model/plot_sequence.py --no-vae`
+- A small MLP VAE is enabled by default (see `cfg/train_defualt.yaml`), encoding obs into a latent used by the RSSM.
+  - Disable for training: set `model.use_vae=false`
+  - Plotting follows the checkpoint config (use a checkpoint trained without VAE if desired).
 - The current buffer is already Gaussian‑normalized; leave `data.normalize_obs=false` and `data.normalize_action=false` unless you intentionally want to re‑normalize.
 
 

@@ -7,7 +7,7 @@ eval:
   seq_len: 1000
   batch_size: 64
   device: cuda
-  num_workers: 0
+  num_workers: 4
   pin_memory: false
   max_batches: 50
   print_every: 5

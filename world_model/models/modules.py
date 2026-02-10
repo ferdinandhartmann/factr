@@ -21,6 +21,7 @@ class MLP(nn.Module):
         for i in range(len(dims) - 2):
             layers.append(nn.Linear(dims[i], dims[i + 1]))
             layers.append(activation)
+            layers.append(nn.LayerNorm(hidden_dim))
         layers.append(nn.Linear(dims[-2], dims[-1]))
         self.net = nn.Sequential(*layers)
 

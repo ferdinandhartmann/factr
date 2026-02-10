@@ -28,8 +28,6 @@ from utils_data_process import (
     downsample_data,
     gaussian_norm,
     generate_robobuf,
-    lowpass_filter,
-    medianfilter,
     sync_data_slowest,
 )
 
@@ -128,6 +126,18 @@ def _apply_minmax(list_of_arrays, feature_slice, mins, maxs):
         array[:, feature_slice] = (2.0 * (array[:, feature_slice] - mins) / denom) - 1.0
 
 
+def min_max_norm(list_of_arrays, feature_slice, clip_value=None):
+    """Normalize features with min-max scaling to [-1, 1].
+
+    Returns (mins, maxs) for logging/rollout_config.
+    """
+    mins, maxs = _compute_minmax_from_data(list_of_arrays, feature_slice)
+    _apply_minmax(list_of_arrays, feature_slice, mins, maxs)
+    if clip_value is not None:
+        _apply_clip(list_of_arrays, feature_slice, clip_value)
+    return mins, maxs
+
+
 def _apply_gaussian(list_of_arrays, feature_slice, mean, std):
     for array in list_of_arrays:
         array[:, feature_slice] = (array[:, feature_slice] - mean) / std
@@ -214,20 +224,24 @@ def normalize_states_groupwise(all_states_for_norm, state_obs_topics, state_topi
 
     stats = {"mode": "grouped", "state_dim": state_dim, "groups": []}
 
-    pose_clip = float(cfg.get("pose_clip", 5.0))
     pos_mean, pos_std = _compute_gaussian_stats(all_states_for_norm, pos_slice)
     _apply_gaussian(all_states_for_norm, pos_slice, pos_mean, pos_std)
-    _apply_clip(all_states_for_norm, pos_slice, pose_clip)
-    stats["groups"].append(
-        {
-            "name": "ee_position",
-            "type": "zscore_clip",
-            "indices": [pos_slice.start, pos_slice.stop],
-            "mean": [float(x) for x in pos_mean],
-            "std": [float(x) for x in pos_std],
-            "clip": pose_clip,
-        }
-    )
+    pose_clip = cfg.get("pose_clip", None)
+    pose_clip = None if pose_clip is None else float(pose_clip)
+    pose_clip_value = pose_clip if (pose_clip is not None and pose_clip > 0) else None
+    if pose_clip_value is not None:
+        _apply_clip(all_states_for_norm, pos_slice, pose_clip_value)
+
+    pos_group = {
+        "name": "ee_position",
+        "type": "gaussian_clip" if pose_clip_value is not None else "gaussian",
+        "indices": [pos_slice.start, pos_slice.stop],
+        "mean": [float(x) for x in pos_mean],
+        "std": [float(x) for x in pos_std],
+    }
+    if pose_clip_value is not None:
+        pos_group["clip"] = float(pose_clip_value)
+    stats["groups"].append(pos_group)
     stats["groups"].append(
         {
             "name": "ee_orientation",
@@ -238,46 +252,75 @@ def normalize_states_groupwise(all_states_for_norm, state_obs_topics, state_topi
 
     vel_mean, vel_std = _compute_gaussian_stats(all_states_for_norm, vel_slice)
     _apply_gaussian(all_states_for_norm, vel_slice, vel_mean, vel_std)
-    stats["groups"].append(
-        {
-            "name": "ee_velocity",
-            "type": "gaussian",
-            "indices": [vel_slice.start, vel_slice.stop],
-            "mean": [float(x) for x in vel_mean],
-            "std": [float(x) for x in vel_std],
-        }
-    )
+    velocity_clip = cfg.get("velocity_clip", None)
+    velocity_clip = None if velocity_clip is None else float(velocity_clip)
+    velocity_clip_value = velocity_clip if (velocity_clip is not None and velocity_clip > 0) else None
+    if velocity_clip_value is not None:
+        _apply_clip(all_states_for_norm, vel_slice, velocity_clip_value)
 
-    pos_scale, rot_scale = _parse_tracking_error_scales(cfg)
-    track_clip = float(cfg.get("tracking_error_clip", 1.0))
-    track_scales = np.array([pos_scale, pos_scale, pos_scale, rot_scale, rot_scale, rot_scale], dtype=float)
-    _apply_fixed_scale(all_states_for_norm, track_slice, track_scales, clip_value=track_clip)
-    stats["groups"].append(
-        {
-            "name": "tracking_error",
-            "type": "fixed_scale_clip",
-            "indices": [track_slice.start, track_slice.stop],
-            "scales": [float(x) for x in track_scales],
-            "clip": track_clip,
-        }
-    )
+    vel_group = {
+        "name": "ee_velocity",
+        "type": "gaussian_clip" if velocity_clip_value is not None else "gaussian",
+        "indices": [vel_slice.start, vel_slice.stop],
+        "mean": [float(x) for x in vel_mean],
+        "std": [float(x) for x in vel_std],
+    }
+    if velocity_clip_value is not None:
+        vel_group["clip"] = float(velocity_clip_value)
+    stats["groups"].append(vel_group)
 
-    wrench_clip = float(cfg.get("wrench_clip", 5.0))
-    _apply_log1p(all_states_for_norm, wrench_slice)
+    track_mean, track_std = _compute_gaussian_stats(all_states_for_norm, track_slice)
+    _apply_gaussian(all_states_for_norm, track_slice, track_mean, track_std)
+
+    track_clip = cfg.get("tracking_error_clip", None)
+    track_clip = None if track_clip is None else float(track_clip)
+    track_clip_value = track_clip if (track_clip is not None and track_clip > 0) else None
+    if track_clip_value is not None:
+        _apply_clip(all_states_for_norm, track_slice, track_clip_value)
+
+    track_group = {
+        "name": "tracking_error",
+        "type": "gaussian_clip" if track_clip_value is not None else "gaussian",
+        "indices": [track_slice.start, track_slice.stop],
+        "mean": [float(x) for x in track_mean],
+        "std": [float(x) for x in track_std],
+    }
+    if track_clip_value is not None:
+        track_group["clip"] = float(track_clip_value)
+    stats["groups"].append(track_group)
+
+    # wrench_mins, wrench_maxs = min_max_norm(all_states_for_norm, wrench_slice, clip_value=None)
+    # stats["groups"].append(
+    #     {
+    #         "name": "external_wrench",
+    #         "type": "min_max",
+    #         "indices": [wrench_slice.start, wrench_slice.stop],
+    #         "min": [float(x) for x in wrench_mins],
+    #         "max": [float(x) for x in wrench_maxs],
+    #         "formula": "(2*(x-min)/(max-min) - 1)",
+    #     }
+    # )
+
     wrench_mean, wrench_std = _compute_gaussian_stats(all_states_for_norm, wrench_slice)
     _apply_gaussian(all_states_for_norm, wrench_slice, wrench_mean, wrench_std)
-    _apply_clip(all_states_for_norm, wrench_slice, wrench_clip)
-    stats["groups"].append(
-        {
-            "name": "external_wrench",
-            "type": "log1p_zscore_clip",
-            "indices": [wrench_slice.start, wrench_slice.stop],
-            "mean": [float(x) for x in wrench_mean],
-            "std": [float(x) for x in wrench_std],
-            "clip": wrench_clip,
-            "formula": "clip((sign(x)*log1p(abs(x)) - mean)/std, ±clip)",
-        }
-    )
+    # _apply_log1p(all_states_for_norm, wrench_slice)
+    wrench_clip = cfg.get("wrench_clip", None)
+    wrench_clip = None if wrench_clip is None else float(wrench_clip)
+    wrench_clip_value = wrench_clip if (wrench_clip is not None and wrench_clip > 0) else None
+    if wrench_clip_value is not None:
+        _apply_clip(all_states_for_norm, wrench_slice, wrench_clip_value)
+
+    wrench_group = {
+        "name": "external_wrench",
+        "type": "gaussian_clip" if wrench_clip_value is not None else "gaussian",
+        "indices": [wrench_slice.start, wrench_slice.stop],
+        "mean": [float(x) for x in wrench_mean],
+        "std": [float(x) for x in wrench_std],
+        # "formula": "clip((sign(x)*log1p(abs(x)) - mean)/std, ±clip)",
+    }
+    if wrench_clip_value is not None:
+        wrench_group["clip"] = float(wrench_clip_value)
+    stats["groups"].append(wrench_group)
 
     used = np.zeros(state_dim, dtype=bool)
     for group in stats["groups"]:
@@ -304,9 +347,9 @@ def normalize_states_groupwise(all_states_for_norm, state_obs_topics, state_topi
 def normalize_actions_groupwise(all_actions_for_norm, cfg):
     """
     Normalize actions assuming commanded EE pose actions:
-      - position (x,y,z) min-max -> [-1, 1] using workspace_limits
-      - orientation (6 dims) identity (rotation-matrix columns already in [-1, 1])
-    Falls back to gaussian normalization if the action dimensionality is not compatible.
+        - position (x,y,z) z-score using dataset mean/std, optional clip via cfg.pose_clip
+        - orientation (6 dims) identity (rotation-matrix columns already in [-1, 1])
+    Falls back to full-vector gaussian normalization if the action dimensionality is not compatible.
     """
     if not all_actions_for_norm:
         return {"mode": "none", "action_dim": 0, "groups": []}
@@ -324,20 +367,24 @@ def normalize_actions_groupwise(all_actions_for_norm, cfg):
 
     stats = {"mode": "grouped", "action_dim": action_dim, "groups": []}
 
-    pose_clip = float(cfg.get("pose_clip", 5.0))
     pos_mean, pos_std = _compute_gaussian_stats(all_actions_for_norm, pos_slice)
     _apply_gaussian(all_actions_for_norm, pos_slice, pos_mean, pos_std)
-    _apply_clip(all_actions_for_norm, pos_slice, pose_clip)
-    stats["groups"].append(
-        {
-            "name": "ee_position",
-            "type": "zscore_clip",
-            "indices": [pos_slice.start, pos_slice.stop],
-            "mean": [float(x) for x in pos_mean],
-            "std": [float(x) for x in pos_std],
-            "clip": pose_clip,
-        }
-    )
+    pose_clip = cfg.get("pose_clip", None)
+    pose_clip = None if pose_clip is None else float(pose_clip)
+    pose_clip_value = pose_clip if (pose_clip is not None and pose_clip > 0) else None
+    if pose_clip_value is not None:
+        _apply_clip(all_actions_for_norm, pos_slice, pose_clip_value)
+
+    pos_group = {
+        "name": "ee_position",
+        "type": "gaussian_clip" if pose_clip_value is not None else "gaussian",
+        "indices": [pos_slice.start, pos_slice.stop],
+        "mean": [float(x) for x in pos_mean],
+        "std": [float(x) for x in pos_std],
+    }
+    if pose_clip_value is not None:
+        pos_group["clip"] = float(pose_clip_value)
+    stats["groups"].append(pos_group)
     stats["groups"].append(
         {
             "name": "ee_orientation",
@@ -346,8 +393,38 @@ def normalize_actions_groupwise(all_actions_for_norm, cfg):
         }
     )
 
-    if action_dim > 9:
-        rem_slice = slice(9, action_dim)
+    used = np.zeros(action_dim, dtype=bool)
+    for group in stats["groups"]:
+        start, stop = group["indices"]
+        used[int(start) : int(stop)] = True
+
+    # Optional impedance stiffness as action (6 dims): keep identity (do NOT normalize).
+    action_cfg = cfg.get("action_config", {})
+    if isinstance(action_cfg, (DictConfig, ListConfig)):
+        action_cfg = OmegaConf.to_container(action_cfg, resolve=True)
+    if isinstance(action_cfg, dict) and "/cartesian_impedance_gains" in action_cfg:
+        stiffness_dim = int(action_cfg.get("/cartesian_impedance_gains", 6))
+        if stiffness_dim != 6:
+            raise ValueError(f"Expected /cartesian_impedance_gains dim=6 (stiffness only), got {stiffness_dim}.")
+        gains_start = 9
+        gains_stop = gains_start + stiffness_dim
+        if action_dim < gains_stop:
+            raise ValueError(
+                f"Expected {stiffness_dim}-dim impedance stiffness action at indices [9:{gains_stop}], but action_dim={action_dim}."
+            )
+        stats["groups"].append(
+            {
+                "name": "impedance_stiffness",
+                "type": "identity",
+                "indices": [gains_start, gains_stop],
+            }
+        )
+        used[gains_start:gains_stop] = True
+
+    # Anything else beyond known groups: gaussian
+    if not np.all(used):
+        remaining = np.where(~used)[0]
+        rem_slice = slice(int(remaining[0]), int(remaining[-1]) + 1)
         rem_mean, rem_std = _compute_gaussian_stats(all_actions_for_norm, rem_slice)
         _apply_gaussian(all_actions_for_norm, rem_slice, rem_mean, rem_std)
         stats["groups"].append(
@@ -370,14 +447,6 @@ def main(cfg: DictConfig):
     downsample = cfg.get("downsample", False)
     data_frequency = cfg.get("data_frequency", 50.0)
     target_downsampling_freq = cfg.get("target_downsampling_freq", 50.0)
-    filter_torque = cfg.get("filter_torque", False)
-    filter_position = cfg.get("filter_position", False)
-    cutoff_freq_torque = cfg.get("cutoff_freq_torque", 10.0)
-    cutoff_freq_position = cfg.get("cutoff_freq_position", 5.0)
-    median_filter_torque = cfg.get("median_filter_torque", False)
-    median_filter_position = cfg.get("median_filter_position", False)
-    median_filter_kernel_size_torque = cfg.get("median_filter_kernel_size_torque", 3)
-    median_filter_kernel_size_position = cfg.get("median_filter_kernel_size_position", 7)
 
     # rgb_obs_topics = list(cfg.cameras_topics)
     state_obs_topics = list(cfg.obs_topics)
@@ -430,6 +499,23 @@ def main(cfg: DictConfig):
             return arr
         return np.full((dim,), np.nan, dtype=float)
 
+    def extract_concat_vector(msg, concat_keys, dim):
+        if not isinstance(msg, dict):
+            return np.full((dim,), np.nan, dtype=float)
+        parts = []
+        for key, kdim in concat_keys:
+            if key in msg and msg[key] is not None:
+                arr = np.asarray(msg[key], dtype=float).flatten()
+                if arr.size != int(kdim):
+                    arr = np.full((int(kdim),), np.nan, dtype=float)
+            else:
+                arr = np.full((int(kdim),), np.nan, dtype=float)
+            parts.append(arr)
+        vec = np.concatenate(parts, axis=0) if parts else np.full((dim,), np.nan, dtype=float)
+        if vec.size != dim:
+            return np.full((dim,), np.nan, dtype=float)
+        return vec
+
     def extract_ep_index(path):
         name = path.stem  # e.g., "ep_12"
         return int(name.split("_")[1])
@@ -437,6 +523,8 @@ def main(cfg: DictConfig):
     all_episodes = sorted(
         [f for f in data_folder.iterdir() if f.name.startswith("ep_") and f.name.endswith(".pkl")], key=extract_ep_index
     )
+    
+    print(f"These episodes will be processed in this order: {[str(p.name) for p in all_episodes]}")
 
     trajectories = []
     all_states = []
@@ -451,41 +539,6 @@ def main(cfg: DictConfig):
             traj_data = pickle.load(f)
         traj_data, avg_freq = sync_data_slowest(traj_data, all_topics)
         pbar.set_postfix({"avg_freq": f"{avg_freq:.1f} Hz"})
-
-        print("\n")
-
-        if median_filter_torque:
-            # Apply median filter to torque sensor data
-            traj_data["/franka_robot_state_broadcaster/external_joint_torques"] = medianfilter(
-                np.array(traj_data["/franka_robot_state_broadcaster/external_joint_torques"]),
-                kernel_size=median_filter_kernel_size_torque,
-            ).tolist()
-
-        if median_filter_position:
-            # Apply median filter to position command data
-            traj_data["/joint_impedance_dynamic_gain_controller/joint_impedance_command"] = medianfilter(
-                np.array(traj_data["/joint_impedance_dynamic_gain_controller/joint_impedance_command"]),
-                kernel_size=median_filter_kernel_size_position,
-            ).tolist()
-
-        # Apply low-pass filter to torque sensor data and position
-        if filter_torque:
-            lowpass_filter(
-                traj_data,
-                cutoff_freq_torque,
-                data_frequency,
-                "/franka_robot_state_broadcaster/external_joint_torques",
-                key_options=("effort", "data"),
-            )
-
-        if filter_position:
-            lowpass_filter(
-                traj_data,
-                cutoff_freq_position,
-                data_frequency,
-                "/joint_impedance_dynamic_gain_controller/joint_impedance_command",
-                key_options=("position", "data"),
-            )
 
         # 🕒 Downsample to target rate
         print("Original lengths:", [len(traj_data[key]) for key in traj_data.keys()])
@@ -520,9 +573,15 @@ def main(cfg: DictConfig):
         for topic in state_obs_topics:
             if topic in state_topic_specs:
                 spec = state_topic_specs[topic]
-                topic_vectors = [
-                    extract_fixed_vector(msg, spec["keys"], spec["dim"], spec["fallback"]) for msg in traj_data[topic]
-                ]
+                if spec.get("concat", False):
+                    topic_vectors = [
+                        extract_concat_vector(msg, spec.get("concat_keys", []), spec["dim"]) for msg in traj_data[topic]
+                    ]
+                else:
+                    topic_vectors = [
+                        extract_fixed_vector(msg, spec["keys"], spec["dim"], spec["fallback"])
+                        for msg in traj_data[topic]
+                    ]
                 topic_array = np.stack(topic_vectors, axis=0)  # (num_steps, dim)
             else:
                 topic_data = []
@@ -576,26 +635,43 @@ def main(cfg: DictConfig):
         #     actions = np.array(traj_data[topic])
         #     action_list.append(actions)
 
-        # Flatten each action dict into numeric arrays (position + velocity + effort)
-        action_list = []
-        for topic in action_topics:
-            topic_data = []
-            for msg in traj_data[topic]:
-                if isinstance(msg, dict):
-                    parts = []
-                    for key in ["ee_pose_commanded"]:
-                        if key in msg and len(msg[key]) > 0:
-                            parts.append(np.array(msg[key], dtype=float))
-                    if parts:
-                        vec = np.concatenate(parts)
-                    else:
-                        vec = np.zeros(1, dtype=float)
-                else:
-                    vec = np.array(msg, dtype=float).flatten()
-                topic_data.append(vec)
+        # Flatten each action topic into numeric arrays.
+        action_topic_specs = {
+            "/cartesian_impedance_controller/pose_command": {"keys": ["ee_pose_commanded"], "dim": 9, "fallback": None},
+            "/cartesian_impedance_gains": {
+                "keys": ["stiffness"],
+                "dim": 6,
+                "fallback": None,
+            },
+        }
 
-            topic_array = np.stack(topic_data, axis=0)  # shape (num_steps, 7)
+        action_list = []
+        action_dims = []
+        for topic in action_topics:
+            if topic in action_topic_specs:
+                spec = action_topic_specs[topic]
+                if spec.get("concat", False):
+                    topic_vectors = [
+                        extract_concat_vector(msg, spec.get("concat_keys", []), spec["dim"]) for msg in traj_data[topic]
+                    ]
+                else:
+                    topic_vectors = [
+                        extract_fixed_vector(msg, spec["keys"], spec["dim"], spec["fallback"])
+                        for msg in traj_data[topic]
+                    ]
+                topic_array = np.stack(topic_vectors, axis=0)
+            else:
+                topic_array = np.stack([np.asarray(m, dtype=float).flatten() for m in traj_data[topic]], axis=0)
+
             action_list.append(topic_array)
+            action_dims.append(int(topic_array.shape[1]))
+
+        # Optional: verify action dims match the config (helps catch key/order mistakes).
+        expected_dims = [int(action_config.get(t, -1)) for t in action_topics]
+        if all(d > 0 for d in expected_dims) and expected_dims != action_dims:
+            raise ValueError(
+                f"Action topic dims mismatch. expected={expected_dims} actual={action_dims} topics={action_topics}"
+            )
 
         traj["actions"] = np.concatenate(action_list, axis=-1)
 
@@ -628,14 +704,6 @@ def main(cfg: DictConfig):
         # 'camera_topics': rgb_obs_topics,
     }
     processing_config = {
-        "median_filter_torque": median_filter_torque,
-        "median_filter_position": median_filter_position,
-        "median_filter_kernel_size_torque": median_filter_kernel_size_torque,
-        "median_filter_kernel_size_position": median_filter_kernel_size_position,
-        "filter_torque": filter_torque,
-        "cutoff_freq_torque": cutoff_freq_torque,
-        "filter_position": filter_position,
-        "cutoff_freq_position": cutoff_freq_position,
         "downsample": downsample,
         "data_frequency": data_frequency,
         "target_downsampling_freq": target_downsampling_freq,

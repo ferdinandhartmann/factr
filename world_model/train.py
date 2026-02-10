@@ -59,10 +59,10 @@ def _sanitize_run_name(name: str) -> str:
 
 def _extract_step(path: Path) -> int:
     name = path.stem
-    if "rssm_step_" not in name:
+    if "ckpt_" not in name:
         return -1
     try:
-        return int(name.split("rssm_step_")[-1])
+        return int(name.split("ckpt_")[-1])
     except ValueError:
         return -1
 
@@ -70,7 +70,7 @@ def _extract_step(path: Path) -> int:
 def _prune_checkpoints(ckpt_root: Path, keep_last: int) -> None:
     if keep_last is None or keep_last <= 0:
         return
-    ckpts = sorted(ckpt_root.glob("rssm_step_*.pt"), key=_extract_step)
+    ckpts = sorted(ckpt_root.glob("ckpt_*.ckpt"), key=_extract_step)
     if len(ckpts) <= keep_last:
         return
     for old in ckpts[:-keep_last]:
@@ -83,7 +83,6 @@ def _prepare_run_dir(cfg: DictConfig, buffer_path: Path, summary: dict) -> Path:
 
     Files written:
       - config.yaml: full resolved Hydra config
-      - train_logging.yaml: combined cfg.train + cfg.logging (train.yaml + wandb.yaml merged)
       - buffer_summary.yaml: quick buffer summary + buffer path
       - rollout_config.yaml: copy of cfg.data.stats_path (if provided)
     """
@@ -96,15 +95,6 @@ def _prepare_run_dir(cfg: DictConfig, buffer_path: Path, summary: dict) -> Path:
     # Full resolved config.
     resolved = OmegaConf.create(OmegaConf.to_container(cfg, resolve=True))
     OmegaConf.save(resolved, str(run_dir / "config.yaml"))
-
-    # Explicit merged train+logging config.
-    train_logging = OmegaConf.create(
-        {
-            "train": OmegaConf.to_container(cfg.train, resolve=True),
-            "logging": OmegaConf.to_container(cfg.logging, resolve=True),
-        }
-    )
-    OmegaConf.save(train_logging, str(run_dir / "train_logging.yaml"))
 
     # Buffer summary for quick sanity-checking.
     buf_meta = OmegaConf.create({"buffer_path": str(buffer_path), **summary})
@@ -132,26 +122,19 @@ def _compute_losses(
     kl_balance: bool,
     kl_balance_scale: float,
     free_nats: float,
-    vae_recon_weight: float,
-    vae_kl_weight: float,
 ) -> tuple[TrainMetrics, torch.Tensor]:
     obs = batch["obs"]
     actions = batch["action"]
 
     # Dataset returns Dreamer-style sequences:
     # obs: (B, L+1, D), actions: (B, L, A) so that action[t] predicts obs[t+1].
-    vae_recon = None
-    vae_kl = None
     rssm_recon_latent = None
     if vae is not None:
         obs_flat = obs.reshape(-1, obs.shape[-1])
-        # Train the VAE with stochastic latents, but feed a deterministic embedding (mean)
-        # to the RSSM posterior to reduce target/embedding noise.
-        vae_out = vae(obs_flat, sample=True)
+        # Use the VAE purely as an encoder/decoder; no separate VAE ELBO here.
+        # Feed a deterministic embedding (mean) to the RSSM posterior to reduce embedding noise.
         _, _, obs_latent_det = vae.encode(obs_flat, sample=False)
         obs_embed = obs_latent_det.view(obs.shape[0], obs.shape[1], -1)
-        vae_recon = vae_out.recon.view_as(obs)
-        vae_kl = vae_out.kl.mean()
         obs_for_rssm = obs_embed
     else:
         obs_for_rssm = obs
@@ -162,7 +145,7 @@ def _compute_losses(
     if vae is not None:
         # RSSM predicts VAE latents; compute recon loss in observation space via the VAE decoder
         # (closer to Dreamer: the world model trains on reconstructing the actual observation).
-        pred_latent = output.obs_pred
+        pred_latent = output.obs_pred_mean
         pred_obs = vae.decode(pred_latent.reshape(-1, pred_latent.shape[-1])).view(
             obs.shape[0], actions.shape[1], obs.shape[-1]
         )
@@ -173,7 +156,7 @@ def _compute_losses(
         rssm_recon_latent = mse_loss(pred_latent, obs_for_rssm[:, 1:])
     else:
         target = obs_for_rssm[:, 1:]
-        rssm_recon = mse_loss(output.obs_pred, target)
+        rssm_recon = mse_loss(output.obs_pred_mean, target)
 
     if kl_balance:
         # Balanced KL: combine two KL directions with stop-grad to stabilize training.
@@ -210,8 +193,6 @@ def _compute_losses(
     kl_weight_eff = kl_weight * warm_frac
 
     loss = rssm_recon + kl_weight_eff * rssm_kl
-    if vae is not None and vae_recon is not None and vae_kl is not None:
-        loss = loss + vae_recon_weight * mse_loss(vae_recon, obs) + vae_kl_weight * vae_kl
 
     metrics = TrainMetrics(
         loss=to_float(loss),
@@ -219,8 +200,8 @@ def _compute_losses(
         rssm_kl=to_float(rssm_kl),
         rssm_kl_raw=to_float(rssm_kl_raw),
         rssm_recon_latent=to_float(rssm_recon_latent) if rssm_recon_latent is not None else None,
-        vae_recon=to_float(mse_loss(vae_recon, obs)) if vae_recon is not None else None,
-        vae_kl=to_float(vae_kl) if vae_kl is not None else None,
+        vae_recon=None,
+        vae_kl=None,
     )
     return metrics, loss
 
@@ -315,6 +296,17 @@ def main(cfg: DictConfig) -> None:
 
     global_step = 0
     epoch = 0
+
+    def _build_ckpt_payload(step_tag: int) -> dict:
+        return {
+            "model": model.state_dict(),
+            "vae": vae.state_dict() if vae is not None else None,
+            "cfg": OmegaConf.to_container(cfg, resolve=True),
+            "obs_dim": obs_dim,
+            "action_dim": action_dim,
+            "global_step": step_tag,
+        }
+
     while global_step < max_steps:
         model.train()
         epoch_start = time.time()
@@ -332,8 +324,6 @@ def main(cfg: DictConfig) -> None:
                 kl_balance=bool(getattr(cfg.train, "kl_balance", False)),
                 kl_balance_scale=float(getattr(cfg.train, "kl_balance_scale", 0.8)),
                 free_nats=cfg.train.free_nats,
-                vae_recon_weight=cfg.train.vae_recon_weight,
-                vae_kl_weight=cfg.train.vae_kl_weight,
             )
 
             optimizer.zero_grad()
@@ -365,20 +355,11 @@ def main(cfg: DictConfig) -> None:
 
             if (global_step + 1) % save_every == 0:
                 step_tag = global_step + 1
-                torch.save(
-                    {
-                        "model": model.state_dict(),
-                        "vae": vae.state_dict() if vae is not None else None,
-                        "cfg": OmegaConf.to_container(cfg, resolve=True),
-                        "obs_dim": obs_dim,
-                        "action_dim": action_dim,
-                        "global_step": step_tag,
-                    },
-                    ckpt_root / f"rssm_step_{step_tag}.pt",
-                )
+                if step_tag < max_steps:
+                    torch.save(_build_ckpt_payload(step_tag), ckpt_root / f"ckpt_{step_tag}.ckpt")
                 if keep_last > 0:
                     # Keep only the most recent N checkpoints for this run.
-                    ckpts = sorted(ckpt_root.glob("rssm_step_*.pt"), key=lambda p: int(p.stem.split("_")[-1]))
+                    ckpts = sorted(ckpt_root.glob("ckpt_*.ckpt"), key=_extract_step)
                     if len(ckpts) > keep_last:
                         for old in ckpts[: len(ckpts) - keep_last]:
                             old.unlink(missing_ok=True)
@@ -392,6 +373,12 @@ def main(cfg: DictConfig) -> None:
         if (epoch + 1) % 5 == 0:
             print(f"Epoch {epoch + 1} | time: {epoch_time:.2f}s | global_step={global_step}/{max_steps}")
         epoch += 1
+
+    # Always save a final checkpoint for easy resume/eval.
+    torch.save(_build_ckpt_payload(global_step), ckpt_root / "ckpt_latest.ckpt")
+    
+    if keep_last > 0:
+        _prune_checkpoints(ckpt_root, keep_last -1)
 
     if run is not None:
         run.finish()

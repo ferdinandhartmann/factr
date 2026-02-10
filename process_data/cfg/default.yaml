@@ -1,15 +1,6 @@
 
-input_path: /home/ferdinand/activeinference/factr/process_data/data_to_process/fourgoals_1_train/data
-output_path: /home/ferdinand/activeinference/factr/process_data/training_data/fourgoals_1_newnorm_train
-
-median_filter_torque: False
-median_filter_kernel_size_torque: 3
-median_filter_position: False
-median_filter_kernel_size_position: 7
-filter_torque: False
-cutoff_freq_torque: 10.0
-filter_position: False
-cutoff_freq_position: 12.0
+input_path: /home/ferdinand/activeinference/factr/process_data/data_to_process/fourgoals_1/data
+output_path: /home/ferdinand/activeinference/factr/process_data/processed_data/fourgoals_1_norm2
 
 downsample: False
 data_frequency: 50.0
@@ -25,57 +16,21 @@ obs_topics:
   - /franka_robot_state_broadcaster/external_wrench_in_stiffness_frame
   - /cartesian_impedance_controller/tracking_error
 
-# ------------------------------
-# Normalization
-# ------------------------------
-# `process_data.py` normalizes the low-dim `obs["state"]` *per feature group* and writes the
-# parameters into `rollout_config.yaml -> norm_stats -> state`.
-#
-# Where the normalization parameters live:
-# - In `mode: grouped`, normalization is NOT a single global `(x - mean) / std`.
-# - The true normalization parameters live under:
-#     - `rollout_config.yaml -> norm_stats -> state -> groups`
-#     - `rollout_config.yaml -> norm_stats -> action -> groups`
-# - In grouped mode we do NOT write top-level `mean/std` vectors, because min-max scaling and
-#   log transforms can’t be represented as a single Gaussian mean/std.
-#
-# How grouped normalization is applied (assuming the default topic order produces a 27-dim state):
-# - EE pose topic (9 dims): split into
-#     - EE position (x,y,z)      -> Z-score (dataset mean/std) then clip to ±`pose_clip`
-#     - EE orientation (6 dims)  -> Identity (NOT normalized). Assumes these are rotation-matrix
-#                                  columns (already bounded to [-1, 1]).
-# - EE velocity (6 dims)         -> Gaussian normalization (mean/std from dataset)
-# - External wrench (6 dims)     -> sign(x)*log1p(abs(x)) -> z-score -> clip to ±`wrench_clip`
-# - Tracking error (6 dims)      -> Fixed task scaling (NOT dataset Gaussian), then clip to ±`tracking_error_clip`
-#     - pos error / tracking_error_scales.pos  (e.g. 0.1m)
-#     - rot error / tracking_error_scales.rot  (e.g. 0.5rad)
-#
-# Notes:
-# - `pose_topic` MUST point to the state topic whose first 9 dims are [pos(3), rot_cols(6)].
-# - If required topics are missing, `process_data.py` falls back to full-vector Gaussian normalization.
-#
-# Actions:
-# - The default `action_config` uses `/cartesian_impedance_controller/pose_command: 9`.
-# - Actions are treated as commanded EE pose with the same split/normalization:
-#     - action[0:3]  position -> z-score + clip ±`pose_clip`
-#     - action[3:9]  orientation -> identity
 
+# Normalization
 
 # Explicit pose topic for grouped normalization (must be present in `obs_topics`)
 pose_topic: /franka_robot_state_broadcaster/robot_state
+ 
+pose_clip: 5.0           # set 0 to disable clipping (for observations and actions)
+velocity_clip: 3.0       # set 0 to disable clipping
+tracking_error_clip: 5.0 # set 0 to disable clipping (after Gaussian normalization)
+wrench_clip: 5.0         # set 0 to disable clipping
 
-# Z-score clipping limits (safety against outliers)
-pose_clip: 5.0
-wrench_clip: 5.0
-
-# Tracking error fixed scaling (task/physics scale)
-tracking_error_scales:
-  pos: 0.1   # meters (10 cm)
-  rot: 0.5   # radians (~30 deg)
-tracking_error_clip: 1.0
 
 action_config:
   /cartesian_impedance_controller/pose_command: 9
+  /cartesian_impedance_gains: 6
 
 goal_topic: 
   - /goal
