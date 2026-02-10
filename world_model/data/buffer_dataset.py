@@ -393,7 +393,7 @@ class BufferSequenceDataset(Dataset):
 
             obs_dict, action_arr, reward_val = _extract_obs_action_reward(transition)
             obs_vec, state_slice = self._select_obs_vector(obs_dict)
-            obs_vec, action_arr = self._apply_normalization(obs_vec, action_arr, state_slice)
+            # obs_vec, action_arr = self._apply_normalization(obs_vec, action_arr, state_slice)
 
             current_obs.append(obs_vec)
             current_action.append(action_arr)

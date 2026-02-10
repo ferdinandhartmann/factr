@@ -16,7 +16,7 @@ hydra:
 
 rt: ${hydra:runtime.choices.agent/features}
 
-exp_name: 1217mix_B64_pi5li_S45_lr25_2K_z128_β0005  #Batch, pixel or latent, Seed, lr, max_iteration, 関節の次元数, token_dim, dim_feedforward
+exp_base_name: fourgoals_1_norm2_1  #Batch, pixel or latent, Seed, lr, max_iteration, 関節の次元数, token_dim, dim_feedforward
 batch_size: 64 
 num_workers: 4 #データセットからデータを読み込む際に、並列で動かすプロセス（ワーカー）の数
 lr: 0.00025
@@ -26,6 +26,8 @@ save_freq: 2000 #チェックポイント保存の頻度 (Save Frequency) 。200
 schedule_freq: 1
 devices: 2
 seed: 45
+
+suffix: _
 
 buffer_path: ./buffer.pkl
 ac_chunk: 30 #100
@@ -41,9 +43,11 @@ curriculum:
   stop_scale: 0
   max_step: ${max_iterations}
 
+exp_name: ${exp_base_name}_s${seed}_ac${ac_chunk}_b${batch_size}_lr${lr}_iter${max_iterations}${suffix}
+
 wandb:
   name: ${exp_name}
-  project: factr_1217_up_side
+  project: fg1_act
   group: bc
   debug: False #Falseに
-  entity: a-otake2415-keio-university-global-page-org
+  entity: None

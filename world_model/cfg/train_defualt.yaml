@@ -5,8 +5,8 @@ hydra:
     dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
 
 data:
-  buffer_path: /home/ferdinand/activeinference/factr/process_data/training_data/fourgoals_1_newnorm_train/buf.pkl
-  stats_path: /home/ferdinand/activeinference/factr/process_data/training_data/fourgoals_1_newnorm_train/rollout_config.yaml
+  buffer_path: /home/ferdinand/activeinference/factr/process_data/processed_data/fourgoals_1_norm2/buf.pkl
+  stats_path: /home/ferdinand/activeinference/factr/process_data/processed_data/fourgoals_1_norm2/rollout_config.yaml
   # seq_len here is the number of actions returned. Observations are seq_len + 1.
   seq_len: 30 # future prediction length
   obs_keys:
@@ -21,7 +21,7 @@ logging:
   entity: null
   tags: []
   log_every: 100
-  name: rssm_newnorm_train_13
+  name: fg1_n2_1
 
 
 model:
