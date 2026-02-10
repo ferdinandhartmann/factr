@@ -235,6 +235,32 @@ def load_vit(model, restore_path):
         # filter out keys with name decoder or mask_token
         state_dict = {k: v for k, v in state_dict.items() if "decoder" not in k and "mask_token" not in k}
 
+        patch_embed_weight = state_dict["patch_embed.proj.weight"]
+
+        # 現在のモデルのパッチ埋め込み層の重み (例: [768, 9, 16, 16])
+        model_patch_embed_weight = model.patch_embed.proj.weight
+
+        if patch_embed_weight.shape != model_patch_embed_weight.shape:
+            print(f"Resizing patch_embed weight from {patch_embed_weight.shape} to {model_patch_embed_weight.shape}")
+
+            # 入力チャンネル数 (例: 3)
+            in_chans_pretrained = patch_embed_weight.shape[1]
+            # 目標チャンネル数 (例: 9)
+            in_chans_new = model_patch_embed_weight.shape[1]
+
+            # 重みを複製して平均化する (単純なコピーやゼロ埋めより一般的)
+            # 例: 3ch -> 9ch なら、元の3chを3回繰り返して、それぞれを1/3倍する
+            # (こうすることで、初期状態の出力のスケールが保たれる)
+            repeat = int(in_chans_new / in_chans_pretrained)
+            new_weight = patch_embed_weight.repeat(1, repeat, 1, 1) / repeat
+
+            # 余りがある場合の処理 (念のため)
+            if new_weight.shape[1] < in_chans_new:
+                diff = in_chans_new - new_weight.shape[1]
+                new_weight = torch.cat([new_weight, patch_embed_weight[:, :diff] / repeat], dim=1)
+
+            state_dict["patch_embed.proj.weight"] = new_weight
+
         # remove norm if using global_pool instead of class token
         if model.classifier_feature == "global_pool":
             print("Removing extra weights for global_pool")

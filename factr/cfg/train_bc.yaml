@@ -3,6 +3,7 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+
 defaults:
   - agent: transformer_vit
   - task: franka
@@ -11,31 +12,23 @@ defaults:
 
 hydra:
   run:
-    dir: checkpoints_bld/${exp_name}
+    dir: checkpoints/${exp_name}
 
 rt: ${hydra:runtime.choices.agent/features}
 
-exp_base_name: bld_stiff_52_filt2
-batch_size: 64
-num_workers: 8
-lr: 0.00022
-max_iterations: 8000 # 20/50 epochs good maybe, (batch_size*max_iterations) / dataset_size , datasetsize=(54 episodes × (300 raw steps)=16,200)
-eval_freq: 250
-save_freq: 2000
+exp_name: 1217mix_B64_pi5li_S45_lr25_2K_z128_β0005  #Batch, pixel or latent, Seed, lr, max_iteration, 関節の次元数, token_dim, dim_feedforward
+batch_size: 64 
+num_workers: 4 #データセットからデータを読み込む際に、並列で動かすプロセス（ワーカー）の数
+lr: 0.00025
+max_iterations: 20000
+eval_freq: 500 #評価の頻度 (Evaluation Frequency) 。200回の学習ステップごとに、現在のモデルの性能をテストデータセットで評価
+save_freq: 2000 #チェックポイント保存の頻度 (Save Frequency) 。2000回の学習ステップごとに、その時点でのモデルの重みをファイルに保存
 schedule_freq: 1
-devices: 1
-seed: 52
-
-suffix: _
-
-# dataset_size = number_of_episodes * number_of_timesteps 
-#              = 54 * 300 = 16200
-#       epochs = (batch_size * max_iterations) / dataset_size
-#              = (64 * 10000) / 16200 = 39.5
+devices: 2
+seed: 45
 
 buffer_path: ./buffer.pkl
-# buffer_path: /home/ferdinand/activeinference/factr/process_data/processed_data/20251024_train_60_filtered/buf.pkl
-ac_chunk: 30
+ac_chunk: 30 #100
 img_chunk: 1  # number of image timesteps to use (including current one)
 train_transform: medium
 test_transform: preproc
@@ -47,15 +40,10 @@ curriculum:
   start_scale: 5
   stop_scale: 0
   max_step: ${max_iterations}
-  ratio: 0.667
-
-use_indices: [0,1,2,3,4,5,6] 
-
-exp_name: ${exp_base_name}_s${seed}_ac${ac_chunk}_b${batch_size}_lr${lr}_iter${max_iterations}${suffix}
 
 wandb:
   name: ${exp_name}
-  project: factr
+  project: factr_1217_up_side
   group: bc
-  debug: False
-  entity: None
+  debug: False #Falseに
+  entity: a-otake2415-keio-university-global-page-org

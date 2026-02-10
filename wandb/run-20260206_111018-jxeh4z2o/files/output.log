@@ -1,0 +1,61 @@
+Step 0: loss=0.724198  rssm_recon=0.724198  rssm_kl=1.669319
+Step 100: loss=0.689759  rssm_recon=0.255339  rssm_kl=2.606519
+Step 200: loss=1.090621  rssm_recon=0.206528  rssm_kl=2.652277
+Step 300: loss=2.101946  rssm_recon=0.182142  rssm_kl=3.839608
+Step 400: loss=2.645756  rssm_recon=0.208146  rssm_kl=4.875220
+Traceback (most recent call last):
+  File "/home/ferdinand/activeinference/factr/world_model/train.py", line 401, in <module>
+    main()
+  File "/home/ferdinand/miniforge3/envs/factr/lib/python3.9/site-packages/hydra/main.py", line 94, in decorated_main
+    _run_hydra(
+  File "/home/ferdinand/miniforge3/envs/factr/lib/python3.9/site-packages/hydra/_internal/utils.py", line 394, in _run_hydra
+    _run_app(
+  File "/home/ferdinand/miniforge3/envs/factr/lib/python3.9/site-packages/hydra/_internal/utils.py", line 457, in _run_app
+    run_and_report(
+  File "/home/ferdinand/miniforge3/envs/factr/lib/python3.9/site-packages/hydra/_internal/utils.py", line 220, in run_and_report
+    return func()
+  File "/home/ferdinand/miniforge3/envs/factr/lib/python3.9/site-packages/hydra/_internal/utils.py", line 458, in <lambda>
+    lambda: hydra.run(
+  File "/home/ferdinand/miniforge3/envs/factr/lib/python3.9/site-packages/hydra/_internal/hydra.py", line 119, in run
+    ret = run_job(
+  File "/home/ferdinand/miniforge3/envs/factr/lib/python3.9/site-packages/hydra/core/utils.py", line 186, in run_job
+    ret.return_value = task_function(task_cfg)
+  File "/home/ferdinand/activeinference/factr/world_model/train.py", line 323, in main
+    metrics, loss = _compute_losses(
+  File "/home/ferdinand/activeinference/factr/world_model/train.py", line 161, in _compute_losses
+    output = model(obs_windowed[:, 1:], actions, sample=rssm_sample)
+  File "/home/ferdinand/miniforge3/envs/factr/lib/python3.9/site-packages/torch/nn/modules/module.py", line 1736, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/home/ferdinand/miniforge3/envs/factr/lib/python3.9/site-packages/torch/nn/modules/module.py", line 1747, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/home/ferdinand/activeinference/factr/world_model/models/rssm.py", line 86, in forward
+    eps = torch.randn_like(post_std)
+KeyboardInterrupt
+Traceback (most recent call last):
+  File "/home/ferdinand/activeinference/factr/world_model/train.py", line 401, in <module>
+    main()
+  File "/home/ferdinand/miniforge3/envs/factr/lib/python3.9/site-packages/hydra/main.py", line 94, in decorated_main
+    _run_hydra(
+  File "/home/ferdinand/miniforge3/envs/factr/lib/python3.9/site-packages/hydra/_internal/utils.py", line 394, in _run_hydra
+    _run_app(
+  File "/home/ferdinand/miniforge3/envs/factr/lib/python3.9/site-packages/hydra/_internal/utils.py", line 457, in _run_app
+    run_and_report(
+  File "/home/ferdinand/miniforge3/envs/factr/lib/python3.9/site-packages/hydra/_internal/utils.py", line 220, in run_and_report
+    return func()
+  File "/home/ferdinand/miniforge3/envs/factr/lib/python3.9/site-packages/hydra/_internal/utils.py", line 458, in <lambda>
+    lambda: hydra.run(
+  File "/home/ferdinand/miniforge3/envs/factr/lib/python3.9/site-packages/hydra/_internal/hydra.py", line 119, in run
+    ret = run_job(
+  File "/home/ferdinand/miniforge3/envs/factr/lib/python3.9/site-packages/hydra/core/utils.py", line 186, in run_job
+    ret.return_value = task_function(task_cfg)
+  File "/home/ferdinand/activeinference/factr/world_model/train.py", line 323, in main
+    metrics, loss = _compute_losses(
+  File "/home/ferdinand/activeinference/factr/world_model/train.py", line 161, in _compute_losses
+    output = model(obs_windowed[:, 1:], actions, sample=rssm_sample)
+  File "/home/ferdinand/miniforge3/envs/factr/lib/python3.9/site-packages/torch/nn/modules/module.py", line 1736, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/home/ferdinand/miniforge3/envs/factr/lib/python3.9/site-packages/torch/nn/modules/module.py", line 1747, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/home/ferdinand/activeinference/factr/world_model/models/rssm.py", line 86, in forward
+    eps = torch.randn_like(post_std)
+KeyboardInterrupt

@@ -38,9 +38,9 @@ def default_transform():
     )
 
 
-def load_vit(model_name="SOUP_1M_DH", device=torch.device("cuda:0")):
+def load_vit(model_name="SOUP_1M_DH", device=torch.device("cuda:0"), in_chans=3):
     _check_and_download()
-    model = vit.vit_base_patch16(img_size=224, use_cls=True, drop_path_rate=0.0)
+    model = vit.vit_base_patch16(img_size=224, use_cls=True, drop_path_rate=0.0, in_chans=in_chans)
     restore_path = os.path.join(FEATURE_PATH, f"vit_base/{model_name}.pth")
     model = vit.load_vit(model, restore_path)
     return default_transform(), model.to(device)

@@ -9,17 +9,20 @@ import os
 import signal
 import sys
 
-import wandb
 import yaml
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import OmegaConf
 
+import wandb
 from factr.transforms import get_transform_by_name
 
 OmegaConf.register_new_resolver("env", lambda x: os.environ[x])
 OmegaConf.register_new_resolver("base", lambda: os.path.dirname(os.path.abspath(__file__)))
 OmegaConf.register_new_resolver("transform", lambda name: get_transform_by_name(name))
-OmegaConf.register_new_resolver("mult", lambda x, y: int(x) * int(y))
+try:
+    OmegaConf.register_new_resolver("mult", lambda x, y: int(x) * int(y))
+except ValueError:
+    pass
 OmegaConf.register_new_resolver("add", lambda x, y: int(x) + int(y))
 OmegaConf.register_new_resolver("index", lambda arr, idx: arr[idx])
 OmegaConf.register_new_resolver("len", lambda arr: len(arr))
@@ -63,7 +66,7 @@ def create_wandb_run(wandb_cfg, job_config, run_id=None):
         override_dirname = HydraConfig().get().job.override_dirname
         name = f"{wandb_cfg.sweep_name_prefix}-{job_id}"
         notes = f"{override_dirname}"
-    except Exception:
+    except:
         name, notes = wandb_cfg.name, None
 
     wandb_run = wandb.init(

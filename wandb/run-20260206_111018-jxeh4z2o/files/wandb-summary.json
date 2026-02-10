@@ -1,0 +1,1 @@
+{"train/rssm_recon":0.20814643800258636,"train/rssm_kl":4.875219821929932,"train/rssm_kl_raw":4.875219821929932,"_timestamp":1.7703438812266233e+09,"_wandb":{"runtime":66},"_runtime":66.06229516,"_step":400,"train/loss":2.645756244659424}

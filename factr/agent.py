@@ -7,9 +7,9 @@
 import copy
 
 import torch
-import wandb
 from torch import nn
 
+import wandb
 from factr import misc
 from factr.utils import downsample_1d, downsample_2d, gaussian_1d_smoothing, gaussian_2d_smoothing, get_scale
 
@@ -101,7 +101,7 @@ class BaseAgent(nn.Module):
             end=self.curriculum.stop_scale,
             cur_step=misc.GLOBAL_STEP,
             max_step=self.curriculum.max_step,
-            ratio=self.curriculum.ratio,
+            ratio=self.curriculum.get("ratio", 2 / 3),
         )
         if wandb.run is not None:
             wandb.log({"train/scale": scale}, step=misc.GLOBAL_STEP)
@@ -127,6 +127,11 @@ class BaseAgent(nn.Module):
                 tokens = downsample_1d(tokens.squeeze(1), scale).unsqueeze(1)
             else:
                 raise ValueError(f"Unknown operator: {self.curriculum.operator}")
+
+        # print("\n--- Dropout Check ---")
+        # print("Module:", self._img_dropout)
+        # print("Training Mode:", self._img_dropout.training)
+        # print("---------------------\n")
         tokens = self._img_dropout(tokens)
 
         if self._obs_strat == "add_token":

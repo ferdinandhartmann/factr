@@ -7,25 +7,39 @@ defaults:
   - features: vit_base
   - _self_
 
+# --- Agent class ---
 _target_: factr.models.action_transformer.TransformerAgent
+
+# --- Observation / action settings ---
 odim: ${task.obs_dim}
 n_cams: ${task.n_cams}
-use_obs: add_token
-dropout: 0.1 #Inside Transformer layers (self-attn & FFN)
-img_dropout: 0.1 #0 #On the visual embeddings before fusion
+use_obs: add_token          # torque/force is appended as a token (at the end)
+dropout: 0.1
+img_dropout: 0
 ac_dim: ${task.ac_dim}
 ac_chunk: ${ac_chunk}
 imgs_per_cam: ${img_chunk}
 share_cam_features: False
 early_fusion: True
 feat_norm: layer_norm
-token_dim: 512 #512 #256
+token_dim: 512
 curriculum: ${curriculum}
+
+# --- CVAE settings (final) ---
+d_z: 32                     # latent dimension
+beta: 1.0                   # KL weight (start with 0.1 if unstable)
+free_bits: null             # e.g., 0.5 if you want KL stabilization
+cls_index: 0                # vision CLS token index
+force_index: -1             # force/torque token is the last token
+posterior_kwargs: {}        # kept for future extensions
+gt_only: False
+
+# --- Transformer backbone ---
 transformer_kwargs:
   d_model: ${agent.token_dim}
   dropout: ${agent.dropout}
-  nhead: 8 # has token_dim/nhead number of dimesnions per head
-  num_encoder_layers: 4 #6
+  nhead: 8
+  num_encoder_layers: 4
   num_decoder_layers: 6
-  dim_feedforward: 2048 #2048 #1536
-  activation: gelu #relu
+  dim_feedforward: 3200
+  activation: relu

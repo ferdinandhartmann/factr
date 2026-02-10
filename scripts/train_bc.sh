@@ -1,35 +1,14 @@
 
 #!/bin/bash
 
-# cuda id
-CUDA_DEVICE_ID=0
+CUDA_DEVICE_ID=0,1,2
 
-# task configuration, setup under cfg/task/
 task_config=single_franka
+buffer_path=$(pwd)/process_data/processed_data/1217_mix/buf.pkl
+feature_path=$(pwd)/visual_features/vit_base/SOUP_1M_DH.pth
+wandb_entity=a-otake2415-keio-university-global-page-org
 
-# # path to dataset buffer
-buffer_path=/home/ferdinand/activeinference/factr/process_data/training_data/bld_stiff_52_filt/buf.pkl
+CUDA_VISIBLE_DEVICES=$CUDA_DEVICE_ID 
 
-# # curriculum parameters
-# space_config=pixel # pixel, latent
-# scheduler_config=linear # no, const, linear, step, exp, cos
-# operator_config=blur  # blur, downsample 
-# start_scale=5
-# stop_scale=0
+python -m factr.train_bc_policy exp_name=baseline_la7_ac100_ agent.features.restore_path=$feature_path buffer_path=$buffer_path task=$task_config wandb.entity=$wandb_entity ac_chunk=100 curriculum.start_scale=7 curriculum.space=latent agent.token_dim=512 +agent.factr_baseline=True
 
-# pretrained visual features
-feature_path=/home/ferdinand/activeinference/factr/scripts/visual_features/vit_base/SOUP_1M_DH.pth
-
-# wandb
-wandb_entity=ferdinand-hartmann-keio-university-org
-
-CUDA_VISIBLE_DEVICES=$CUDA_DEVICE_ID python /home/ferdinand/activeinference/factr/factr/train_bc_policy.py \
-agent.features.restore_path=$feature_path \
-buffer_path=$buffer_path \
-task=$task_config \
-# curriculum.space=$space_config \
-# curriculum.operator=$operator_config \
-# curriculum.scheduler=$scheduler_config \
-# curriculum.start_scale=$start_scale \
-# curriculum.stop_scale=$stop_scale \
-wandb.entity=$wandb_entity

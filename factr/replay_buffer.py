@@ -9,21 +9,40 @@ import pickle as pkl
 import random
 import shutil
 
+import cv2  # ★★★ 必須: OpenCVをインポート ★★★
 import numpy as np
 import torch
 import tqdm
 from robobuf import ReplayBuffer as RB
-from tensorflow.io import gfile
 from torch.utils.data import Dataset, IterableDataset
 
 
 # helper functions
 def _img_to_tensor(x):
-    return torch.from_numpy(x.copy()).permute((0, 3, 1, 2)).float() / 255
+    # リストなら配列に
+    if isinstance(x, list):
+        x = np.array(x)
+
+    # 既に Tensor なら処理して返す
+    if isinstance(x, torch.Tensor):
+        return x.permute((0, 3, 1, 2)).float() / 255.0
+
+    # NumPy配列であることを保証
+    if not isinstance(x, np.ndarray):
+        x = np.array(x)
+
+    # ★★★ 修正: PyTorchに渡す前に、NumPy側で float32 にして正規化も済ませる ★★★
+    # これにより "dtypeが推論できない" 系のエラーを全て回避します
+    x = x.astype(np.float32) / 255.0
+
+    # メモリ配置を整える (エラー回避のおまじない)
+    x = np.ascontiguousarray(x)
+
+    # Tensor化して軸を入れ替える
+    return torch.from_numpy(x).permute((0, 3, 1, 2))
 
 
-def _to_tensor(x):
-    return torch.from_numpy(x).float()
+_to_tensor = lambda x: torch.from_numpy(x).float()
 
 
 # cache loading from the buffer list to half memory overhead
@@ -36,19 +55,44 @@ def _cached_load(path):
     if path in buf_cache:
         return buf_cache[path]
 
-    with gfile.GFile(path, "rb") as f:
+    with open(path, "rb") as f:
         buf = RB.load_traj_list(pkl.load(f))
     buf_cache[path] = buf
     return buf
 
 
+# ★★★★★ ここが修正の核心！ ★★★★★
 def _get_imgs(t, cam_idx, past_frames):
     imgs = []
-    while len(imgs) < past_frames + 1:
-        imgs.append(t.obs.image(cam_idx)[None])
+    # 現在のステップ t から past_frames 分だけ過去に遡る
+    curr_t = t
 
-        if t.prev is not None:
-            t = t.prev
+    for _ in range(past_frames + 1):
+        img_data = curr_t.obs.image(cam_idx)
+
+        # 1. バイト列 (JPEG等) ならデコード
+        if isinstance(img_data, bytes):
+            nparr = np.frombuffer(img_data, np.uint8)
+            img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)  # BGR
+            if img is None:
+                raise ValueError("Failed to decode image from bytes")
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)  # RGB
+
+        # 2. 既に NumPy配列 ならそのまま
+        elif isinstance(img_data, np.ndarray):
+            img = img_data
+
+        else:
+            raise TypeError(f"Unexpected image type: {type(img_data)}")
+
+        # リストに追加 (1, H, W, C)
+        imgs.append(img[None])
+
+        if curr_t.prev is not None:
+            curr_t = curr_t.prev
+
+    # 時間方向に結合: (T, H, W, C)
+    # ★★★ 修正: 配列を1つだけ返す (カンマ , arr を消す) ★★★
     return np.concatenate(imgs, axis=0)
 
 
@@ -56,15 +100,7 @@ BUF_SHUFFLE_RNG = 3904767649
 
 
 class ReplayBuffer(Dataset):
-    def __init__(
-        self,
-        buffer_path,
-        transform=None,
-        n_train_demos=200,
-        mode="train",
-        ac_chunk=1,
-        use_indices=None,
-    ):
+    def __init__(self, buffer_path, transform=None, n_train_demos=200, mode="train", ac_chunk=1):
         assert mode in ("train", "test"), "Mode must be train/test"
         buffer_data = self._load_buffer(buffer_path)
         assert len(buffer_data) >= n_train_demos, "Not enough demos!"
@@ -77,7 +113,6 @@ class ReplayBuffer(Dataset):
         buffer_data = buffer_data[:n_train_demos] if mode == "train" else buffer_data[n_train_demos:]
 
         self.transform = transform
-        self.use_indices = np.asarray(use_indices, dtype=np.int64) if use_indices is not None else None
         self.s_a_mask = []
         for traj in tqdm.tqdm(buffer_data):
             imgs, obs, acs = traj["images"], traj["observations"], traj["actions"]
@@ -91,9 +126,6 @@ class ReplayBuffer(Dataset):
                 i_t = {f"cam{c}": imgs[t, c] for c in range(imgs.shape[1])}
                 loss_mask = np.ones((ac_chunk,), dtype=np.float32)
                 o_t, a_t = obs[t], acs[t : t + ac_chunk]
-                if self.use_indices is not None:
-                    a_t = a_t[:, self.use_indices]
-                    o_t = o_t[self.use_indices]
                 self.s_a_mask.append(((i_t, o_t), a_t, loss_mask))
 
     def _load_buffer(self, buffer_path):
@@ -115,7 +147,6 @@ class ReplayBuffer(Dataset):
         o_t, a_t = _to_tensor(o_t), _to_tensor(a_t)
         loss_mask = _to_tensor(loss_mask)[:, None].repeat((1, a_t.shape[-1]))
         assert loss_mask.shape[0] == a_t.shape[0], "a_t and mask shape must be ac_chunk!"
-
         return (i_t, o_t), a_t, loss_mask
 
 
@@ -149,7 +180,6 @@ class RobobufReplayBuffer(ReplayBuffer):
         past_frames=0,
         ac_dim=7,
         shuffle=True,
-        use_indices=None,
     ):
         assert mode in ("train", "test"), "Mode must be train/test"
         buf = _cached_load(buffer_path)
@@ -172,11 +202,12 @@ class RobobufReplayBuffer(ReplayBuffer):
             rng.shuffle(index_list)
 
         self.transform = transform
-        self.use_indices = np.asarray(use_indices, dtype=np.int64) if use_indices is not None else None
         self.s_a_mask = []
 
         self.cam_indexes = cam_indexes = list(cam_indexes)
         self.past_frames = past_frames
+        self.ac_dim = ac_dim  # 保存
+
         print(f"Building {mode} buffer with cam_indexes={cam_indexes}")
 
         for idx in tqdm.tqdm(index_list):
@@ -198,8 +229,10 @@ class RobobufReplayBuffer(ReplayBuffer):
 
             a_t = np.concatenate(chunked_actions, 0).astype(np.float32)
 
-            if self.use_indices is not None:
-                a_t = a_t[..., self.use_indices]
+            if a_t.shape[-1] != ac_dim and a_t.shape[-1] == 7:
+                use_indices = [0, 1, 2, 3, 4, 5, 6]  # ← 使用したい3次元のインデックス (0始まり)
+                a_t = a_t[..., use_indices]
+
             assert ac_dim == a_t.shape[-1]
 
             loss_mask = np.array(loss_mask, dtype=np.float32)
@@ -210,16 +243,29 @@ class RobobufReplayBuffer(ReplayBuffer):
 
         i_t, o_t = dict(), step.obs.state
         for idx, cam_idx in enumerate(self.cam_indexes):
+            # ★ 修正された _get_imgs を使う (これでデコードされる)
             i_c = _get_imgs(step, cam_idx, self.past_frames)
+
             i_c = _img_to_tensor(i_c)
             if self.transform is not None:
                 i_c = self.transform(i_c)
 
             i_t[f"cam{idx}"] = i_c
 
-        if self.use_indices is not None:
-            o_t = o_t[self.use_indices]
+        label_idx = 0
+        if o_t.shape[-1] == 11:
+            raw_label = o_t[7:]  # 後ろ4つ
+            o_t = o_t[:7]  # 前7つ (トルク)
+            label_idx = np.argmax(raw_label)
+
         o_t, a_t = _to_tensor(o_t), _to_tensor(a_t)
+        label_tensor = torch.tensor(label_idx, dtype=torch.long)
+
         loss_mask = _to_tensor(loss_mask)[:, None].repeat((1, a_t.shape[-1]))
         assert loss_mask.shape[0] == a_t.shape[0], "a_t and mask shape must be ac_chunk!"
-        return (i_t, o_t), a_t, loss_mask
+
+        # 7次元を使うならスライス不要 (ac_dim=7)
+        if self.ac_dim < a_t.shape[-1]:
+            a_t = a_t[:, : self.ac_dim]
+
+        return (i_t, o_t), a_t, loss_mask, label_tensor

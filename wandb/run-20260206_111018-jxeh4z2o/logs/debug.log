@@ -1,0 +1,23 @@
+2026-02-06 11:10:18,316 INFO    MainThread:2971232 [wandb_setup.py:_flush():81] Current SDK version is 0.22.2
+2026-02-06 11:10:18,316 INFO    MainThread:2971232 [wandb_setup.py:_flush():81] Configure stats pid to 2971232
+2026-02-06 11:10:18,316 INFO    MainThread:2971232 [wandb_setup.py:_flush():81] Loading settings from /home/ferdinand/.config/wandb/settings
+2026-02-06 11:10:18,316 INFO    MainThread:2971232 [wandb_setup.py:_flush():81] Loading settings from /home/ferdinand/activeinference/factr/wandb/settings
+2026-02-06 11:10:18,316 INFO    MainThread:2971232 [wandb_setup.py:_flush():81] Loading settings from environment variables
+2026-02-06 11:10:18,316 INFO    MainThread:2971232 [wandb_init.py:setup_run_log_directory():705] Logging user logs to /home/ferdinand/activeinference/factr/wandb/run-20260206_111018-jxeh4z2o/logs/debug.log
+2026-02-06 11:10:18,316 INFO    MainThread:2971232 [wandb_init.py:setup_run_log_directory():706] Logging internal logs to /home/ferdinand/activeinference/factr/wandb/run-20260206_111018-jxeh4z2o/logs/debug-internal.log
+2026-02-06 11:10:18,317 INFO    MainThread:2971232 [wandb_init.py:init():832] calling init triggers
+2026-02-06 11:10:18,317 INFO    MainThread:2971232 [wandb_init.py:init():837] wandb.init called with sweep_config: {}
+config: {'data': {'buffer_path': '/home/ferdinand/activeinference/factr/process_data/training_data/fourgoals_1_newnorm_train/buf.pkl', 'stats_path': '/home/ferdinand/activeinference/factr/process_data/training_data/fourgoals_1_newnorm_train/rollout_config.yaml', 'seq_len': 45, 'obs_keys': ['state'], 'include_goals': False, 'normalize_obs': False, 'normalize_action': False}, 'model': {'stoch_dim': 64, 'deter_dim': 128, 'hidden_dim': 128, 'obs_window': 1, 'min_std': 0.01, 'use_vae': False, 'vae_latent_dim': 8, 'vae_hidden_dim': 64, 'vae_min_std': 0.1}, 'logging': {'enabled': True, 'project': 'world-model-test', 'entity': None, 'name': 'rssm_newnorm_train_6', 'tags': [], 'log_every': 200}, 'train': {'seed': 7, 'max_steps': 10000, 'batch_size': 128, 'lr': 0.0003, 'kl_weight': 0.5, 'kl_warmup_steps': 300, 'kl_balance': True, 'kl_balance_scale': 0.8, 'rssm_sample': True, 'free_nats': 0.05, 'grad_clip': 100.0, 'device': 'cuda', 'num_workers': 12, 'pin_memory': True, 'save_every': 1000, 'keep_last': 1, 'vae_recon_weight': 1.0, 'vae_kl_weight': 0.01, 'print_every': 100, 'print_updates': True}, '_wandb': {}}
+2026-02-06 11:10:18,317 INFO    MainThread:2971232 [wandb_init.py:init():880] starting backend
+2026-02-06 11:10:19,395 INFO    MainThread:2971232 [wandb_init.py:init():883] sending inform_init request
+2026-02-06 11:10:19,426 INFO    MainThread:2971232 [wandb_init.py:init():891] backend started and connected
+2026-02-06 11:10:19,432 INFO    MainThread:2971232 [wandb_init.py:init():961] updated telemetry
+2026-02-06 11:10:19,461 INFO    MainThread:2971232 [wandb_init.py:init():985] communicating run to backend with 90.0 second timeout
+2026-02-06 11:10:20,318 INFO    MainThread:2971232 [wandb_init.py:init():1036] starting run threads in backend
+2026-02-06 11:10:22,638 INFO    MainThread:2971232 [wandb_run.py:_console_start():2509] atexit reg
+2026-02-06 11:10:22,638 INFO    MainThread:2971232 [wandb_run.py:_redirect():2357] redirect: wrap_raw
+2026-02-06 11:10:22,638 INFO    MainThread:2971232 [wandb_run.py:_redirect():2426] Wrapping output streams.
+2026-02-06 11:10:22,638 INFO    MainThread:2971232 [wandb_run.py:_redirect():2449] Redirects installed.
+2026-02-06 11:10:22,645 INFO    MainThread:2971232 [wandb_init.py:init():1076] run started, returning control to user process
+2026-02-06 11:11:26,382 INFO    wandb-AsyncioManager-main:2971232 [service_client.py:_forward_responses():80] Reached EOF.
+2026-02-06 11:11:26,383 INFO    wandb-AsyncioManager-main:2971232 [mailbox.py:close():137] Closing mailbox, abandoning 1 handles.

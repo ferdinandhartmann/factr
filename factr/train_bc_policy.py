@@ -33,7 +33,7 @@ def torch_fix_seed(seed: int = 42) -> None:
     pl.seed_everything(seed, workers=True)
     torch.set_float32_matmul_precision("medium")
     torch.backends.cudnn.benchmark = False
-    torch.backends.cudnn.deterministic = True  # impacts speed but ensures reproducibility
+    torch.backends.cudnn.deterministic = True
 
 
 @hydra.main(config_path="cfg", config_name="train_bc.yaml")
@@ -75,15 +75,43 @@ def train_bc(cfg: DictConfig):
         )
 
         # restore/save the model as required
-        if resume_model is not None:
-            misc.GLOBAL_STEP = trainer.load_checkpoint(resume_model)
-        elif misc.GLOBAL_STEP == 0:
-            trainer.save_checkpoint(misc.GLOBAL_STEP)
-        assert misc.GLOBAL_STEP >= 0, "GLOBAL_STEP not loaded correctly!"
+        # 1. 自動ロードを無効化
+        restore_path = cfg.agent.features.restore_path
+        cfg.agent.features.restore_path = ""
+        print(f"Disabled auto-loading. Manual load path: {restore_path}")
 
-        # register checkpoint handler and enter train loop
-        misc.set_checkpoint_handler(trainer)
-        print(f"Starting at Global Step {misc.GLOBAL_STEP}")
+        # 2. Agent初期化
+        agent = hydra.utils.instantiate(cfg.agent)
+
+        # 3. シンプルに手動ロード（ここを書き換えてください！）
+        # 3. 手動で重みをロード
+        if restore_path and os.path.exists(restore_path):
+            print(f"Manually loading features from: {restore_path}")
+            checkpoint = torch.load(restore_path, map_location="cpu")  # 変数名をcheckpointに変更
+
+            # === 【追加修正】 "model" という箱に入っている場合、中身を取り出す ===
+            if "model" in checkpoint:
+                print("Found 'model' key. Unwrapping...")
+                state_dict = checkpoint["model"]
+            else:
+                state_dict = checkpoint
+            # =============================================================
+
+            # 名前の変換処理（ここは前回と同じ）
+            new_state_dict = {}
+            for k, v in state_dict.items():
+                new_key = f"visual_features.0.{k}"
+                new_state_dict[new_key] = v
+
+            try:
+                # new_state_dict をロード
+                msg = agent.load_state_dict(new_state_dict, strict=False)
+                # print(f"Load result: {msg}")
+
+                # 【確認】今回は missing_keys が激減するはずです
+                # もし visual_features 関連が消えていれば成功です
+            except RuntimeError as e:
+                print(f"Load failed: {e}")
 
         trainer.set_train()
         train_iterator = iter(task.train_loader)
@@ -125,7 +153,7 @@ def train_bc(cfg: DictConfig):
                 trainer.set_train()
 
             if misc.GLOBAL_STEP >= cfg.max_iterations:
-                trainer.save_checkpoint(misc.GLOBAL_STEP, onlysave_latest=True)
+                trainer.save_checkpoint(misc.GLOBAL_STEP)
                 return
             elif misc.GLOBAL_STEP % cfg.save_freq == 0:
                 trainer.save_checkpoint(misc.GLOBAL_STEP)

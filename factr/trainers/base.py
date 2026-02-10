@@ -4,13 +4,13 @@
 # LICENSE file in the root directory of this source tree.
 
 
-import os
 from abc import ABC, abstractmethod
 
 import numpy as np
 import torch
 import wandb
 from torch.nn.parallel import DistributedDataParallel as DDP
+import os
 
 TRAIN_LOG_FREQ, EVAL_LOG_FREQ = 100, 1
 
@@ -48,9 +48,7 @@ class BaseTrainer(ABC):
                 # no_weight_decay_list=model.no_weight_decay(),
                 layer_decay=optim_builder.optimizer_kwargs.layer_decay,
             )
-            self.optim = torch.optim.AdamW(
-                param_groups, lr=optim_builder.optimizer_kwargs.lr, betas=optim_builder.optimizer_kwargs.betas
-            )
+            self.optim = torch.optim.AdamW(param_groups, lr=optim_builder.optimizer_kwargs.lr)
         else:
             self.optim = optim_builder(self.model.parameters())
 
@@ -74,7 +72,7 @@ class BaseTrainer(ABC):
             return
         self.schedule.step()
 
-    def save_checkpoint(self, global_step, top_k=2, onlysave_latest=False):
+    def save_checkpoint(self, global_step, top_k=2):
         model = self.model
         model_weights = model.module.state_dict() if isinstance(model, DDP) else model.state_dict()
         schedule_state = dict() if self.schedule is None else self.schedule.state_dict()
@@ -85,18 +83,15 @@ class BaseTrainer(ABC):
             global_step=global_step,
         )
 
-        if not onlysave_latest:
-            # Save current checkpoint
-            current_ckpt = f"ckpt_{global_step:06d}.ckpt"
-            torch.save(save_dict, current_ckpt)
+        # Save current checkpoint
+        current_ckpt = f"ckpt_{global_step:06d}.ckpt"
+        torch.save(save_dict, current_ckpt)
 
-            # Remove old checkpoints, keeping only the 2 most recent
-            ckpts = sorted([f for f in os.listdir(".") if f.startswith("ckpt_") and f.endswith(".ckpt")])
-            for old_ckpt in ckpts[:-top_k]:  # Keep last x checkpoints
-                os.remove(old_ckpt)
-            torch.save(save_dict, "rollout/latest_ckpt.ckpt")
-        else:
-            torch.save(save_dict, "rollout/latest_ckpt.ckpt")
+        # Remove old checkpoints, keeping only the 2 most recent
+        ckpts = sorted([f for f in os.listdir(".") if f.startswith("ckpt_") and f.endswith(".ckpt")])
+        for old_ckpt in ckpts[:-top_k]:  # Keep last 2 checkpoints
+            os.remove(old_ckpt)
+        torch.save(save_dict, f"rollout/latest_ckpt.ckpt")
 
     def load_checkpoint(self, load_path):
         load_dict = torch.load(load_path, weights_only=False)
@@ -143,9 +138,6 @@ class BaseTrainer(ABC):
 
         if global_step % log_freq == 0 and wandb.run is not None:
             wandb.log({key: tracker.mean}, step=global_step)
-
-    # def set_device(self, device_id):
-    #     self.model = self.model.to(device_id)
 
     def set_device(self, device_id):
         # Move model to device

@@ -1,0 +1,114 @@
+_wandb:
+    value:
+        cli_version: 0.22.2
+        e:
+            3md3e7k5p2infosz0vn5byfppugk1jyj:
+                codePath: world_model/train.py
+                codePathLocal: world_model/train.py
+                cpu_count: 14
+                cpu_count_logical: 28
+                cudaVersion: "12.2"
+                disk:
+                    /:
+                        total: "1966272643072"
+                        used: "1805236363264"
+                email: ferdinand.hartmann@web.de
+                executable: /home/ferdinand/miniforge3/envs/factr/bin/python
+                git:
+                    commit: 1f95b066a05894954b2af21c151d11c1c5390112
+                    remote: https://github.com/ferdinandhartmann/factr.git
+                gpu: NVIDIA RTX A6000
+                gpu_count: 3
+                gpu_nvidia:
+                    - architecture: Ampere
+                      cudaCores: 10752
+                      memoryTotal: "51527024640"
+                      name: NVIDIA RTX A6000
+                      uuid: GPU-fcefa940-f78e-b2fd-0003-3aef5cd720e8
+                    - architecture: Ampere
+                      cudaCores: 10752
+                      memoryTotal: "51527024640"
+                      name: NVIDIA RTX A6000
+                      uuid: GPU-cc8eec58-47a9-b007-b360-692533b7b0fe
+                    - architecture: Ampere
+                      cudaCores: 10752
+                      memoryTotal: "51527024640"
+                      name: NVIDIA RTX A6000
+                      uuid: GPU-012c09b5-5b4e-7411-4508-43d6940fd7b9
+                host: rtx-a6000
+                memory:
+                    total: "134739910656"
+                os: Linux-5.4.0-216-generic-x86_64-with-glibc2.31
+                program: /home/ferdinand/activeinference/factr/world_model/train.py
+                python: CPython 3.9.0
+                root: /home/ferdinand/activeinference/factr
+                startedAt: "2026-02-06T02:10:18.313315Z"
+                writerId: 3md3e7k5p2infosz0vn5byfppugk1jyj
+        m: []
+        python_version: 3.9.0
+        t:
+            "1":
+                - 1
+                - 50
+            "2":
+                - 1
+                - 50
+            "3":
+                - 13
+                - 16
+                - 61
+            "4": 3.9.0
+            "5": 0.22.2
+            "12": 0.22.2
+            "13": linux-x86_64
+data:
+    value:
+        buffer_path: /home/ferdinand/activeinference/factr/process_data/training_data/fourgoals_1_newnorm_train/buf.pkl
+        include_goals: false
+        normalize_action: false
+        normalize_obs: false
+        obs_keys:
+            - state
+        seq_len: 45
+        stats_path: /home/ferdinand/activeinference/factr/process_data/training_data/fourgoals_1_newnorm_train/rollout_config.yaml
+logging:
+    value:
+        enabled: true
+        entity: null
+        log_every: 200
+        name: rssm_newnorm_train_6
+        project: world-model-test
+        tags: []
+model:
+    value:
+        deter_dim: 128
+        hidden_dim: 128
+        min_std: 0.01
+        obs_window: 1
+        stoch_dim: 64
+        use_vae: false
+        vae_hidden_dim: 64
+        vae_latent_dim: 8
+        vae_min_std: 0.1
+train:
+    value:
+        batch_size: 128
+        device: cuda
+        free_nats: 0.05
+        grad_clip: 100
+        keep_last: 1
+        kl_balance: true
+        kl_balance_scale: 0.8
+        kl_warmup_steps: 300
+        kl_weight: 0.5
+        lr: 0.0003
+        max_steps: 10000
+        num_workers: 12
+        pin_memory: true
+        print_every: 100
+        print_updates: true
+        rssm_sample: true
+        save_every: 1000
+        seed: 7
+        vae_kl_weight: 0.01
+        vae_recon_weight: 1

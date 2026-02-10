@@ -12,12 +12,11 @@ optim_builder:
     lr: ${lr}
     weight_decay: 0.05
     layer_decay: 0.75
-    betas: [0.9, 0.95] # added beacause it sais in the paper
 
 schedule_builder:
   _target_: factr.trainers.utils.schedule_builder
   schedule_type: 'cosine'
   from_diffusers: True
   schedule_kwargs:
-    num_warmup_steps: 500 #250
+    num_warmup_steps: 250
     num_training_steps: ${max_iterations}
