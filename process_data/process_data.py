@@ -398,29 +398,6 @@ def normalize_actions_groupwise(all_actions_for_norm, cfg):
         start, stop = group["indices"]
         used[int(start) : int(stop)] = True
 
-    # Optional impedance stiffness as action (6 dims): keep identity (do NOT normalize).
-    action_cfg = cfg.get("action_config", {})
-    if isinstance(action_cfg, (DictConfig, ListConfig)):
-        action_cfg = OmegaConf.to_container(action_cfg, resolve=True)
-    if isinstance(action_cfg, dict) and "/cartesian_impedance_gains" in action_cfg:
-        stiffness_dim = int(action_cfg.get("/cartesian_impedance_gains", 6))
-        if stiffness_dim != 6:
-            raise ValueError(f"Expected /cartesian_impedance_gains dim=6 (stiffness only), got {stiffness_dim}.")
-        gains_start = 9
-        gains_stop = gains_start + stiffness_dim
-        if action_dim < gains_stop:
-            raise ValueError(
-                f"Expected {stiffness_dim}-dim impedance stiffness action at indices [9:{gains_stop}], but action_dim={action_dim}."
-            )
-        stats["groups"].append(
-            {
-                "name": "impedance_stiffness",
-                "type": "identity",
-                "indices": [gains_start, gains_stop],
-            }
-        )
-        used[gains_start:gains_stop] = True
-
     # Anything else beyond known groups: gaussian
     if not np.all(used):
         remaining = np.where(~used)[0]
@@ -440,6 +417,55 @@ def normalize_actions_groupwise(all_actions_for_norm, cfg):
     return stats
 
 
+def _normalize_buffer_name(name, default_name):
+    if name is None:
+        name = default_name
+    name = str(name).strip()
+    if len(name) == 0:
+        name = default_name
+    if name.endswith(".pkl"):
+        name = name[:-4]
+    return name
+
+
+def _parse_split_cfg(cfg):
+    split_cfg = cfg.get("train_test_split", {})
+    if isinstance(split_cfg, (DictConfig, ListConfig)):
+        split_cfg = OmegaConf.to_container(split_cfg, resolve=True)
+    if not isinstance(split_cfg, dict):
+        split_cfg = {}
+
+    enabled = bool(split_cfg.get("enabled", False))
+    train_ratio = float(split_cfg.get("train_ratio", 0.9))
+    seed = int(split_cfg.get("seed", 45))
+    train_buffer_name = _normalize_buffer_name(split_cfg.get("train_buffer_name", "buf_train"), "buf_train")
+    test_buffer_name = _normalize_buffer_name(split_cfg.get("test_buffer_name", "buf_test"), "buf_test")
+
+    return {
+        "enabled": enabled,
+        "train_ratio": train_ratio,
+        "seed": seed,
+        "train_buffer_name": train_buffer_name,
+        "test_buffer_name": test_buffer_name,
+    }
+
+
+def _split_episode_indices(num_episodes, train_ratio, seed):
+    if num_episodes < 2:
+        raise ValueError("Need at least 2 episodes to create train/test buffers.")
+    if not (0.0 < train_ratio < 1.0):
+        raise ValueError(f"train_ratio must be in (0, 1), got {train_ratio}.")
+
+    rng = np.random.default_rng(seed)
+    permuted = rng.permutation(num_episodes)
+    n_train = int(round(num_episodes * train_ratio))
+    n_train = max(1, min(num_episodes - 1, n_train))
+
+    train_indices = np.sort(permuted[:n_train]).tolist()
+    test_indices = np.sort(permuted[n_train:]).tolist()
+    return train_indices, test_indices
+
+
 @hydra.main(version_base=None, config_path="cfg", config_name="default")
 def main(cfg: DictConfig):
     input_path = cfg.input_path
@@ -453,10 +479,15 @@ def main(cfg: DictConfig):
     goal_topics = list(cfg.get("goal_topic", []))
     action_config = dict(cfg.action_config)
     action_topics = list(action_config.keys())
+    stiffness_label_topic = cfg.get("stiffness_label_topic", None)
+    stiffness_label_key = cfg.get("stiffness_label_key", "stiffness")
+    stiffness_norm_thresholds = cfg.get("stiffness_norm_thresholds", [200.0, 1000.0])
+    stiffness_norm_thresholds = sorted([float(v) for v in stiffness_norm_thresholds])
+    split_cfg = _parse_split_cfg(cfg)
 
     assert len(state_obs_topics) > 0, "Require low-dim observation topics"
     # assert len(rgb_obs_topics) > 0, "Require visual observation topics"
-    assert len(action_topics) > 0, "Require visual observation topics"
+    assert len(action_topics) > 0, "Require action topics"
     assert target_downsampling_freq > 0, "Require positive target frequency"
 
     data_folder = Path(input_path)
@@ -466,6 +497,8 @@ def main(cfg: DictConfig):
     # initialize topics
     # all_topics = state_obs_topics + rgb_obs_topics + action_topics
     all_topics = state_obs_topics + action_topics + goal_topics
+    if stiffness_label_topic and stiffness_label_topic not in all_topics:
+        all_topics.append(stiffness_label_topic)
 
     state_topic_specs = {
         "/cartesian_impedance_controller/ee_velocity": {"keys": ["ee_velocity"], "dim": 6, "fallback": "data"},
@@ -520,6 +553,15 @@ def main(cfg: DictConfig):
         name = path.stem  # e.g., "ep_12"
         return int(name.split("_")[1])
 
+    def stiffness_vec_to_class(stiffness_vec):
+        norm = float(np.linalg.norm(np.asarray(stiffness_vec, dtype=float)))
+        if not np.isfinite(norm):
+            return 1
+        for idx, threshold in enumerate(stiffness_norm_thresholds, start=1):
+            if norm < threshold:
+                return idx
+        return len(stiffness_norm_thresholds) + 1
+
     all_episodes = sorted(
         [f for f in data_folder.iterdir() if f.name.startswith("ep_") and f.name.endswith(".pkl")], key=extract_ep_index
     )
@@ -553,16 +595,6 @@ def main(cfg: DictConfig):
 
         # ------------------------------
         traj = {}
-        # num_steps = len(traj_data[action_topics[0]])
-        # Get the length of all data lists used in generate_robobuf
-        all_lengths = []
-        all_lengths.append(len(traj_data[action_topics[0]]))  # Length of actions
-        # all_lengths.append(len(state_arrays[0]))             # Length of states (assuming all state_arrays have the same length after stacking)
-        # for topic in rgb_obs_topics:
-        #     all_lengths.append(len(traj_data[topic]))        # Length of camera images
-        # Use the minimum length to guarantee no index goes out of range
-        num_steps = np.min(all_lengths)
-        traj["num_steps"] = num_steps
 
         # traj['states'] = np.concatenate([np.array(traj_data[topic]) for topic in state_obs_topics], axis=-1)
         # Flatten each dict in state topics into numeric arrays
@@ -630,6 +662,15 @@ def main(cfg: DictConfig):
         if goals_arrays:
             traj["goals"] = np.concatenate(goals_arrays, axis=-1)
 
+        if stiffness_label_topic:
+            stiffness_vectors = [
+                extract_fixed_vector(msg, [stiffness_label_key], dim=6, fallback_key=None)
+                for msg in traj_data[stiffness_label_topic]
+            ]
+            stiffness_vectors = np.stack(stiffness_vectors, axis=0)
+            stiffness_labels = np.asarray([stiffness_vec_to_class(v) for v in stiffness_vectors], dtype=np.int64)
+            traj["stiffness_label"] = stiffness_labels[:, None]
+
         action_list = []
         # for topic in action_topics:
         #     actions = np.array(traj_data[topic])
@@ -638,11 +679,6 @@ def main(cfg: DictConfig):
         # Flatten each action topic into numeric arrays.
         action_topic_specs = {
             "/cartesian_impedance_controller/pose_command": {"keys": ["ee_pose_commanded"], "dim": 9, "fallback": None},
-            "/cartesian_impedance_gains": {
-                "keys": ["stiffness"],
-                "dim": 6,
-                "fallback": None,
-            },
         }
 
         action_list = []
@@ -674,6 +710,19 @@ def main(cfg: DictConfig):
             )
 
         traj["actions"] = np.concatenate(action_list, axis=-1)
+        lengths = [traj["states"].shape[0], traj["actions"].shape[0]]
+        if "goals" in traj:
+            lengths.append(traj["goals"].shape[0])
+        if "stiffness_label" in traj:
+            lengths.append(traj["stiffness_label"].shape[0])
+        num_steps = int(np.min(lengths))
+        traj["num_steps"] = num_steps
+        traj["states"] = traj["states"][:num_steps]
+        traj["actions"] = traj["actions"][:num_steps]
+        if "goals" in traj:
+            traj["goals"] = traj["goals"][:num_steps]
+        if "stiffness_label" in traj:
+            traj["stiffness_label"] = traj["stiffness_label"][:num_steps]
 
         all_states.append(traj["states"])
         all_states_for_norm.append(traj["states"])
@@ -691,11 +740,51 @@ def main(cfg: DictConfig):
     action_norm_stats = normalize_actions_groupwise(all_actions, cfg)
     norm_stats = dict(state=state_norm_stats, action=action_norm_stats)
 
-    # dump data buffer
-    buffer_name = "buf"
-    buffer = generate_robobuf(trajectories)
-    with open(output_dir / f"{buffer_name}.pkl", "wb") as f:
-        pickle.dump(buffer.to_traj_list(), f)
+    split_info = {
+        "enabled": split_cfg["enabled"],
+        "seed": split_cfg["seed"] if split_cfg["enabled"] else None,
+        "train_ratio": split_cfg["train_ratio"] if split_cfg["enabled"] else None,
+        "num_episodes_total": len(trajectories),
+    }
+
+    # dump data buffer(s)
+    if split_cfg["enabled"]:
+        train_indices, test_indices = _split_episode_indices(
+            num_episodes=len(trajectories),
+            train_ratio=split_cfg["train_ratio"],
+            seed=split_cfg["seed"],
+        )
+        train_trajectories = [trajectories[idx] for idx in train_indices]
+        test_trajectories = [trajectories[idx] for idx in test_indices]
+
+        train_buffer = generate_robobuf(train_trajectories)
+        test_buffer = generate_robobuf(test_trajectories)
+
+        train_file = output_dir / f"{split_cfg['train_buffer_name']}.pkl"
+        test_file = output_dir / f"{split_cfg['test_buffer_name']}.pkl"
+        with open(train_file, "wb") as f:
+            pickle.dump(train_buffer.to_traj_list(), f)
+        with open(test_file, "wb") as f:
+            pickle.dump(test_buffer.to_traj_list(), f)
+
+        split_info.update(
+            {
+                "num_episodes_train": len(train_trajectories),
+                "num_episodes_test": len(test_trajectories),
+                "train_buffer": train_file.name,
+                "test_buffer": test_file.name,
+            }
+        )
+        print(
+            f"Saved split buffers: train={train_file.name} ({len(train_trajectories)} eps), "
+            f"test={test_file.name} ({len(test_trajectories)} eps), seed={split_cfg['seed']}"
+        )
+    else:
+        buffer_name = "buf"
+        buffer = generate_robobuf(trajectories)
+        with open(output_dir / f"{buffer_name}.pkl", "wb") as f:
+            pickle.dump(buffer.to_traj_list(), f)
+        split_info.update({"all_buffer": f"{buffer_name}.pkl"})
 
     # dump rollout config
     obs_config = {
@@ -703,6 +792,13 @@ def main(cfg: DictConfig):
         "goal_topics": goal_topics,
         # 'camera_topics': rgb_obs_topics,
     }
+    if stiffness_label_topic:
+        obs_config["stiffness_label"] = {
+            "topic": stiffness_label_topic,
+            "key": stiffness_label_key,
+            "classes": [1, 2, 3],
+            "norm_thresholds": stiffness_norm_thresholds,
+        }
     processing_config = {
         "downsample": downsample,
         "data_frequency": data_frequency,
@@ -713,6 +809,7 @@ def main(cfg: DictConfig):
         "action_config": action_config,
         "norm_stats": norm_stats,
         "processing_config": processing_config,
+        "split_config": split_info,
     }
 
     with open(output_dir / "rollout_config.yaml", "w") as f:

@@ -1,6 +1,6 @@
 
 input_path: /home/ferdinand/activeinference/factr/process_data/data_to_process/fourgoals_1/data
-output_path: /home/ferdinand/activeinference/factr/process_data/processed_data/fourgoals_1_norm2
+output_path: /home/ferdinand/activeinference/factr/process_data/processed_data/fourgoals_1_act
 
 downsample: False
 data_frequency: 50.0
@@ -29,8 +29,23 @@ wrench_clip: 5.0         # set 0 to disable clipping
 
 
 action_config:
+  # Commanded EE pose: 9D = [x,y,z] + 6D rotation representation
   /cartesian_impedance_controller/pose_command: 9
-  /cartesian_impedance_gains: 6
+
+# Stiffness class extraction for observation:
+# class=1 (low), class=2 (medium), class=3 (high)
+stiffness_label_topic: /cartesian_impedance_gains
+stiffness_label_key: stiffness
+stiffness_norm_thresholds: [200.0, 1000.0]
 
 goal_topic: 
   - /goal
+
+# Optional train/test split at buffer creation time (episode-level random split).
+# When enabled: writes two files in `output_path`, e.g. `buf_train.pkl` and `buf_test.pkl`.
+train_test_split:
+  enabled: true
+  train_ratio: 0.90
+  seed: 45
+  train_buffer_name: buf_train
+  test_buffer_name: buf_test

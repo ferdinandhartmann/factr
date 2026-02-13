@@ -46,12 +46,17 @@ def generate_robobuf(trajectories):
         actions = traj["actions"]
         states = traj["states"]
         goals = traj.get("goals")
+        stiffness_labels = traj.get("stiffness_label")
         for i in range(num_steps):
             obs = {
                 "state": states[i],
             }
             if goals is not None:
                 obs["goals"] = goals[i]
+            if stiffness_labels is not None:
+                label_arr = np.asarray(stiffness_labels[i]).reshape(-1)
+                if label_arr.size > 0:
+                    obs["stiffness_label"] = int(label_arr[0])
             for k, v in traj.items():
                 if k.startswith("enc_cam_"):
                     obs[k] = v[i]
