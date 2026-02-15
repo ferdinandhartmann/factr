@@ -8,10 +8,7 @@ _Carnegie Mellon University_
 
 [Project Page](https://jasonjzliu.com/factr/) | [arXiV](https://arxiv.org/abs/2502.17432) | [FACTR Teleop](https://github.com/RaindragonD/factr_teleop/) | [FACTR Hardware](https://github.com/JasonJZLiu/FACTR_Hardware)
 
-<h1> </h1>
-<img src="assets/main_teaser.jpg" alt="teaser" width="750"/>
 
-<br>
 
 ## Catalog
 - [Environment](#environment)

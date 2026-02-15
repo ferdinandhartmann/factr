@@ -14,6 +14,8 @@ hydra:
   run:
     dir: checkpoints/${exp_name}
 
+checkpoint_dir: ${hydra:runtime.output_dir}
+
 rt: ${hydra:runtime.choices.agent/features}
 
 exp_base_name: fourgoals_1_norm2_1  #Batch, pixel or latent, Seed, lr, max_iteration, 関節の次元数, token_dim, dim_feedforward

@@ -20,8 +20,6 @@ import time
 
 from factr.agent import BaseAgent
 from factr.models.classification import ClassificationHead
-from factr.models.cvae import CVAEModule
-from factr.models.ada_transformer import AdaTransformerDecoder, AdaTransformerDecoderLayer
 from factr import misc
 
 
@@ -221,12 +219,6 @@ class _ACT(nn.Module):
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
 
-    def _get_cls_force_context(self, memory):
-        cls_feat = memory[:, 0, :]
-        force_feat = memory[:, -1, :]
-        combined_feat = torch.stack([cls_feat, force_feat], dim=1)  # (B, 2, 512)
-        return combined_feat
-
     def forward(self, input_tokens, query_enc, z_token=None, target_actions=None, return_weights=False, nhads=None):
         """
         input_tokens: (B, Seq, Dim)
@@ -272,7 +264,7 @@ class CVAEOutputs:
 
 
 class PriorNet(nn.Module):
-    """p(z|c): uses [CLS; FORCE] -> MLP -> (mu, logvar)."""
+    """p(z|c): uses [CLS_FROM_OBS; OBS_SUMMARY] -> MLP -> (mu, logvar)."""
 
     def __init__(self, d_model=512, d_z=32, hdim=512, clamp_logvar=False, logvar_min=-10.0, logvar_max=5.0):
         super().__init__()
@@ -289,8 +281,8 @@ class PriorNet(nn.Module):
         self.logvar = nn.Linear(hdim, d_z)
         nn.init.constant_(self.logvar.bias, -3.0)
 
-    def forward(self, cls_tok, force_tok):
-        u = torch.cat([cls_tok, force_tok], dim=-1)  # (B, 1024)
+    def forward(self, cls_tok, obs_summary_tok):
+        u = torch.cat([cls_tok, obs_summary_tok], dim=-1)  # (B, 1024)
         u = self.ln(u)
         h = F.gelu(self.fc1(u))
         h = F.gelu(self.fc2(h))
@@ -304,7 +296,7 @@ class PriorNet(nn.Module):
 class PosteriorNet(nn.Module):
     """q(z|x,c): encodes [c_tokens(detach), x_tokens(pos)] with Transformer encoder."""
 
-    """c_tokens = full or only [CLS, FORCE] (2 tokens)."""
+    """c_tokens can be full observation-token context."""
 
     def __init__(
         self,
@@ -461,10 +453,16 @@ class TransformerAgent(BaseAgent):
     def ac_dim(self):
         return self._ac_dim
 
-    def _extract_cls_force(self, c_tokens: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        cls_tok = c_tokens[:, self.cls_index]
-        force_tok = c_tokens[:, self.force_index]
-        return cls_tok, force_tok
+    def _extract_cvae_context(self, c_tokens: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        if c_tokens.ndim != 3:
+            raise ValueError(f"Expected c_tokens shape (B,N,D), got {tuple(c_tokens.shape)}")
+
+        # Build CVAE context from all observation tokens, not just a single force token.
+        obs_tokens = c_tokens[:, 1:, :] if c_tokens.shape[1] > 1 else c_tokens
+        cls_tok = obs_tokens.mean(dim=1)
+        obs_summary_tok = obs_tokens.amax(dim=1)
+        c_for_posterior = torch.cat([cls_tok.unsqueeze(1), obs_tokens], dim=1)
+        return cls_tok, obs_summary_tok, c_for_posterior
 
     def forward(self, imgs, obs, ac_flat, mask_flat, class_labels=None, **kwargs):
         """Training forward. Returns scalar loss (recon + beta*KL)."""
@@ -489,17 +487,14 @@ class TransformerAgent(BaseAgent):
         ####################### OTAKE-SANS ADDED CODE #######################
 
         c_tokens = self.tokenize_obs(imgs, obs)  # (B,N,D)
-        cls_tok, force_tok = self._extract_cls_force(c_tokens)  # added
-        mu_p, logvar_p = self.prior(cls_tok, force_tok)
+        cls_tok, obs_summary_tok, c_for_posterior = self._extract_cvae_context(c_tokens)
+        mu_p, logvar_p = self.prior(cls_tok, obs_summary_tok)
 
         # actions -> (B,T,ac_dim)
         B = ac_flat.shape[0]
         actions = ac_flat.view(B, self.ac_chunk, self.ac_dim)
 
-        # posterior uses detached c
-        c_for_posterior = torch.stack([cls_tok, force_tok], dim=1)
-
-        # c_small = torch.stack([cls_tok, force_tok], dim=1)  # (B,2,D)
+        # posterior uses detached context
         mu_q, logvar_q = self.posterior(c_for_posterior.detach(), actions, gt_only=self.gt_only)
 
         z = reparameterize(mu_q, logvar_q)
@@ -533,21 +528,32 @@ class TransformerAgent(BaseAgent):
         }
 
     @torch.no_grad()
-    def get_actions_base(self, imgs, obs, sample: bool = True, num_samples: int = 1):
+    def get_actions_base(self, imgs, obs, sample: bool = True, num_samples: int = 1, class_labels=None, **kwargs):
+        del class_labels, kwargs
         tokens = self.tokenize_obs(imgs, obs)
         action_tokens = self.transformer(tokens, self.ac_query.weight)
 
         return self.ac_proj(action_tokens)
 
     @torch.no_grad()
-    def get_actions_prior(self, imgs, obs, sample: bool = True, num_samples: int = 1, return_weights: bool = False):
+    def get_actions_prior(
+        self,
+        imgs,
+        obs,
+        sample: bool = True,
+        num_samples: int = 1,
+        return_weights: bool = False,
+        class_labels=None,
+        **kwargs,
+    ):
         """複数サンプリング"""
+        del class_labels, kwargs
 
         c_tokens = self.tokenize_obs(imgs, obs)  # memory(B,198,512)
-        cls_tok, force_tok = self._extract_cls_force(c_tokens)
+        cls_tok, obs_summary_tok, _ = self._extract_cvae_context(c_tokens)
         B = c_tokens.shape[0]
 
-        mu_p, logvar_p = self.prior(cls_tok, force_tok)
+        mu_p, logvar_p = self.prior(cls_tok, obs_summary_tok)
 
         if sample:
             z = self._sample_z_parallel(mu_p, logvar_p, num_samples)
@@ -571,7 +577,6 @@ class TransformerAgent(BaseAgent):
             action_tokens = transformer_out
             cross_w = None
 
-        action_tokens = self.transformer(c_tokens_exp, self.ac_query.weight, z_token=z_token)
         actions_flat = self.ac_proj(action_tokens)  # (B*S, Chunk, Dim)
         action_pred = actions_flat.view(B, num_samples, self.ac_chunk, self.ac_dim)
 
@@ -591,7 +596,16 @@ class TransformerAgent(BaseAgent):
         return z
 
     @torch.no_grad()
-    def get_actions_pos(self, imgs, obs, target_action, num_samples: int = 1, sample: bool = True):
+    def get_actions_pos(
+        self,
+        imgs,
+        obs,
+        target_action,
+        num_samples: int = 1,
+        sample: bool = True,
+        class_labels=None,
+        **kwargs,
+    ):
         """
         Posteriorからzをサンプリングし、アクションを再構成する。
         num_samples > 1 の場合、内部でバッチ次元を拡張して並列計算を行う。
@@ -599,12 +613,11 @@ class TransformerAgent(BaseAgent):
         Returns:
             actions_hat: (B, num_samples, Chunk, Dim)
         """
+        del class_labels, kwargs
 
-        c_tokens = self.tokenize_obs(imgs, obs)  # cls_tokはmemoryのcls, force_tokはmemoryのforce
-        cls_tok, force_tok = self._extract_cls_force(c_tokens)
+        c_tokens = self.tokenize_obs(imgs, obs)
+        _, _, c_for_posterior = self._extract_cvae_context(c_tokens)
         B = target_action.shape[0]  # (B, 210)
-
-        c_for_posterior = torch.stack([cls_tok, force_tok], dim=1)
 
         mu_q, logvar_q = self.posterior(c_for_posterior.detach(), target_action, gt_only=self.gt_only)
 
@@ -638,12 +651,15 @@ class TransformerAgent(BaseAgent):
         unc_weighted: bool = False,
         w_start: float = 0.1,
         w_end: float = 0.9,
+        class_labels=None,
+        **kwargs,
     ):
+        del class_labels, kwargs
         c_tokens = self.tokenize_obs(imgs, obs)  # memory(B,198,512)
-        cls_tok, force_tok = self._extract_cls_force(c_tokens)
+        cls_tok, obs_summary_tok, _ = self._extract_cvae_context(c_tokens)
         B = c_tokens.shape[0]
 
-        mu_p, logvar_p = self.prior(cls_tok, force_tok)
+        mu_p, logvar_p = self.prior(cls_tok, obs_summary_tok)
 
         if sample:
             z = self._sample_z_parallel(mu_p, logvar_p, num_samples)

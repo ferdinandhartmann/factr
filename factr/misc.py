@@ -84,16 +84,28 @@ def create_wandb_run(wandb_cfg, job_config, run_id=None):
 
 def init_job(cfg):
     cfg_yaml = OmegaConf.to_yaml(cfg)
-    if os.path.exists("exp_config.yaml"):
-        old_config = yaml.safe_load(open("exp_config.yaml", "r"))
+    run_dir = OmegaConf.select(cfg, "checkpoint_dir", default=None)
+    if run_dir is None:
+        try:
+            run_dir = HydraConfig().get().runtime.output_dir
+        except Exception:
+            run_dir = os.getcwd()
+
+    run_dir = str(run_dir)
+    os.makedirs(run_dir, exist_ok=True)
+    exp_config_path = os.path.join(run_dir, "exp_config.yaml")
+    resume_model_path = os.path.join(run_dir, "rollout", "latest_ckpt.ckpt")
+
+    if os.path.exists(exp_config_path):
+        with open(exp_config_path, "r") as f:
+            old_config = yaml.safe_load(f)
         create_wandb_run(cfg.wandb, old_config["params"], old_config["wandb_id"])
-        resume_model = "rollout/latest_ckpt.ckpt"
-        if not os.path.exists(resume_model):
-            resume_model = None
+        resume_model = resume_model_path if os.path.exists(resume_model_path) else None
     else:
         params = yaml.safe_load(cfg_yaml)
         wandb_id = create_wandb_run(cfg.wandb, params)
         save_dict = dict(wandb_id=wandb_id, params=params)
-        yaml.dump(save_dict, open("exp_config.yaml", "w"))
+        with open(exp_config_path, "w") as f:
+            yaml.dump(save_dict, f)
         resume_model = None
     return resume_model

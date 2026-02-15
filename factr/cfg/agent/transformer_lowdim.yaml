@@ -1,0 +1,18 @@
+_target_: factr.models.lowdim_action_transformer.LowdimStiffnessCVAEAgent
+
+obs_dim: ${task.obs_dim}
+ac_dim: ${task.ac_dim}
+ac_chunk: ${ac_chunk}
+obs_window: ${obs_window}
+
+stiffness_classes: 3
+d_z: 32
+token_dim: 128 #256
+hidden_dim: 256 #512
+beta: 0.01 # 1.0
+free_bits: null
+z_context_mode: cls_all_obs
+encoder_layers: 2
+decoder_layers: 2
+nhead: 8
+dropout: 0.1

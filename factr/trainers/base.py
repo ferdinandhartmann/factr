@@ -5,12 +5,12 @@
 
 
 from abc import ABC, abstractmethod
+from pathlib import Path
 
 import numpy as np
 import torch
 import wandb
 from torch.nn.parallel import DistributedDataParallel as DDP
-import os
 
 TRAIN_LOG_FREQ, EVAL_LOG_FREQ = 100, 1
 
@@ -35,10 +35,16 @@ class RunningMean:
 
 
 class BaseTrainer(ABC):
-    def __init__(self, model, device_id, optim_builder, schedule_builder=None):
+    def __init__(self, model, device_id, optim_builder, schedule_builder=None, checkpoint_dir="."):
         self.model, self.device_id = model, device_id
+        self.checkpoint_dir = Path(checkpoint_dir)
+        self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        self.rollout_dir = self.checkpoint_dir / "rollout"
+        self.rollout_dir.mkdir(parents=True, exist_ok=True)
         self.set_device(device_id)
-        if optim_builder.optimizer_type == "custom_mae_lrd_adamW":
+        optimizer_type = getattr(optim_builder, "optimizer_type", None)
+
+        if optimizer_type == "custom_mae_lrd_adamW":
             from factr.trainers import lrd
 
             """optimizer from mae codebase """
@@ -49,13 +55,31 @@ class BaseTrainer(ABC):
                 layer_decay=optim_builder.optimizer_kwargs.layer_decay,
             )
             self.optim = torch.optim.AdamW(param_groups, lr=optim_builder.optimizer_kwargs.lr)
-        else:
+        elif callable(optim_builder):
             self.optim = optim_builder(self.model.parameters())
+        elif optimizer_type is not None:
+            optim_class = getattr(torch.optim, optimizer_type)
+            optimizer_kwargs = dict(getattr(optim_builder, "optimizer_kwargs", {}))
+            self.optim = optim_class(self.model.parameters(), **optimizer_kwargs)
+        else:
+            raise ValueError("Unsupported optim_builder format.")
+
+        if not self._is_cuda_device(device_id) and hasattr(self.optim, "_cuda_graph_capture_health_check"):
+            # CPU training can fail on some builds that probe CUDA stream capture unconditionally.
+            self.optim._cuda_graph_capture_health_check = lambda: None
 
         self.schedule = None if schedule_builder is None else schedule_builder(self.optim)
         self._trackers = dict()
         self._is_train = True
         self.set_train()
+
+    @staticmethod
+    def _is_cuda_device(device_id):
+        if isinstance(device_id, torch.device):
+            return device_id.type == "cuda"
+        if isinstance(device_id, str):
+            return device_id.startswith("cuda")
+        return isinstance(device_id, int)
 
     @abstractmethod
     def training_step(self, batch_input, global_step):
@@ -84,17 +108,23 @@ class BaseTrainer(ABC):
         )
 
         # Save current checkpoint
-        current_ckpt = f"ckpt_{global_step:06d}.ckpt"
-        torch.save(save_dict, current_ckpt)
+        current_ckpt = self.checkpoint_dir / f"ckpt_{global_step:06d}.ckpt"
+        torch.save(save_dict, str(current_ckpt))
 
         # Remove old checkpoints, keeping only the 2 most recent
-        ckpts = sorted([f for f in os.listdir(".") if f.startswith("ckpt_") and f.endswith(".ckpt")])
+        ckpts = sorted(self.checkpoint_dir.glob("ckpt_*.ckpt"))
         for old_ckpt in ckpts[:-top_k]:  # Keep last 2 checkpoints
-            os.remove(old_ckpt)
-        torch.save(save_dict, f"rollout/latest_ckpt.ckpt")
+            old_ckpt.unlink()
+        torch.save(save_dict, str(self.rollout_dir / "latest_ckpt.ckpt"))
 
     def load_checkpoint(self, load_path):
-        load_dict = torch.load(load_path, weights_only=False)
+        load_path = Path(load_path)
+        if not load_path.is_absolute():
+            candidate = self.checkpoint_dir / load_path
+            if candidate.exists():
+                load_path = candidate
+
+        load_dict = torch.load(str(load_path), weights_only=False)
         model = self.model
         model = model.module if isinstance(model, DDP) else model
         model.load_state_dict(load_dict["model"])

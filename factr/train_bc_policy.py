@@ -36,10 +36,12 @@ def torch_fix_seed(seed: int = 42) -> None:
     torch.backends.cudnn.deterministic = True
 
 
-@hydra.main(config_path="cfg", config_name="train_bc.yaml")
+@hydra.main(version_base=None, config_path="cfg", config_name="train_bc.yaml")
 def train_bc(cfg: DictConfig):
     try:
         resume_model = misc.init_job(cfg)
+        checkpoint_dir = Path(OmegaConf.select(cfg, "checkpoint_dir", default="."))
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
         # # set random seeds for reproducibility
         # torch.manual_seed(cfg.seed)
@@ -47,12 +49,13 @@ def train_bc(cfg: DictConfig):
         torch_fix_seed(cfg.seed)
 
         # save rollout config
-        rollout_dir = Path("rollout")
+        rollout_dir = checkpoint_dir / "rollout"
         if not rollout_dir.exists():
-            rollout_dir.mkdir()
+            rollout_dir.mkdir(parents=True, exist_ok=True)
             with open(rollout_dir / "agent_config.yaml", "w") as f:
                 inference_config = deepcopy(cfg.agent)
-                inference_config.features.restore_path = ""
+                if OmegaConf.select(inference_config, "features.restore_path", default=None) is not None:
+                    inference_config.features.restore_path = ""
                 agent_yaml = OmegaConf.to_yaml(inference_config, resolve=True)
                 f.write(agent_yaml)
             with open(rollout_dir / "exp_config.yaml", "w") as f:
@@ -64,7 +67,19 @@ def train_bc(cfg: DictConfig):
 
         # build agent from hydra configs
         agent = hydra.utils.instantiate(cfg.agent)
-        trainer = hydra.utils.instantiate(cfg.trainer, model=agent, device_id=0)
+        device_id = "cpu"
+        if int(getattr(cfg, "devices", 1)) > 0:
+            try:
+                if torch.cuda.is_available():
+                    _ = torch.zeros(1, device="cuda:0")
+                    device_id = 0
+                else:
+                    print("CUDA not available, falling back to CPU training.")
+            except Exception as exc:
+                print(f"CUDA requested but unavailable ({exc}). Falling back to CPU training.")
+        trainer = hydra.utils.instantiate(
+            cfg.trainer, model=agent, device_id=device_id, checkpoint_dir=str(checkpoint_dir)
+        )
 
         # build task, replay buffer, and dataloader
         task = hydra.utils.instantiate(cfg.task, batch_size=cfg.batch_size, num_workers=cfg.num_workers)
@@ -74,42 +89,23 @@ def train_bc(cfg: DictConfig):
             transforms.get_gpu_transform_by_name(cfg.train_transform) if "gpu" in cfg.train_transform else None
         )
 
-        # restore/save the model as required
-        # 1. 自動ロードを無効化
-        restore_path = cfg.agent.features.restore_path
-        cfg.agent.features.restore_path = ""
-        print(f"Disabled auto-loading. Manual load path: {restore_path}")
-
-        # 2. Agent初期化
-        agent = hydra.utils.instantiate(cfg.agent)
-
-        # 3. シンプルに手動ロード（ここを書き換えてください！）
-        # 3. 手動で重みをロード
+        restore_path = OmegaConf.select(cfg, "agent.features.restore_path", default="")
         if restore_path and os.path.exists(restore_path):
-            print(f"Manually loading features from: {restore_path}")
-            checkpoint = torch.load(restore_path, map_location="cpu")  # 変数名をcheckpointに変更
+            print(f"Manually loading weights from: {restore_path}")
+            checkpoint = torch.load(restore_path, map_location="cpu")
+            state_dict = checkpoint["model"] if isinstance(checkpoint, dict) and "model" in checkpoint else checkpoint
 
-            # === 【追加修正】 "model" という箱に入っている場合、中身を取り出す ===
-            if "model" in checkpoint:
-                print("Found 'model' key. Unwrapping...")
-                state_dict = checkpoint["model"]
-            else:
-                state_dict = checkpoint
-            # =============================================================
-
-            # 名前の変換処理（ここは前回と同じ）
-            new_state_dict = {}
-            for k, v in state_dict.items():
-                new_key = f"visual_features.0.{k}"
-                new_state_dict[new_key] = v
-
+            model_state = state_dict
+            if hasattr(agent, "visual_features"):
+                needs_prefix = len(model_state) > 0 and not any(k.startswith("visual_features.") for k in model_state)
+                if needs_prefix:
+                    model_state = {f"visual_features.0.{k}": v for k, v in model_state.items()}
             try:
-                # new_state_dict をロード
-                msg = agent.load_state_dict(new_state_dict, strict=False)
-                # print(f"Load result: {msg}")
-
-                # 【確認】今回は missing_keys が激減するはずです
-                # もし visual_features 関連が消えていれば成功です
+                load_msg = agent.load_state_dict(model_state, strict=False)
+                print(
+                    f"Manual load finished. Missing={len(load_msg.missing_keys)} "
+                    f"Unexpected={len(load_msg.unexpected_keys)}"
+                )
             except RuntimeError as e:
                 print(f"Load failed: {e}")
 
@@ -128,10 +124,16 @@ def train_bc(cfg: DictConfig):
 
             # handle the image transform on GPU if specified
             if gpu_transform is not None:
-                (imgs, obs), actions, mask = batch
-                imgs = {k: v.to(trainer.device_id) for k, v in imgs.items()}
-                imgs = {k: gpu_transform(v) for k, v in imgs.items()}
-                batch = ((imgs, obs), actions, mask)
+                if len(batch) == 4:
+                    (imgs, obs), actions, mask, labels = batch
+                    imgs = {k: v.to(trainer.device_id) for k, v in imgs.items()}
+                    imgs = {k: gpu_transform(v) for k, v in imgs.items()}
+                    batch = ((imgs, obs), actions, mask, labels)
+                else:
+                    (imgs, obs), actions, mask = batch
+                    imgs = {k: v.to(trainer.device_id) for k, v in imgs.items()}
+                    imgs = {k: gpu_transform(v) for k, v in imgs.items()}
+                    batch = ((imgs, obs), actions, mask)
 
             trainer.optim.zero_grad()
             loss = trainer.training_step(batch, misc.GLOBAL_STEP)

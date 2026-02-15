@@ -1,14 +1,18 @@
 
 #!/bin/bash
+set -euo pipefail
 
-CUDA_DEVICE_ID=0
+CUDA_DEVICE_ID="${CUDA_DEVICE_ID:-0}"
+task_config="${TASK_CONFIG:-single_franka_lowdim}"
+buffer_path="${BUFFER_PATH:-/home/ferdinand/activeinference/factr/process_data/processed_data/fourgoals_1_act/buf_train.pkl}"
+test_buffer_path="${TEST_BUFFER_PATH:-/home/ferdinand/activeinference/factr/process_data/processed_data/fourgoals_1_act/buf_test.pkl}"
+wandb_entity="${WANDB_ENTITY:-ferdinand-hartmann-keio-university}"
+config_name="${CONFIG_NAME:-train_bc_lowdim}"
 
-task_config=single_franka
-buffer_path=/home/ferdinand/activeinference/factr/process_data/training_data/fourgoals_1_norm2/buf.pkl
-feature_path=/home/ferdinand/activeinference/factr/scripts/visual_features/vit_base/SOUP_1M_DH.pth
-wandb_entity=ferdinand-hartmann-keio-university-org
-
-CUDA_VISIBLE_DEVICES=$CUDA_DEVICE_ID 
-
-python -m factr.train_bc_policy exp_name=fourgoals_1_norm2_1 agent.features.restore_path=$feature_path buffer_path=$buffer_path task=$task_config wandb.entity=$wandb_entity
-
+CUDA_VISIBLE_DEVICES="$CUDA_DEVICE_ID" python -m factr.train_bc_policy \
+  --config-name "${config_name}" \
+  task="${task_config}" \
+  buffer_path="${buffer_path}" \
+  test_buffer_path="${test_buffer_path}" \
+  wandb.entity="${wandb_entity}" \
+  "$@"
