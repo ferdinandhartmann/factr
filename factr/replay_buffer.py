@@ -269,3 +269,183 @@ class RobobufReplayBuffer(ReplayBuffer):
             a_t = a_t[:, : self.ac_dim]
 
         return (i_t, o_t), a_t, loss_mask, label_tensor
+
+
+def _obs_to_dict(obs):
+    if isinstance(obs, dict):
+        return obs
+    if hasattr(obs, "to_dict"):
+        out = obs.to_dict()
+        if isinstance(out, dict):
+            return out
+    if hasattr(obs, "obs") and isinstance(obs.obs, dict):
+        return obs.obs
+    raise TypeError(f"Unsupported obs type: {type(obs)}")
+
+
+def _to_label_index(raw_label, num_classes):
+    value = np.asarray(raw_label).reshape(-1)[0]
+    value = int(value)
+    if value >= 1:
+        value -= 1
+    value = max(0, min(value, num_classes - 1))
+    return value
+
+
+class RobobufReplayBufferLowdim(ReplayBuffer):
+    def __init__(
+        self,
+        buffer_path,
+        n_test_ratio=0.0,
+        mode="train",
+        use_internal_split=False,
+        ac_chunk=30,
+        obs_window=8,
+        obs_dim=27,
+        pose_action_dim=9,
+        action_index_offset=1,
+        include_goals=False,
+        stiffness_classes=3,
+        shuffle=True,
+    ):
+        assert mode in ("train", "test"), "Mode must be train/test"
+        assert obs_window >= 1, "obs_window must be >= 1"
+        assert ac_chunk >= 1, "ac_chunk must be >= 1"
+
+        self.obs_window = int(obs_window)
+        self.obs_dim = int(obs_dim)
+        self.pose_action_dim = int(pose_action_dim)
+        self.action_index_offset = int(action_index_offset)
+        self.include_goals = bool(include_goals)
+        self.stiffness_classes = int(stiffness_classes)
+        self.use_internal_split = bool(use_internal_split)
+        self.transform = None
+        self.s_a_mask = []
+
+        if self.action_index_offset < 0:
+            raise ValueError(f"action_index_offset must be >= 0, got {self.action_index_offset}.")
+
+        buf = _cached_load(buffer_path)
+        episodes = self._build_episodes(buf)
+        if len(episodes) == 0:
+            raise ValueError("No episodes found in buffer.")
+
+        episode_labels = self._infer_episode_stiffness_labels(episodes)
+
+        rng = random.Random(BUF_SHUFFLE_RNG)
+        episode_indices = list(range(len(episodes)))
+        if shuffle:
+            rng.shuffle(episode_indices)
+
+        if self.use_internal_split and len(episodes) > 1 and n_test_ratio > 0:
+            n_test_eps = max(1, int(len(episodes) * n_test_ratio))
+        else:
+            n_test_eps = 0
+
+        if mode == "train":
+            use_episode_indices = episode_indices[:-n_test_eps] if n_test_eps > 0 else episode_indices
+        else:
+            use_episode_indices = episode_indices[-n_test_eps:] if n_test_eps > 0 else episode_indices
+
+        print(
+            f"Building {mode} lowdim buffer with episodes={len(use_episode_indices)}, "
+            f"obs_window={self.obs_window}, ac_chunk={ac_chunk}, pose_action_dim={self.pose_action_dim}"
+        )
+        print(f"Loaded from file: {buffer_path}")
+
+        for ep_idx in tqdm.tqdm(use_episode_indices):
+            episode = episodes[ep_idx]
+            label = episode_labels[ep_idx]
+            self._append_episode_samples(episode, label, ac_chunk=ac_chunk)
+
+    @staticmethod
+    def _build_episodes(buf):
+        episodes = []
+        current = []
+        for i in range(len(buf)):
+            step = buf[i]
+            is_first = bool(getattr(step, "first", False) or getattr(step, "is_first", False) or step.prev is None)
+            if is_first and len(current) > 0:
+                episodes.append(current)
+                current = []
+            current.append(step)
+        if len(current) > 0:
+            episodes.append(current)
+        return episodes
+
+    def _extract_obs_vector(self, step):
+        obs_dict = _obs_to_dict(step.obs)
+        state = np.asarray(obs_dict["state"], dtype=np.float32).reshape(-1)
+        if self.include_goals and "goals" in obs_dict:
+            goals = np.asarray(obs_dict["goals"], dtype=np.float32).reshape(-1)
+            state = np.concatenate([state, goals], axis=0)
+        return state
+
+    def _extract_pose_action(self, step):
+        action = np.asarray(step.action, dtype=np.float32).reshape(-1)
+        if action.shape[0] < self.pose_action_dim:
+            raise ValueError(f"Action dim {action.shape[0]} smaller than pose_action_dim={self.pose_action_dim}.")
+        return action[: self.pose_action_dim]
+
+    def _infer_episode_stiffness_labels(self, episodes):
+        labels = []
+        for episode in episodes:
+            first_step = episode[0]
+            obs_dict = _obs_to_dict(first_step.obs)
+
+            raw_label = None
+            for key in ("stiffness_label", "stiffness_class", "stiffness"):
+                if key in obs_dict:
+                    raw_label = obs_dict[key]
+                    break
+
+            if raw_label is None:
+                labels.append(1)
+            else:
+                labels.append(_to_label_index(raw_label, self.stiffness_classes) + 1)
+        return labels
+
+    def _append_episode_samples(self, episode, label, ac_chunk):
+        episode_states = [self._extract_obs_vector(step) for step in episode]
+        state_dim = episode_states[0].shape[0]
+        if state_dim != self.obs_dim:
+            raise ValueError(f"Expected obs_dim={self.obs_dim}, got {state_dim}.")
+
+        max_t = len(episode_states) - self.action_index_offset
+        if max_t <= 0:
+            return
+
+        for t_idx in range(max_t):
+            start = max(0, t_idx - self.obs_window + 1)
+            window_states = episode_states[start : t_idx + 1]
+            while len(window_states) < self.obs_window:
+                window_states.insert(0, window_states[0])
+            obs_window = np.stack(window_states, axis=0).astype(np.float32)
+
+            chunk_actions = []
+            loss_mask = []
+            for k in range(ac_chunk):
+                idx = t_idx + self.action_index_offset + k
+                if idx < len(episode):
+                    chunk_actions.append(self._extract_pose_action(episode[idx]))
+                    loss_mask.append(1.0)
+                else:
+                    if len(chunk_actions) == 0:
+                        chunk_actions.append(self._extract_pose_action(episode[-1]))
+                    else:
+                        chunk_actions.append(chunk_actions[-1])
+                    loss_mask.append(0.0)
+
+            pose_chunk = np.stack(chunk_actions, axis=0).astype(np.float32)
+            loss_mask = np.asarray(loss_mask, dtype=np.float32)
+            self.s_a_mask.append((obs_window, pose_chunk, loss_mask, int(label)))
+
+    def __getitem__(self, idx):
+        obs_window, pose_chunk, loss_mask, label = self.s_a_mask[idx]
+
+        obs_tensor = _to_tensor(obs_window)
+        action_tensor = _to_tensor(pose_chunk)
+        mask_tensor = _to_tensor(loss_mask)[:, None].repeat((1, action_tensor.shape[-1]))
+        label_tensor = torch.tensor(label, dtype=torch.long)
+
+        return ({}, obs_tensor), action_tensor, mask_tensor, label_tensor

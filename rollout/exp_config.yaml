@@ -1,0 +1,91 @@
+agent:
+  _target_: factr.models.lowdim_action_transformer.LowdimStiffnessCVAEAgent
+  obs_dim: ${task.obs_dim}
+  ac_dim: ${task.ac_dim}
+  ac_chunk: ${ac_chunk}
+  obs_window: ${obs_window}
+  stiffness_classes: 3
+  d_z: 32
+  token_dim: 128
+  hidden_dim: 256
+  beta: 0.01
+  free_bits: null
+  z_context_mode: cls_all_obs
+  encoder_layers: 2
+  decoder_layers: 2
+  posterior_layers: 2
+  nhead: 8
+  dropout: 0.1
+  factr_baseline: false
+task:
+  _target_: factr.task.BCTask
+  obs_dim: 27
+  ac_dim: 9
+  cam_indexes: []
+  n_cams: ${len:${task.cam_indexes}}
+  train_buffer:
+    _target_: factr.replay_buffer.RobobufReplayBufferLowdim
+    buffer_path: ${buffer_path}
+    n_test_ratio: 0.0
+    mode: train
+    use_internal_split: false
+    ac_chunk: ${ac_chunk}
+    obs_window: ${obs_window}
+    obs_dim: ${task.obs_dim}
+    pose_action_dim: ${task.ac_dim}
+    action_index_offset: 1
+    include_goals: false
+    stiffness_classes: 3
+    shuffle: true
+  test_buffer:
+    _target_: factr.replay_buffer.RobobufReplayBufferLowdim
+    buffer_path: ${test_buffer_path}
+    n_test_ratio: 0.0
+    mode: test
+    use_internal_split: false
+    ac_chunk: ${ac_chunk}
+    obs_window: ${obs_window}
+    obs_dim: ${task.obs_dim}
+    pose_action_dim: ${task.ac_dim}
+    action_index_offset: 1
+    include_goals: false
+    stiffness_classes: 3
+    shuffle: false
+trainer:
+  _target_: factr.trainers.bc.BehaviorCloning
+  optim_builder:
+    optimizer_type: AdamW
+    optimizer_kwargs:
+      lr: ${lr}
+      weight_decay: 0.0001
+  schedule_builder:
+    _target_: factr.trainers.utils.schedule_builder
+    schedule_type: CosineAnnealingLR
+    from_diffusers: false
+    schedule_kwargs:
+      T_max: ${max_iterations}
+      eta_min: 1.0e-06
+exp_base_name: lowdim_stiff_pose_111
+batch_size: 64
+num_workers: 4
+lr: 0.0003
+max_iterations: 4000
+eval_freq: 500
+save_freq: 2000
+schedule_freq: 1
+devices: 1
+seed: 45
+suffix: _
+buffer_path: /home/ferdinand/activeinference/factr/process_data/processed_data/fourgoals_1_act/buf_train.pkl
+test_buffer_path: ${buffer_path}
+ac_chunk: 30
+obs_window: 8
+train_transform: none
+test_transform: none
+exp_name: ${exp_base_name}_s${seed}_ac${ac_chunk}_w${obs_window}_b${batch_size}_lr${lr}${suffix}
+wandb:
+  name: ${exp_name}
+  project: lowdim_stiff_pose
+  group: bc
+  debug: false
+  entity: None

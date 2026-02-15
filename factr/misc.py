@@ -84,16 +84,28 @@ def create_wandb_run(wandb_cfg, job_config, run_id=None):
 
 def init_job(cfg):
     cfg_yaml = OmegaConf.to_yaml(cfg)
+    params = yaml.safe_load(cfg_yaml)
+    exp_name = str(params.get("exp_name", ""))
+    latest_ckpt = "rollout/latest_ckpt.ckpt"
+
+    should_resume = False
     if os.path.exists("exp_config.yaml"):
         old_config = yaml.safe_load(open("exp_config.yaml", "r"))
-        create_wandb_run(cfg.wandb, old_config["params"], old_config["wandb_id"])
-        resume_model = "rollout/latest_ckpt.ckpt"
-        if not os.path.exists(resume_model):
-            resume_model = None
-    else:
-        params = yaml.safe_load(cfg_yaml)
-        wandb_id = create_wandb_run(cfg.wandb, params)
-        save_dict = dict(wandb_id=wandb_id, params=params)
-        yaml.dump(save_dict, open("exp_config.yaml", "w"))
-        resume_model = None
-    return resume_model
+        old_params = old_config.get("params", {}) if isinstance(old_config, dict) else {}
+        old_exp_name = str(old_params.get("exp_name", ""))
+
+        explicit_resume = OmegaConf.select(cfg, "resume", default=None)
+        if explicit_resume is None:
+            same_run_name = (exp_name != "") and (old_exp_name == exp_name)
+            should_resume = same_run_name and os.path.exists(latest_ckpt)
+        else:
+            should_resume = bool(explicit_resume) and os.path.exists(latest_ckpt)
+
+        if should_resume:
+            create_wandb_run(cfg.wandb, old_params, old_config.get("wandb_id"))
+            return latest_ckpt
+
+    wandb_id = create_wandb_run(cfg.wandb, params)
+    save_dict = dict(wandb_id=wandb_id, params=params)
+    yaml.dump(save_dict, open("exp_config.yaml", "w"))
+    return None

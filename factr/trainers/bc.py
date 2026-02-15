@@ -24,8 +24,8 @@ class BehaviorCloning(BaseTrainer):
         total_loss = reduce_loss(loss_dict["total_loss"])
 
         if self.is_train:
-            self.log("train/total_loss", global_step, total_loss.item())
-            self.log("train/lr", global_step, self.lr)
+            self.log("total_loss", global_step, total_loss.item())
+            self.log("lr", global_step, self.lr)
 
             for k, v in loss_dict.items():
                 if k in ["logits", "total_loss", "logits"]:
@@ -36,7 +36,7 @@ class BehaviorCloning(BaseTrainer):
                     if hasattr(val, "item"):
                         val = val.item()
 
-                    self.log(f"train/{k}", global_step, val)
+                    self.log(k, global_step, val)
 
         self.last_train_loss = total_loss.item()
 

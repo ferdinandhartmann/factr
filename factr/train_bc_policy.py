@@ -15,6 +15,7 @@ import pytorch_lightning as pl
 import torch
 import tqdm
 from omegaconf import DictConfig, OmegaConf
+import wandb
 
 from factr import misc, transforms
 
@@ -36,7 +37,17 @@ def torch_fix_seed(seed: int = 42) -> None:
     torch.backends.cudnn.deterministic = True
 
 
-@hydra.main(config_path="cfg", config_name="train_bc.yaml")
+def _grad_l2_norm(model) -> float:
+    total = 0.0
+    for param in model.parameters():
+        if param.grad is None:
+            continue
+        grad_norm = param.grad.detach().data.norm(2).item()
+        total += grad_norm * grad_norm
+    return total ** 0.5
+
+
+@hydra.main(version_base=None, config_path="cfg", config_name="train_bc.yaml")
 def train_bc(cfg: DictConfig):
     try:
         resume_model = misc.init_job(cfg)
@@ -52,64 +63,74 @@ def train_bc(cfg: DictConfig):
             rollout_dir.mkdir()
             with open(rollout_dir / "agent_config.yaml", "w") as f:
                 inference_config = deepcopy(cfg.agent)
-                inference_config.features.restore_path = ""
+                if OmegaConf.select(inference_config, "features.restore_path", default=None) is not None:
+                    inference_config.features.restore_path = ""
                 agent_yaml = OmegaConf.to_yaml(inference_config, resolve=True)
                 f.write(agent_yaml)
             with open(rollout_dir / "exp_config.yaml", "w") as f:
                 exp_yaml = OmegaConf.to_yaml(cfg)
                 f.write(exp_yaml)
-            rollout_config = OmegaConf.load(Path(cfg.buffer_path).parent / "rollout_config.yaml")
-            with open(rollout_dir / "rollout_config.yaml", "w") as f:
-                OmegaConf.save(rollout_config, f)
+            rollout_cfg_path = Path(cfg.buffer_path).parent / "rollout_config.yaml"
+            if rollout_cfg_path.exists():
+                rollout_config = OmegaConf.load(rollout_cfg_path)
+                with open(rollout_dir / "rollout_config.yaml", "w") as f:
+                    OmegaConf.save(rollout_config, f)
 
         # build agent from hydra configs
         agent = hydra.utils.instantiate(cfg.agent)
-        trainer = hydra.utils.instantiate(cfg.trainer, model=agent, device_id=0)
+        device_id = "cpu"
+        if int(getattr(cfg, "devices", 1)) > 0 and torch.cuda.is_available():
+            device_id = 0
+        trainer = hydra.utils.instantiate(cfg.trainer, model=agent, device_id=device_id)
+        if resume_model is not None and os.path.exists(resume_model):
+            restored_step = trainer.load_checkpoint(resume_model)
+            misc.GLOBAL_STEP = int(restored_step)
+            print(f"Resumed checkpoint from {resume_model} at step {misc.GLOBAL_STEP}")
 
         # build task, replay buffer, and dataloader
         task = hydra.utils.instantiate(cfg.task, batch_size=cfg.batch_size, num_workers=cfg.num_workers)
+        print(
+            "Run config | "
+            f"device={trainer.device_id} "
+            f"train_buffer={cfg.buffer_path} "
+            f"test_buffer={OmegaConf.select(cfg, 'test_buffer_path', default=cfg.buffer_path)} "
+            f"batch_size={cfg.batch_size} "
+            f"ac_chunk={cfg.ac_chunk} "
+            f"obs_window={OmegaConf.select(cfg, 'obs_window', default='n/a')}"
+        )
+        if hasattr(task, "eval_plot_max_steps"):
+            print(
+                "Eval plot config | "
+                f"max_steps={task.eval_plot_max_steps} "
+                f"stride={task.eval_plot_prediction_stride} "
+                f"num_samples={task.eval_plot_num_samples}"
+            )
 
         # create a gpu train transform (if used)
         gpu_transform = (
             transforms.get_gpu_transform_by_name(cfg.train_transform) if "gpu" in cfg.train_transform else None
         )
 
-        # restore/save the model as required
-        # 1. 自動ロードを無効化
-        restore_path = cfg.agent.features.restore_path
-        cfg.agent.features.restore_path = ""
-        print(f"Disabled auto-loading. Manual load path: {restore_path}")
-
-        # 2. Agent初期化
-        agent = hydra.utils.instantiate(cfg.agent)
-
-        # 3. シンプルに手動ロード（ここを書き換えてください！）
-        # 3. 手動で重みをロード
+        restore_path = OmegaConf.select(cfg, "agent.features.restore_path", default="")
+        if resume_model is not None:
+            restore_path = ""
         if restore_path and os.path.exists(restore_path):
-            print(f"Manually loading features from: {restore_path}")
-            checkpoint = torch.load(restore_path, map_location="cpu")  # 変数名をcheckpointに変更
+            print(f"Manually loading weights from: {restore_path}")
+            checkpoint = torch.load(restore_path, map_location="cpu")
+            state_dict = checkpoint["model"] if isinstance(checkpoint, dict) and "model" in checkpoint else checkpoint
 
-            # === 【追加修正】 "model" という箱に入っている場合、中身を取り出す ===
-            if "model" in checkpoint:
-                print("Found 'model' key. Unwrapping...")
-                state_dict = checkpoint["model"]
-            else:
-                state_dict = checkpoint
-            # =============================================================
-
-            # 名前の変換処理（ここは前回と同じ）
-            new_state_dict = {}
-            for k, v in state_dict.items():
-                new_key = f"visual_features.0.{k}"
-                new_state_dict[new_key] = v
+            model_state = state_dict
+            if hasattr(agent, "visual_features"):
+                needs_prefix = len(model_state) > 0 and not any(k.startswith("visual_features.") for k in model_state)
+                if needs_prefix:
+                    model_state = {f"visual_features.0.{k}": v for k, v in model_state.items()}
 
             try:
-                # new_state_dict をロード
-                msg = agent.load_state_dict(new_state_dict, strict=False)
-                # print(f"Load result: {msg}")
-
-                # 【確認】今回は missing_keys が激減するはずです
-                # もし visual_features 関連が消えていれば成功です
+                load_msg = agent.load_state_dict(model_state, strict=False)
+                print(
+                    f"Manual load finished. Missing={len(load_msg.missing_keys)} "
+                    f"Unexpected={len(load_msg.unexpected_keys)}"
+                )
             except RuntimeError as e:
                 print(f"Load failed: {e}")
 
@@ -128,16 +149,28 @@ def train_bc(cfg: DictConfig):
 
             # handle the image transform on GPU if specified
             if gpu_transform is not None:
-                (imgs, obs), actions, mask = batch
-                imgs = {k: v.to(trainer.device_id) for k, v in imgs.items()}
-                imgs = {k: gpu_transform(v) for k, v in imgs.items()}
-                batch = ((imgs, obs), actions, mask)
+                if len(batch) == 4:
+                    (imgs, obs), actions, mask, labels = batch
+                    imgs = {k: v.to(trainer.device_id) for k, v in imgs.items()}
+                    imgs = {k: gpu_transform(v) for k, v in imgs.items()}
+                    batch = ((imgs, obs), actions, mask, labels)
+                else:
+                    (imgs, obs), actions, mask = batch
+                    imgs = {k: v.to(trainer.device_id) for k, v in imgs.items()}
+                    imgs = {k: gpu_transform(v) for k, v in imgs.items()}
+                    batch = ((imgs, obs), actions, mask)
 
             trainer.optim.zero_grad()
             loss = trainer.training_step(batch, misc.GLOBAL_STEP)
             if loss.ndim > 0:
                 loss = loss.mean()
             loss.backward()
+
+            model_for_norm = trainer.model.module if hasattr(trainer.model, "module") else trainer.model
+            grad_norm = _grad_l2_norm(model_for_norm)
+            if wandb.run is not None and misc.GLOBAL_STEP % 20 == 0:
+                wandb.log({"train/grad_norm": grad_norm}, step=misc.GLOBAL_STEP)
+
             trainer.optim.step()
 
             pbar.set_postfix(dict(Loss=loss.item()))

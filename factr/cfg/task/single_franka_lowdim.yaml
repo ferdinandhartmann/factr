@@ -1,0 +1,38 @@
+_target_: factr.task.BCTask
+obs_dim: 27
+ac_dim: 9
+cam_indexes: []
+n_cams: ${len:${task.cam_indexes}}
+eval_plot_max_steps: 300
+eval_plot_prediction_stride: 5
+eval_plot_num_samples: 10
+
+train_buffer:
+  _target_: factr.replay_buffer.RobobufReplayBufferLowdim
+  buffer_path: ${buffer_path}
+  n_test_ratio: 0.0
+  mode: train
+  use_internal_split: False
+  ac_chunk: ${ac_chunk}
+  obs_window: ${obs_window}
+  obs_dim: ${task.obs_dim}
+  pose_action_dim: ${task.ac_dim}
+  action_index_offset: 1
+  include_goals: False
+  stiffness_classes: 3
+  shuffle: True
+
+test_buffer:
+  _target_: factr.replay_buffer.RobobufReplayBufferLowdim
+  buffer_path: ${test_buffer_path}
+  n_test_ratio: 0.0
+  mode: test
+  use_internal_split: False
+  ac_chunk: ${ac_chunk}
+  obs_window: ${obs_window}
+  obs_dim: ${task.obs_dim}
+  pose_action_dim: ${task.ac_dim}
+  action_index_offset: 1
+  include_goals: False
+  stiffness_classes: 3
+  shuffle: False

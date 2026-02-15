@@ -38,7 +38,9 @@ class BaseTrainer(ABC):
     def __init__(self, model, device_id, optim_builder, schedule_builder=None):
         self.model, self.device_id = model, device_id
         self.set_device(device_id)
-        if optim_builder.optimizer_type == "custom_mae_lrd_adamW":
+        optimizer_type = getattr(optim_builder, "optimizer_type", None)
+
+        if optimizer_type == "custom_mae_lrd_adamW":
             from factr.trainers import lrd
 
             """optimizer from mae codebase """
@@ -49,8 +51,14 @@ class BaseTrainer(ABC):
                 layer_decay=optim_builder.optimizer_kwargs.layer_decay,
             )
             self.optim = torch.optim.AdamW(param_groups, lr=optim_builder.optimizer_kwargs.lr)
-        else:
+        elif callable(optim_builder):
             self.optim = optim_builder(self.model.parameters())
+        elif optimizer_type is not None:
+            optimizer_class = getattr(torch.optim, optimizer_type)
+            optimizer_kwargs = dict(getattr(optim_builder, "optimizer_kwargs", {}))
+            self.optim = optimizer_class(self.model.parameters(), **optimizer_kwargs)
+        else:
+            raise ValueError("Unsupported optim_builder format.")
 
         self.schedule = None if schedule_builder is None else schedule_builder(self.optim)
         self._trackers = dict()

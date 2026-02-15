@@ -26,6 +26,7 @@ save_freq: 2000 #チェックポイント保存の頻度 (Save Frequency) 。200
 schedule_freq: 1
 devices: 2
 seed: 45
+resume: false
 
 suffix: _
 
