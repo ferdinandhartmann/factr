@@ -1,19 +1,18 @@
-import torch
-import torch.nn.functional as F
-import numpy as np
-import cv2
-from pathlib import Path
-import matplotlib.pyplot as plt
-from tqdm import tqdm
-from hydra.utils import instantiate
-from omegaconf import OmegaConf
-import yaml
+import argparse
 import pickle
-from collections import deque
 import sys
 import warnings
-import math
-import argparse
+from collections import deque
+from pathlib import Path
+
+import cv2
+import matplotlib.pyplot as plt
+import numpy as np
+import torch
+import yaml
+from hydra.utils import instantiate
+from omegaconf import OmegaConf
+from tqdm import tqdm
 
 # ==========================================
 # 警告・インポート関連
@@ -96,9 +95,6 @@ SAVE_DIR.mkdir(parents=True, exist_ok=True)
 # ==================================================================================
 # 2. 関数定義 (Posterior Inference用)
 # ==================================================================================
-
-import torch
-import numpy as np
 
 
 def run_posterior_inference(policy, imgs, obs, target_action, num_samples=10):
@@ -184,7 +180,7 @@ def load_and_extract_raw_data(pkl_path: Path):
                         img_flat = np.frombuffer(v["data"], dtype=np.uint8)
                         img = img_flat.reshape((v["height"], v["width"], -1))
                     image_obs.append(img)
-                except Exception as e:
+                except Exception:
                     pass
 
     if obs_topic in entries:
@@ -400,7 +396,7 @@ for episode_name in episode_names:
     chunk_size_actual = pred_actions_mean.shape[1]
 
     fig1, axes = plt.subplots(7, 1, figsize=(12, 18), sharex=True)
-    fig1.suptitle(f"GT vs Posterior Generation", fontsize=16, y=0.98)
+    fig1.suptitle("GT vs Posterior Generation", fontsize=16, y=0.98)
 
     for d in range(7):
         ax = axes[d]

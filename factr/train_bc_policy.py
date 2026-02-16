@@ -7,6 +7,7 @@
 import os
 import random
 import traceback
+import numbers
 from copy import deepcopy
 from pathlib import Path
 
@@ -14,10 +15,12 @@ import hydra
 import pytorch_lightning as pl
 import torch
 import tqdm
+from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
-import wandb
 
+import wandb
 from factr import misc, transforms
+from factr.trainers.base import TRAIN_LOG_FREQ
 
 base_path = os.path.dirname(os.path.abspath(__file__))
 
@@ -44,10 +47,10 @@ def _grad_l2_norm(model) -> float:
             continue
         grad_norm = param.grad.detach().data.norm(2).item()
         total += grad_norm * grad_norm
-    return total ** 0.5
+    return total**0.5
 
 
-@hydra.main(version_base=None, config_path="cfg", config_name="train_bc.yaml")
+@hydra.main(version_base=None, config_path="cfg", config_name="train_bc_lowdim.yaml")
 def train_bc(cfg: DictConfig):
     try:
         resume_model = misc.init_job(cfg)
@@ -57,24 +60,30 @@ def train_bc(cfg: DictConfig):
         # np.random.seed(cfg.seed + 1)
         torch_fix_seed(cfg.seed)
 
-        # save rollout config
-        rollout_dir = Path("rollout")
-        if not rollout_dir.exists():
-            rollout_dir.mkdir()
-            with open(rollout_dir / "agent_config.yaml", "w") as f:
-                inference_config = deepcopy(cfg.agent)
-                if OmegaConf.select(inference_config, "features.restore_path", default=None) is not None:
-                    inference_config.features.restore_path = ""
-                agent_yaml = OmegaConf.to_yaml(inference_config, resolve=True)
-                f.write(agent_yaml)
-            with open(rollout_dir / "exp_config.yaml", "w") as f:
-                exp_yaml = OmegaConf.to_yaml(cfg)
-                f.write(exp_yaml)
-            rollout_cfg_path = Path(cfg.buffer_path).parent / "rollout_config.yaml"
-            if rollout_cfg_path.exists():
-                rollout_config = OmegaConf.load(rollout_cfg_path)
-                with open(rollout_dir / "rollout_config.yaml", "w") as f:
-                    OmegaConf.save(rollout_config, f)
+        # save rollout config under checkpoint(run) directory
+        run_dir = Path(HydraConfig.get().runtime.output_dir)
+        run_dir.mkdir(parents=True, exist_ok=True)
+        rollout_dir = run_dir / "rollout"
+        rollout_dir.mkdir(parents=True, exist_ok=True)
+        with open(rollout_dir / "agent_config.yaml", "w") as f:
+            inference_config = deepcopy(cfg.agent)
+            if OmegaConf.select(inference_config, "features.restore_path", default=None) is not None:
+                inference_config.features.restore_path = ""
+            agent_yaml = OmegaConf.to_yaml(inference_config, resolve=True)
+            f.write(agent_yaml)
+        with open(rollout_dir / "exp_config.yaml", "w") as f:
+            exp_yaml = OmegaConf.to_yaml(cfg)
+            f.write(exp_yaml)
+        rollout_cfg_path = Path(cfg.buffer_path).parent / "rollout_config.yaml"
+        if rollout_cfg_path.exists():
+            rollout_config = OmegaConf.load(rollout_cfg_path)
+            with open(rollout_dir / "rollout_config.yaml", "w") as f:
+                OmegaConf.save(rollout_config, f)
+
+        exp_config_path = run_dir / "exp_config.yaml"
+        print(f"Run directory: {run_dir}")
+        print(f"Run exp config: {exp_config_path}")
+        print(f"Rollout directory: {rollout_dir}")
 
         # build agent from hydra configs
         agent = hydra.utils.instantiate(cfg.agent)
@@ -168,12 +177,25 @@ def train_bc(cfg: DictConfig):
 
             model_for_norm = trainer.model.module if hasattr(trainer.model, "module") else trainer.model
             grad_norm = _grad_l2_norm(model_for_norm)
-            if wandb.run is not None and misc.GLOBAL_STEP % 20 == 0:
+            if wandb.run is not None and misc.GLOBAL_STEP % 1 == 0:
                 wandb.log({"train/grad_norm": grad_norm}, step=misc.GLOBAL_STEP)
 
             trainer.optim.step()
 
             pbar.set_postfix(dict(Loss=loss.item()))
+
+            if wandb.run is not None and misc.GLOBAL_STEP > 0 and misc.GLOBAL_STEP % TRAIN_LOG_FREQ == 0:
+                payload = trainer.consume_wandb_payload(misc.GLOBAL_STEP)
+                try:
+                    payload["train/grad_norm"] = float(grad_norm)
+                except Exception:
+                    payload["train/grad_norm"] = grad_norm
+                if payload:
+                    pretty = " ".join(
+                        f"{k}={float(v):.6g}" if isinstance(v, numbers.Number) else f"{k}={v}"
+                        for k, v in sorted(payload.items())
+                    )
+                    print(f"[wandb] step={misc.GLOBAL_STEP} {pretty}")
             misc.GLOBAL_STEP += 1
 
             if misc.GLOBAL_STEP % cfg.schedule_freq == 0:

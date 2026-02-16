@@ -1,13 +1,14 @@
+import math
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import math
 
 
 def _kl_diag_gaussians(mu_q, logvar_q, mu_p, logvar_p):
-    return 0.5 * (
-        (logvar_p - logvar_q) + (torch.exp(logvar_q) + (mu_q - mu_p) ** 2) / torch.exp(logvar_p) - 1.0
-    ).sum(dim=-1)
+    return 0.5 * ((logvar_p - logvar_q) + (torch.exp(logvar_q) + (mu_q - mu_p) ** 2) / torch.exp(logvar_p) - 1.0).sum(
+        dim=-1
+    )
 
 
 def _reparameterize(mu, logvar):

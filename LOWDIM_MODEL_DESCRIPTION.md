@@ -350,3 +350,57 @@ Good quick checks:
 3. `KL` stays positive and stable (not exploding, not collapsing to zero too early).
 4. Fan plots show plausible sampled trajectories and stiffness-conditioned differences.
 5. WandB receives scalar metrics and image plots at each eval step.
+
+
+---
+
+- prior_fan_all is always built from all selected eval anchors together, regardless of stiffness
+(factr/task.py:474).
+- “prior” means trajectories are sampled from the prior p(z | observation, stiffness) via
+get_actions_prior(..., sample=True) (factr/task.py:462, factr/task.py:467), not from posterior/
+ground-truth-conditioned latent.
+- “fan” means many sampled rollout lines overlaid, so you see spread/diversity vs ground truth (factr/
+task.py:123 onward).
+
+
+---
+
+hat auf einen Thread geantwortet:Data Pipeline: From buf.pkl to the forward pass
+1. Data Loading (Disk → Memory)
+
+Location: factr/replay_buffer.py (RobobufReplayBuffer.__init__)
+Process: Loads buf.pkl and expands it into the robobuf format.
+Storage: The entire dataset is stored in the self.s_a_mask list as tuples of (step, a_t, loss_mask, ...). At this stage, it contains the full dataset.
+2. Data Retrieval (Memory → DataLoader)
+
+Location: factr/replay_buffer.py (RobobufReplayBuffer.__getitem__)
+Process: Retrieves the data at index idx and performs image processing and Tensor conversion.
+Output: return (i_t, o_t), a_t, loss_mask, label_tensor
+Note: Here, a_t represents the Ground Truth (GT) action for a single sample.
+3. Batching (DataLoader → Loop)
+
+Location: PyTorch DataLoader (Internal process)
+Process: Collects a_t samples up to the batch size (e.g., 64) and stacks them.
+Result: Results in the shape (Batch, Chunk, Dim).
+4. Receiving Data (Loop → Variable)
+
+Location: factr/task.py (BCTask.eval)
+Code: (imgs, obs), actions, mask, labels = batch
+Variable: Received here as the variable actions. This is the batched Ground Truth (GT) actions.
+5. Reshaping
+
+Location: factr/task.py (BCTask.eval)
+Code: ac_flat = actions.reshape((actions.shape[0], -1))
+Process: Flattens the shape from (Batch, Chunk, Dim) to (Batch, Chunk * Dim).
+Variable: Becomes ac_flat.
+6. Model Input (Variable → Model)
+
+Location: factr/models/action_transformer.py (TransformerAgent.forward)
+Code: model(..., ac_flat, ...)
+Role: This ac_flat enters the CVAE Encoder and is used to construct the posterior distribution $q(z|x, a_{GT})$ during training.
+Specifically, this happens here:
+actions = ac_flat.view(B, self.ac_chunk, self.ac_dim)
+
+mu_q, logvar_q = self.posterior(c_for_posterior.detach(), actions, gt_only=self.gt_only)This confirms that the Ground Truth actions are being reshaped and passed directly to the posterior encoder at this step.
+
+(I looked it up, wrote an explanation of the process in Japanese, and then had it translated.)

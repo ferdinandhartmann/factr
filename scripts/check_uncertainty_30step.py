@@ -1,9 +1,10 @@
 import json
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.cm as cm
-from pathlib import Path
 import sys
+from pathlib import Path
+
+import matplotlib.cm as cm
+import matplotlib.pyplot as plt
+import numpy as np
 
 # ==================================================================================
 # 1. 設定 & パス収集
@@ -146,19 +147,38 @@ def process_single_episode(json_path, save_root):
         for i, h_idx in enumerate(lookahead_indices):
             series = results[h_idx]["var"][:, d]
             label = f"t+{h_idx}" if d == 0 else None
-            ax.plot(timesteps, series, color=colors[i], linewidth=1.5, alpha=0.8, label=label)
+            ax.plot(
+                timesteps,
+                series,
+                color=colors[i],
+                linewidth=1.5,
+                alpha=0.8,
+                label=label,
+            )
 
         ax.set_ylabel(f"J{d + 1} Var", fontsize=10)
         ax.set_ylim(ylim_joints)
         ax.grid(True, alpha=0.3)
         if d == 0:
-            ax.legend(loc="upper right", ncol=len(lookahead_indices) // 2 + 1, fontsize="x-small", title="Horizon")
+            ax.legend(
+                loc="upper right",
+                ncol=len(lookahead_indices) // 2 + 1,
+                fontsize="x-small",
+                title="Horizon",
+            )
 
     # 8段目: Mean Only
     ax8 = axes[7]
     for i, h_idx in enumerate(lookahead_indices):
         mean_series = results[h_idx]["mean"]
-        ax8.plot(timesteps, mean_series, color=colors[i], linestyle="-", linewidth=1.5, alpha=0.9)
+        ax8.plot(
+            timesteps,
+            mean_series,
+            color=colors[i],
+            linestyle="-",
+            linewidth=1.5,
+            alpha=0.9,
+        )
 
     ax8.set_ylabel("Mean Variance", fontsize=10, fontweight="bold")
     ax8.set_ylim(ylim_mean)
@@ -180,9 +200,17 @@ def process_single_episode(json_path, save_root):
     for i, h_idx in enumerate(lookahead_indices):
         mean_series = results[h_idx]["mean"]
         label = f"t+{h_idx}"  # 凡例用ラベル
-        ax_mean.plot(timesteps, mean_series, color=colors[i], linestyle="-", linewidth=1.0, alpha=0.9, label=label)
+        ax_mean.plot(
+            timesteps,
+            mean_series,
+            color=colors[i],
+            linestyle="-",
+            linewidth=1.0,
+            alpha=0.9,
+            label=label,
+        )
 
-    ax_mean.set_title(f"Mean Variance Analysis", fontsize=14)
+    ax_mean.set_title("Mean Variance Analysis", fontsize=14)
     ax_mean.set_ylabel("Mean Variance", fontsize=12)
     ax_mean.set_xlabel("Timestep", fontsize=12)
     ax_mean.set_ylim(ylim_mean)  # Y軸スケールを統一

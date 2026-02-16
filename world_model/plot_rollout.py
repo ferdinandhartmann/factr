@@ -14,7 +14,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from factr.process_data.utils_data_process import downsample_data, lowpass_filter, medianfilter, sync_data_slowest
+from factr.process_data.utils_data_process import downsample_data, sync_data_slowest
 
 
 def _select_dims(total_dims: int, dims: List[int] | None, max_dims: int) -> List[int]:

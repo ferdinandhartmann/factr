@@ -7,6 +7,7 @@ from typing import Dict
 import hydra
 import torch
 from data.buffer_dataset import BufferSequenceDataset, summarize_buffer
+from hydra.core.hydra_config import HydraConfig
 from models.rssm import RSSM
 from models.vae import VAE
 from omegaconf import DictConfig, OmegaConf
@@ -79,22 +80,24 @@ def _prune_checkpoints(ckpt_root: Path, keep_last: int) -> None:
 
 def _prepare_run_dir(cfg: DictConfig, buffer_path: Path, summary: dict) -> Path:
     """
-    Create a run folder under repo-root checkpoints and write run metadata alongside checkpoints.
+    Use Hydra's runtime output dir as the single run folder and write run metadata there.
 
     Files written:
       - config.yaml: full resolved Hydra config
+      - exp.yaml: alias of the full resolved Hydra config
       - buffer_summary.yaml: quick buffer summary + buffer path
       - rollout_config.yaml: copy of cfg.data.stats_path (if provided)
+      - rollout/: folder for rollout artifacts/plots from evaluation scripts
     """
     import shutil
 
-    run_name = _sanitize_run_name(str(getattr(cfg.logging, "name", "") or ""))
-    run_dir = Path(hydra.utils.get_original_cwd()) / "checkpoints" / run_name
+    run_dir = Path(HydraConfig.get().runtime.output_dir).expanduser()
     run_dir.mkdir(exist_ok=True, parents=True)
 
     # Full resolved config.
     resolved = OmegaConf.create(OmegaConf.to_container(cfg, resolve=True))
     OmegaConf.save(resolved, str(run_dir / "config.yaml"))
+    OmegaConf.save(resolved, str(run_dir / "exp.yaml"))
 
     # Buffer summary for quick sanity-checking.
     buf_meta = OmegaConf.create({"buffer_path": str(buffer_path), **summary})
@@ -106,6 +109,7 @@ def _prepare_run_dir(cfg: DictConfig, buffer_path: Path, summary: dict) -> Path:
         src = Path(hydra.utils.to_absolute_path(str(stats_path)))
         if src.exists():
             shutil.copy2(src, run_dir / "rollout_config.yaml")
+    (run_dir / "rollout").mkdir(exist_ok=True, parents=True)
 
     return run_dir
 
@@ -218,6 +222,7 @@ def main(cfg: DictConfig) -> None:
     summary = summarize_buffer(buffer_path)
     print("Buffer summary:", summary)
     ckpt_root = _prepare_run_dir(cfg, buffer_path=buffer_path, summary=summary)
+    print(f"Run directory: {ckpt_root}")
 
     dataset = BufferSequenceDataset(
         buffer_path=buffer_path,

@@ -2,7 +2,9 @@
 
 hydra:
   run:
-    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    dir: /home/ferdinand/activeinference/factr/checkpoints/${exp_name}
+
+exp_name: fg1_n2_1
 
 data:
   buffer_path: /home/ferdinand/activeinference/factr/process_data/processed_data/fourgoals_1_norm2/buf.pkl
@@ -21,7 +23,7 @@ logging:
   entity: null
   tags: []
   log_every: 100
-  name: fg1_n2_1
+  name: ${exp_name}
 
 
 model:
@@ -68,5 +70,4 @@ train:
   # Save checkpoint settings
   save_every: 1000
   keep_last: 1
-
 

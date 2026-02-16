@@ -335,3 +335,22 @@ If sampled trajectories are too similar:
 - increase `eval_plot_sample_temperature` for visualization,
 - and/or improve latent usage via `beta`, `free_bits`, and `d_z` tuning.
 
+
+
+How I tracked it:
+
+  - Searched for unique tokens (sample_temperature, eval_plot_sample_temperature,
+    prior_sample_action_std_mean, plot_temp, Sample diversity) across the repo.
+  - Backed up the affected files first.
+  - Removed only the matching blocks in those files:
+      - factr/models/lowdim_action_transformer.py
+      - factr/cfg/task/single_franka_lowdim.yaml
+      - LOWDIM_TRAINING_DIAGNOSTICS_GUIDE.md
+  - Re-ran search to confirm those tokens were gone.
+  - Created patches/reapply_sampling_diversity.patch from backup-vs-current diffs.
+      - z = mu + T * sigma * eps
+  - Effect:
+      - T = 1.0: normal learned stochasticity.
+      - T > 1.0: wider spread, more diverse but can become less realistic.
+      - T < 1.0: tighter, more conservative, less diversity.
+  - In your code, it was only used for sampled trajectory generation (fan-plot/eval sampling path),

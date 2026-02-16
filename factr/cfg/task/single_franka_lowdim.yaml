@@ -3,8 +3,8 @@ obs_dim: 27
 ac_dim: 9
 cam_indexes: []
 n_cams: ${len:${task.cam_indexes}}
-eval_plot_max_steps: 300
-eval_plot_prediction_stride: 5
+eval_plot_max_steps: 400
+eval_plot_prediction_stride: 25
 eval_plot_num_samples: 10
 
 train_buffer:

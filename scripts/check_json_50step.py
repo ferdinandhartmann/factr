@@ -1,9 +1,10 @@
 import json
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.cm as cm
-from pathlib import Path
 import sys
+from pathlib import Path
+
+import matplotlib.cm as cm
+import matplotlib.pyplot as plt
+import numpy as np
 
 # ==================================================================================
 # 1. 設定

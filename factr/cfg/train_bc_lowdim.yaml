@@ -8,31 +8,32 @@ hydra:
   run:
     dir: /home/ferdinand/activeinference/factr/checkpoints/${exp_name}
 
-exp_base_name: new_test_beforecommit
+buffer_path: /home/ferdinand/activeinference/factr/process_data/processed_data/fourgoals_1_act/buf_train.pkl
+test_buffer_path: /home/ferdinand/activeinference/factr/process_data/processed_data/fourgoals_1_act/buf_test.pkl
+
+exp_base_name: ai_act_11
+suffix: _
+exp_name: ${exp_base_name}
+
 batch_size: 64
-num_workers: 4
+num_workers: 8
 lr: 0.0003
-max_iterations: 4000
-eval_freq: 500
+max_iterations: 6000
+eval_freq: 1500
 save_freq: 2000
 schedule_freq: 1
 devices: 1
-seed: 45
+seed: 42
 resume: false
 
-suffix: _
-buffer_path: /home/ferdinand/activeinference/factr/process_data/processed_data/fourgoals_1_act/buf_train.pkl
-test_buffer_path: /home/ferdinand/activeinference/factr/process_data/processed_data/fourgoals_1_act/buf_test.pkl
 ac_chunk: 30
 obs_window: 8
 train_transform: none
 test_transform: none
 
-exp_name: ${exp_base_name}
-
 wandb:
   name: ${exp_name}
-  project: lowdim_stiff_pose
+  project: ai_act
   group: bc
   debug: False
   entity: None

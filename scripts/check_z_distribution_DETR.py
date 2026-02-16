@@ -1,24 +1,19 @@
-import torch
-import torch.nn.functional as F
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.animation as animation
-from scipy.stats import norm
-from pathlib import Path
-from tqdm import tqdm
-from hydra.utils import instantiate
-from omegaconf import OmegaConf
+import argparse
 import pickle
-import yaml
 import sys
 import warnings
-import math
-import os
+from pathlib import Path
+
 import cv2
-import argparse
-from tqdm import tqdm
 import matplotlib.animation as animation
+import matplotlib.pyplot as plt
+import numpy as np
+import torch
+import yaml
+from hydra.utils import instantiate
+from omegaconf import OmegaConf
 from scipy.stats import norm
+from tqdm import tqdm
 
 # --- インポートの直後に追加 ---
 # def seed_everything(seed=42):
@@ -196,7 +191,7 @@ def load_and_extract_raw_data(pkl_path: Path):
                         img_flat = np.frombuffer(v["data"], dtype=np.uint8)
                         img = img_flat.reshape((v["height"], v["width"], -1))
                     image_obs.append(img)
-                except Exception as e:
+                except Exception:
                     pass
 
     if obs_topic in entries:

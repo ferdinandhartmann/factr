@@ -1,8 +1,8 @@
 import pickle
-import numpy as np
-import matplotlib.pyplot as plt
 from pathlib import Path
-import sys
+
+import matplotlib.pyplot as plt
+import numpy as np
 from tqdm import tqdm
 
 # ==================================================================================
@@ -94,7 +94,7 @@ def process_attention_ratio_standard_style(pkl_path, save_root):
 
     ax.set_xlabel("Time Steps")
     ax.set_ylabel("Normalized Attention")
-    ax.set_title(f"Cross-Attention vision vs force ratio")
+    ax.set_title("Cross-Attention vision vs force ratio")
 
     # グリッドと凡例 (標準位置)
     ax.grid(True, alpha=0.3)

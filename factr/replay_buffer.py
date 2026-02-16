@@ -42,7 +42,8 @@ def _img_to_tensor(x):
     return torch.from_numpy(x).permute((0, 3, 1, 2))
 
 
-_to_tensor = lambda x: torch.from_numpy(x).float()
+def _to_tensor(x):
+    return torch.from_numpy(x).float()
 
 
 # cache loading from the buffer list to half memory overhead
@@ -321,6 +322,7 @@ class RobobufReplayBufferLowdim(ReplayBuffer):
         self.use_internal_split = bool(use_internal_split)
         self.transform = None
         self.s_a_mask = []
+        self.sample_metadata = []
 
         if self.action_index_offset < 0:
             raise ValueError(f"action_index_offset must be >= 0, got {self.action_index_offset}.")
@@ -356,7 +358,12 @@ class RobobufReplayBufferLowdim(ReplayBuffer):
         for ep_idx in tqdm.tqdm(use_episode_indices):
             episode = episodes[ep_idx]
             label = episode_labels[ep_idx]
-            self._append_episode_samples(episode, label, ac_chunk=ac_chunk)
+            self._append_episode_samples(
+                episode,
+                label,
+                ac_chunk=ac_chunk,
+                episode_id=ep_idx,
+            )
 
     @staticmethod
     def _build_episodes(buf):
@@ -405,7 +412,7 @@ class RobobufReplayBufferLowdim(ReplayBuffer):
                 labels.append(_to_label_index(raw_label, self.stiffness_classes) + 1)
         return labels
 
-    def _append_episode_samples(self, episode, label, ac_chunk):
+    def _append_episode_samples(self, episode, label, ac_chunk, episode_id):
         episode_states = [self._extract_obs_vector(step) for step in episode]
         state_dim = episode_states[0].shape[0]
         if state_dim != self.obs_dim:
@@ -439,6 +446,14 @@ class RobobufReplayBufferLowdim(ReplayBuffer):
             pose_chunk = np.stack(chunk_actions, axis=0).astype(np.float32)
             loss_mask = np.asarray(loss_mask, dtype=np.float32)
             self.s_a_mask.append((obs_window, pose_chunk, loss_mask, int(label)))
+            self.sample_metadata.append(
+                {
+                    "episode_id": int(episode_id),
+                    "episode_step": int(t_idx),
+                    "episode_length": int(len(episode)),
+                    "stiffness_label": int(label),
+                }
+            )
 
     def __getitem__(self, idx):
         obs_window, pose_chunk, loss_mask, label = self.s_a_mask[idx]
@@ -449,3 +464,8 @@ class RobobufReplayBufferLowdim(ReplayBuffer):
         label_tensor = torch.tensor(label, dtype=torch.long)
 
         return ({}, obs_tensor), action_tensor, mask_tensor, label_tensor
+
+    def get_sample_metadata(self, idx):
+        if idx < 0 or idx >= len(self.sample_metadata):
+            raise IndexError(f"Sample index out of range: {idx}")
+        return self.sample_metadata[idx]

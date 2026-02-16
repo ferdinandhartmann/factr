@@ -1,12 +1,10 @@
-import torch
-import numpy as np
-import cv2
-from pathlib import Path
-import matplotlib.pyplot as plt
-import pickle
 import argparse
-from omegaconf import OmegaConf
-from hydra.utils import instantiate
+import pickle
+from pathlib import Path
+
+import cv2
+import matplotlib.pyplot as plt
+import numpy as np
 
 
 def load_and_extract_raw_data(pkl_path: Path):
@@ -162,7 +160,7 @@ def plot_variance_with_frames(z_pkl_path, raw_images, save_dir):
             ax_main.axvline(x=step, color="gray", linestyle="--", alpha=0.4)
 
     ax_main.set_yscale("log")
-    ax_main.set_title(f"Z-Variance & Observations", fontsize=15)
+    ax_main.set_title("Z-Variance & Observations", fontsize=15)
     ax_main.set_ylabel("Variance (Log Scale)", fontsize=12)
     ax_main.set_xlabel("Timestep", fontsize=12, labelpad=5)
     ax_main.grid(True, which="both", linestyle=":", alpha=0.5)

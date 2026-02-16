@@ -5,12 +5,14 @@
 
 
 from abc import ABC, abstractmethod
+from pathlib import Path
 
 import numpy as np
 import torch
-import wandb
+from hydra.core.hydra_config import HydraConfig
 from torch.nn.parallel import DistributedDataParallel as DDP
-import os
+
+import wandb
 
 TRAIN_LOG_FREQ, EVAL_LOG_FREQ = 100, 1
 
@@ -63,6 +65,8 @@ class BaseTrainer(ABC):
         self.schedule = None if schedule_builder is None else schedule_builder(self.optim)
         self._trackers = dict()
         self._is_train = True
+        self._wandb_last_step = None
+        self._wandb_last_payload = {}
         self.set_train()
 
     @abstractmethod
@@ -91,15 +95,21 @@ class BaseTrainer(ABC):
             global_step=global_step,
         )
 
+        run_dir = self._get_run_dir()
+        run_dir.mkdir(parents=True, exist_ok=True)
+
         # Save current checkpoint
-        current_ckpt = f"ckpt_{global_step:06d}.ckpt"
+        current_ckpt = run_dir / f"ckpt_{global_step:06d}.ckpt"
         torch.save(save_dict, current_ckpt)
 
         # Remove old checkpoints, keeping only the 2 most recent
-        ckpts = sorted([f for f in os.listdir(".") if f.startswith("ckpt_") and f.endswith(".ckpt")])
+        ckpts = sorted(run_dir.glob("ckpt_*.ckpt"))
         for old_ckpt in ckpts[:-top_k]:  # Keep last 2 checkpoints
-            os.remove(old_ckpt)
-        torch.save(save_dict, f"rollout/latest_ckpt.ckpt")
+            old_ckpt.unlink()
+
+        rollout_dir = run_dir / "rollout"
+        rollout_dir.mkdir(parents=True, exist_ok=True)
+        torch.save(save_dict, rollout_dir / "latest_ckpt.ckpt")
 
     def load_checkpoint(self, load_path):
         load_dict = torch.load(load_path, weights_only=False)
@@ -145,7 +155,23 @@ class BaseTrainer(ABC):
         tracker.append(value)
 
         if global_step % log_freq == 0 and wandb.run is not None:
-            wandb.log({key: tracker.mean}, step=global_step)
+            mean_val = float(tracker.mean)
+            wandb.log({key: mean_val}, step=global_step)
+
+            # Cache the exact payload we sent to wandb so callers can optionally
+            # print an aggregated line to the terminal.
+            if self._wandb_last_step != global_step:
+                self._wandb_last_step = global_step
+                self._wandb_last_payload = {}
+            self._wandb_last_payload[key] = mean_val
+
+    def consume_wandb_payload(self, global_step: int) -> dict:
+        """Return (and clear) the last cached wandb payload for `global_step`."""
+        if self._wandb_last_step != global_step:
+            return {}
+        payload = dict(self._wandb_last_payload)
+        self._wandb_last_payload = {}
+        return payload
 
     def set_device(self, device_id):
         # Move model to device
@@ -155,3 +181,10 @@ class BaseTrainer(ABC):
         if torch.cuda.device_count() > 1:
             print(f"Using {torch.cuda.device_count()} GPUs with DataParallel")
             self.model = torch.nn.DataParallel(self.model)
+
+    @staticmethod
+    def _get_run_dir() -> Path:
+        try:
+            return Path(HydraConfig.get().runtime.output_dir)
+        except Exception:
+            return Path.cwd()

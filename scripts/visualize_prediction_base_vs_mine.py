@@ -1,19 +1,19 @@
-import torch
-import numpy as np
-import cv2
-from pathlib import Path
-import matplotlib.pyplot as plt
-from tqdm import tqdm
-import yaml
-import pickle
-from collections import deque
-import sys
-import warnings
 import argparse
+import pickle
+import warnings
+from collections import deque
+from pathlib import Path
+
+import cv2
+import matplotlib.pyplot as plt
+import numpy as np
+import torch
+import yaml
+from hydra.utils import instantiate
 
 # Hydra/OmegaConf 関連
 from omegaconf import OmegaConf
-from hydra.utils import instantiate
+from tqdm import tqdm
 
 # 先にライブラリをインポートして resolver を登録させる
 try:

@@ -1,19 +1,17 @@
-import torch
-import torch.nn.functional as F
-import numpy as np
-import cv2
-from pathlib import Path
-from tqdm import tqdm
-from hydra.utils import instantiate
-from omegaconf import OmegaConf
-import yaml
+import argparse
 import pickle
-from collections import deque
 import sys
 import warnings
-import math
-import argparse
-import json  # 追加
+from collections import deque
+from pathlib import Path
+
+import cv2
+import numpy as np
+import torch
+import yaml
+from hydra.utils import instantiate
+from omegaconf import OmegaConf
+from tqdm import tqdm
 
 # ==========================================
 # 警告・インポート関連
@@ -159,7 +157,7 @@ def load_and_extract_raw_data(pkl_path: Path):
                         img_flat = np.frombuffer(v["data"], dtype=np.uint8)
                         img = img_flat.reshape((v["height"], v["width"], -1))
                     image_obs.append(img)
-                except Exception as e:
+                except Exception:
                     pass
 
     if obs_topic in entries:

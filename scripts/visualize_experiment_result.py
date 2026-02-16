@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
 
-import pickle
 import json
-import numpy as np
-import matplotlib.pyplot as plt
-from matplotlib.animation import FuncAnimation, PillowWriter
+import pickle
 from pathlib import Path
+
 import cv2
-from PIL import Image
-import os
 import imageio.v2 as imageio
+import matplotlib.pyplot as plt
+import numpy as np
 from matplotlib.ticker import MultipleLocator
+from PIL import Image
 
 
 def load_data(data_path):
@@ -534,7 +533,7 @@ def plot_joint_data(pkl_data, output_dir):
 
             k_vals = []
             d_vals = []
-            k_t = []
+            # k_t = []
             for msg in imp_data:
                 # Robust extraction: look for common keys
                 k = None

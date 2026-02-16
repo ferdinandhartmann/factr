@@ -14,15 +14,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import os
-import math
-import time
 
 from factr.agent import BaseAgent
-from factr.models.classification import ClassificationHead
-from factr.models.cvae import CVAEModule
-from factr.models.ada_transformer import AdaTransformerDecoder, AdaTransformerDecoderLayer
-from factr import misc
 
 
 def _get_clones(module, N):
@@ -351,7 +344,7 @@ class PosteriorNet(nn.Module):
         post_pos = torch.zeros_like(post_cls)
 
         # src = [POST_CLS, c_tokens, x_tokens]
-        if gt_only == True:
+        if gt_only:
             src = torch.cat([post_cls, x_tokens], dim=0)  # (1+N+T,B,D)
             pos = torch.cat([post_pos, x_pos], dim=0)
 

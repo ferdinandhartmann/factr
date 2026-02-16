@@ -8,10 +8,9 @@ target-version = "py39"
 # "I" handles automatic import sorting (replaces isort)
 select = ["E", "F", "I"]
 unfixable = ["B"]
-ignore = ["E501"]
+ignore = ["E501", "E722"]
 
 [tool.ruff.format]
-# This ensures it looks exactly like Black
 quote-style = "double"
 indent-style = "space"
 skip-magic-trailing-comma = false

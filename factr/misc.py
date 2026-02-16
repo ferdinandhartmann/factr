@@ -8,6 +8,7 @@ import functools
 import os
 import signal
 import sys
+from pathlib import Path
 
 import yaml
 from hydra.core.hydra_config import HydraConfig
@@ -82,30 +83,48 @@ def create_wandb_run(wandb_cfg, job_config, run_id=None):
     return wandb_run.id
 
 
+def _get_run_dir() -> Path:
+    try:
+        output_dir = HydraConfig.get().runtime.output_dir
+        return Path(output_dir)
+    except Exception:
+        return Path.cwd()
+
+
 def init_job(cfg):
     cfg_yaml = OmegaConf.to_yaml(cfg)
     params = yaml.safe_load(cfg_yaml)
     exp_name = str(params.get("exp_name", ""))
-    latest_ckpt = "rollout/latest_ckpt.ckpt"
+    run_dir = _get_run_dir()
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    exp_config_path = run_dir / "exp_config.yaml"
+    latest_ckpt = run_dir / "rollout" / "latest_ckpt.ckpt"
 
     should_resume = False
-    if os.path.exists("exp_config.yaml"):
-        old_config = yaml.safe_load(open("exp_config.yaml", "r"))
+    if exp_config_path.exists():
+        with exp_config_path.open("r") as f:
+            old_config = yaml.safe_load(f)
         old_params = old_config.get("params", {}) if isinstance(old_config, dict) else {}
         old_exp_name = str(old_params.get("exp_name", ""))
 
         explicit_resume = OmegaConf.select(cfg, "resume", default=None)
         if explicit_resume is None:
             same_run_name = (exp_name != "") and (old_exp_name == exp_name)
-            should_resume = same_run_name and os.path.exists(latest_ckpt)
+            should_resume = same_run_name and latest_ckpt.exists()
         else:
-            should_resume = bool(explicit_resume) and os.path.exists(latest_ckpt)
+            should_resume = bool(explicit_resume) and latest_ckpt.exists()
 
         if should_resume:
             create_wandb_run(cfg.wandb, old_params, old_config.get("wandb_id"))
-            return latest_ckpt
+            return str(latest_ckpt)
 
     wandb_id = create_wandb_run(cfg.wandb, params)
     save_dict = dict(wandb_id=wandb_id, params=params)
-    yaml.dump(save_dict, open("exp_config.yaml", "w"))
+    with exp_config_path.open("w") as f:
+        yaml.dump(save_dict, f)
+    rollout_dir = run_dir / "rollout"
+    rollout_dir.mkdir(parents=True, exist_ok=True)
+    with (rollout_dir / "exp_config.yaml").open("w") as f:
+        yaml.dump(save_dict, f)
     return None
