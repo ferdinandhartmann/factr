@@ -2,7 +2,7 @@
 import sys
 import warnings
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import matplotlib
 
@@ -57,7 +57,10 @@ PREDICTION_STRIDE = 50  # stride for fan plot + 3d plot
 SAMPLE_ANCHOR_STEP = -1  # -1 means middle step
 VIEW_ELEV = 24
 VIEW_AZIM = -60
-SHOW_PLOT = True
+SHOW_PLOT = False  # shows also 3d plot
+ENABLE_TRAIN_BACKGROUND = True
+TRAIN_BACKGROUND_MAX_TRAJ = 200
+TRAIN_BACKGROUND_ONLY_MEDIUM = True
 
 GLOBAL_AXIS_LIMITS = {
     "x": (0.2, 0.6),
@@ -122,6 +125,41 @@ def _get_split_label(rollout_cfg: Dict, episode_name: str) -> str:
     if episode_name in train_eps:
         return "train"
     return "unknown"
+
+
+def _resolve_train_buffer_path(rollout_cfg: Dict, buffer_path: Path) -> Path:
+    split_cfg = rollout_cfg.get("split_config", {}) if isinstance(rollout_cfg, dict) else {}
+    train_name = split_cfg.get("train_buffer") or split_cfg.get("train_buffer_name") or "buf_train.pkl"
+    train_name = str(train_name)
+    if not train_name.endswith(".pkl"):
+        train_name = f"{train_name}.pkl"
+    train_path = Path(train_name)
+    if train_path.is_absolute():
+        return train_path
+    return buffer_path.parent / train_path
+
+
+def _load_train_buffer_actions(buf_path: Path) -> List[np.ndarray]:
+    import pickle
+
+    with open(buf_path, "rb") as f:
+        buffer = pickle.load(f)
+
+    actions_list = []
+    if isinstance(buffer, (list, tuple)) and buffer and isinstance(buffer[0], (list, tuple)):
+        for traj in buffer:
+            if not traj or not isinstance(traj[0], tuple):
+                continue
+            actions = []
+            for entry in traj:
+                try:
+                    _, action, _ = entry
+                    actions.append(np.asarray(action, dtype=np.float32))
+                except Exception:
+                    continue
+            if actions:
+                actions_list.append(np.stack(actions, axis=0))
+    return actions_list
 
 
 def _extract_ep_index(path: Path) -> Tuple[int, str]:
@@ -560,6 +598,7 @@ def _build_fan_figure_with_measured(
     mask_chunks: np.ndarray,
     source_time_index: np.ndarray,
     prediction_stride: int,
+    background_actions: Optional[List[np.ndarray]] = None,
 ):
     anchor_steps = int(
         min(
@@ -592,6 +631,24 @@ def _build_fan_figure_with_measured(
 
     for dim in range(pose_dim):
         ax = axes[dim]
+
+        if background_actions:
+            start_t = int(source_time_index[0]) if len(source_time_index) > 0 else 0
+            max_len = max(0, episode_x_max - start_t + 1)
+            for traj in background_actions:
+                if traj.ndim != 2 or traj.shape[1] < pose_dim:
+                    continue
+                use_len = min(int(traj.shape[0]), int(max_len))
+                if use_len < 2:
+                    continue
+                x_vals = start_t + np.arange(use_len)
+                ax.plot(
+                    x_vals,
+                    traj[:use_len, dim],
+                    color="#BDBDBD",
+                    linewidth=0.6,
+                    alpha=0.2,
+                )
 
         ax.plot(
             source_time_index[:anchor_steps],
@@ -944,6 +1001,19 @@ def main():
     else:
         selected = [_select_episode_file(episode_files, episode_file_name, episode_index)]
 
+    train_background = None
+    if ENABLE_TRAIN_BACKGROUND:
+        train_buf_path = _resolve_train_buffer_path(rollout_cfg, buffer_path)
+        if train_buf_path.exists():
+            train_background = _load_train_buffer_actions(train_buf_path)
+            if TRAIN_BACKGROUND_MAX_TRAJ > 0:
+                train_background = train_background[: int(TRAIN_BACKGROUND_MAX_TRAJ)]
+            if action_stats is not None:
+                train_background = [_apply_grouped_transform(traj, action_stats, inverse=True) for traj in train_background]
+            print(f"Loaded train background trajectories: {len(train_background)} | {train_buf_path}")
+        else:
+            print(f"Train buffer not found for background: {train_buf_path}")
+
     for episode_file in selected:
         print(f"Selected episode file: {episode_file}")
 
@@ -1039,6 +1109,9 @@ def main():
             mask_chunks=mask_arr[:, :, :pose_dim],
             source_time_index=steps_arr,
             prediction_stride=max(1, int(PREDICTION_STRIDE)),
+            background_actions=train_background
+            if (ENABLE_TRAIN_BACKGROUND and train_background) and (not TRAIN_BACKGROUND_ONLY_MEDIUM or "medium" in episode_name)
+            else None,
         )
         if fig_fan is not None:
             fan_path = out_dir / f"{episode_file.stem}_predictions.png"
