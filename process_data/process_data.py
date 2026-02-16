@@ -569,6 +569,7 @@ def main(cfg: DictConfig):
     print(f"These episodes will be processed in this order: {[str(p.name) for p in all_episodes]}")
 
     trajectories = []
+    processed_episode_names = []
     all_states = []
     all_states_for_norm = []
     all_actions = []
@@ -579,6 +580,7 @@ def main(cfg: DictConfig):
     for episode_pkl in pbar:
         with open(episode_pkl, "rb") as f:
             traj_data = pickle.load(f)
+        processed_episode_names.append(str(episode_pkl.stem))
         traj_data, avg_freq = sync_data_slowest(traj_data, all_topics)
         pbar.set_postfix({"avg_freq": f"{avg_freq:.1f} Hz"})
 
@@ -735,6 +737,12 @@ def main(cfg: DictConfig):
         #     traj[f'enc_cam_{cam_ind}'] = processed_images
         trajectories.append(traj)
 
+    if len(processed_episode_names) != len(trajectories):
+        raise RuntimeError(
+            f"Episode name alignment error: processed_episode_names={len(processed_episode_names)} "
+            f"trajectories={len(trajectories)}"
+        )
+
     # normalize states and actions
     state_norm_stats = normalize_states_groupwise(all_states_for_norm, state_obs_topics, state_topic_dims, cfg)
     action_norm_stats = normalize_actions_groupwise(all_actions, cfg)
@@ -756,6 +764,8 @@ def main(cfg: DictConfig):
         )
         train_trajectories = [trajectories[idx] for idx in train_indices]
         test_trajectories = [trajectories[idx] for idx in test_indices]
+        train_episode_names = [processed_episode_names[idx] for idx in train_indices]
+        test_episode_names = [processed_episode_names[idx] for idx in test_indices]
 
         train_buffer = generate_robobuf(train_trajectories)
         test_buffer = generate_robobuf(test_trajectories)
@@ -773,6 +783,8 @@ def main(cfg: DictConfig):
                 "num_episodes_test": len(test_trajectories),
                 "train_buffer": train_file.name,
                 "test_buffer": test_file.name,
+                "train_episodes": train_episode_names,
+                "test_episodes": test_episode_names,
             }
         )
         print(
@@ -784,7 +796,7 @@ def main(cfg: DictConfig):
         buffer = generate_robobuf(trajectories)
         with open(output_dir / f"{buffer_name}.pkl", "wb") as f:
             pickle.dump(buffer.to_traj_list(), f)
-        split_info.update({"all_buffer": f"{buffer_name}.pkl"})
+        split_info.update({"all_buffer": f"{buffer_name}.pkl", "episodes": processed_episode_names})
 
     # dump rollout config
     obs_config = {

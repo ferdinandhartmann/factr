@@ -314,6 +314,8 @@ class LowdimStiffnessCVAEAgent(nn.Module):
 
         recon = F.l1_loss(pred_actions, target_actions, reduction="none")
         recon = (recon * mask).sum() / torch.clamp(mask.sum(), min=1.0)
+        recon_l2 = F.mse_loss(pred_actions, target_actions, reduction="none")
+        recon_l2 = (recon_l2 * mask).sum() / torch.clamp(mask.sum(), min=1.0)
 
         kl = _kl_diag_gaussians(mu_q, logvar_q, mu_p, logvar_p)
         if self.free_bits is not None:
@@ -331,6 +333,7 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         return {
             "total_loss": total_loss,
             "l1_loss": recon,
+            "l2_loss": recon_l2,
             "kl": kl,
             "prior_std_mean": prior_std_mean,
             "posterior_std_mean": posterior_std_mean,

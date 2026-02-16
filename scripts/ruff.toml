@@ -1,0 +1,5 @@
+# This tells Ruff to look at the main config in the parent directory first
+extend = "../pyproject.toml"
+
+# Overwrite only the specific setting you want to change
+line-length = 160

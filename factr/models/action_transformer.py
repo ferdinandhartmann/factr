@@ -472,10 +472,13 @@ class TransformerAgent(BaseAgent):
             ac_flat_hat = actions_hat.reshape((actions_hat.shape[0], -1))
             all_l1 = F.l1_loss(ac_flat_hat, ac_flat, reduction="none")
             recon = (all_l1 * mask_flat).mean()
+            all_l2 = F.mse_loss(ac_flat_hat, ac_flat, reduction="none")
+            recon_l2 = (all_l2 * mask_flat).mean()
 
             return {
                 "total_loss": recon,
                 "l1_loss": recon,
+                "l2_loss": recon_l2,
                 "kl": torch.tensor(0.0, device=recon.device),  # KLは0として出力
             }
 
@@ -506,6 +509,8 @@ class TransformerAgent(BaseAgent):
         recon = (
             (all_l1 * mask_flat).sum(dim=[-1, -2]).mean()
         )  # (B:mean, T:sum, A:sum) -> (,) 共通しているshapeは平均、その他はsum
+        all_l2 = F.mse_loss(ac_flat_hat, ac_flat, reduction="none")
+        recon_l2 = (all_l2 * mask_flat).sum(dim=[-1, -2]).mean()
 
         kl = kl_diag_gaussians(mu_q, logvar_q, mu_p, logvar_p)  # (B,)
         if self.free_bits is not None:
@@ -522,6 +527,7 @@ class TransformerAgent(BaseAgent):
         return {
             "total_loss": loss,
             "l1_loss": recon,  # 再構成誤差 (L1)
+            "l2_loss": recon_l2,
             "kl": kl,  # KLダイバージェンス
         }
 
