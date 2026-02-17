@@ -55,6 +55,9 @@ NORMALIZATION_MODE = "apply"  # one of: auto, apply, skip
 PREDICTION_STRIDE = 1
 MAX_PLOT_DIMS = 9
 GOAL_EPISODE_POST_TEMP = 5.0
+RPY_SUBTRACT_PI = True  # If True, subtract pi from one selected RPY axis for plotting.
+RPY_SUBTRACT_PI_AXIS = 0  # 0=roll, 1=pitch, 2=yaw
+RPY_PLOT_UNIT = "deg"  # "rad" or "deg"
 
 OUT_DIR_OVERRIDE = None
 
@@ -725,6 +728,54 @@ def _align_angles_to_reference(reference: np.ndarray, values: np.ndarray) -> np.
     return (reference + _wrap_to_pi(values - reference)).astype(np.float32)
 
 
+def _get_configured_rpy_axis(angles: np.ndarray) -> int:
+    if angles.ndim != 2 or angles.shape[1] < 3:
+        return -1
+    axis = int(RPY_SUBTRACT_PI_AXIS)
+    if axis < 0 or axis >= angles.shape[1]:
+        return -1
+    return axis
+
+
+def _get_pi_shift_from_axis_start(angles: np.ndarray) -> float:
+    if not bool(RPY_SUBTRACT_PI):
+        return 0.0
+    axis = _get_configured_rpy_axis(angles)
+    if axis < 0:
+        return 0.0
+    start_val = float(angles[0, axis])
+    if not np.isfinite(start_val):
+        return 0.0
+    if start_val < -2.0:
+        return float(np.pi)
+    if start_val > 2.0:
+        return float(-np.pi)
+    return 0.0
+
+
+def _apply_rpy_axis_shift(angles: np.ndarray, shift_value: float) -> np.ndarray:
+    axis = _get_configured_rpy_axis(angles)
+    if axis < 0 or abs(float(shift_value)) < 1e-12:
+        return angles
+    shifted = angles.copy()
+    shifted[:, axis] = shifted[:, axis] + float(shift_value)
+    return shifted.astype(np.float32)
+
+
+def _get_rpy_plot_unit() -> str:
+    unit = str(RPY_PLOT_UNIT).strip().lower()
+    if unit not in ("rad", "deg"):
+        return "rad"
+    return unit
+
+
+def _convert_rpy_to_plot_unit(angles_rad: np.ndarray) -> np.ndarray:
+    unit = _get_rpy_plot_unit()
+    if unit == "deg":
+        return np.rad2deg(angles_rad).astype(np.float32)
+    return angles_rad.astype(np.float32)
+
+
 def _compute_pose_rpy(obs: np.ndarray) -> np.ndarray:
     if obs.ndim != 2 or obs.shape[1] < 9:
         return np.zeros((0, 3), dtype=np.float32)
@@ -735,6 +786,29 @@ def _compute_pose_rpy(obs: np.ndarray) -> np.ndarray:
         rot = _rot6d_to_matrix(pose[idx, 3:9])
         out[idx] = _matrix_to_rpy(rot)
     return _unwrap_angles(out)
+
+
+def _rotation_geodesic_distance_rad(rot_a: np.ndarray, rot_b: np.ndarray) -> float:
+    rel = rot_a.T @ rot_b
+    trace_rel = float(np.trace(rel))
+    cos_theta = np.clip((trace_rel - 1.0) * 0.5, -1.0, 1.0)
+    return float(np.arccos(cos_theta))
+
+
+def _compute_pose_geodesic_distance(true_obs: np.ndarray, pred_obs: np.ndarray) -> np.ndarray:
+    if true_obs.ndim != 2 or pred_obs.ndim != 2:
+        return np.zeros((0,), dtype=np.float32)
+    if true_obs.shape[1] < 9 or pred_obs.shape[1] < 9:
+        return np.zeros((0,), dtype=np.float32)
+    if true_obs.shape[0] != pred_obs.shape[0]:
+        return np.zeros((0,), dtype=np.float32)
+
+    geod = np.zeros((true_obs.shape[0],), dtype=np.float32)
+    for idx in range(true_obs.shape[0]):
+        rot_true = _rot6d_to_matrix(true_obs[idx, 3:9])
+        rot_pred = _rot6d_to_matrix(pred_obs[idx, 3:9])
+        geod[idx] = _rotation_geodesic_distance_rad(rot_true, rot_pred)
+    return geod
 
 
 def _build_obs_prediction_figure(
@@ -755,8 +829,8 @@ def _build_obs_prediction_figure(
     has_rpy = true_obs.shape[1] >= 9 and pred_mean.shape[1] >= 9
 
     if has_rpy:
-        fig = plt.figure(figsize=(5 * n_cols, 2.8 * n_rows + 3.4))
-        gs = fig.add_gridspec(n_rows + 1, n_cols, height_ratios=[1.0] * n_rows + [1.25], hspace=0.35)
+        fig = plt.figure(figsize=(5 * n_cols, 2.8 * n_rows + 5.2))
+        gs = fig.add_gridspec(n_rows + 2, n_cols, height_ratios=[1.0] * n_rows + [1.15, 0.95], hspace=0.35)
         axes = []
         for row in range(n_rows):
             for col in range(n_cols):
@@ -764,10 +838,12 @@ def _build_obs_prediction_figure(
                 axes.append(fig.add_subplot(gs[row, col], sharex=shared))
         axes = np.asarray(axes, dtype=object)
         ax_rpy = fig.add_subplot(gs[n_rows, :], sharex=axes[0] if len(axes) > 0 else None)
+        ax_geo = fig.add_subplot(gs[n_rows + 1, :], sharex=axes[0] if len(axes) > 0 else None)
     else:
         fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 2.8 * n_rows), sharex=True)
         axes = np.array(axes).reshape(-1)
         ax_rpy = None
+        ax_geo = None
 
     for dim in range(n_dims):
         ax = axes[dim]
@@ -798,35 +874,71 @@ def _build_obs_prediction_figure(
     if ax_rpy is not None:
         rpy_true = _compute_pose_rpy(true_obs)
         rpy_pred = _compute_pose_rpy(pred_mean)
+        shift_value = _get_pi_shift_from_axis_start(rpy_true)
         if rpy_true.shape[0] == len(time_index) and rpy_pred.shape[0] == len(time_index):
+            rpy_true = _apply_rpy_axis_shift(rpy_true, shift_value)
+            rpy_pred = _apply_rpy_axis_shift(rpy_pred, shift_value)
             rpy_pred = _align_angles_to_reference(rpy_true, rpy_pred)
+            rpy_true_plot = _convert_rpy_to_plot_unit(rpy_true)
+            rpy_pred_plot = _convert_rpy_to_plot_unit(rpy_pred)
             angle_names = ["roll", "pitch", "yaw"]
+            gt_colors = ["#8B0000", "#006400", "#00008B"]
+            pred_colors = ["#FF4D4D", "#33CC66", "#4D79FF"]
             for angle_idx, angle_name in enumerate(angle_names):
                 ax_rpy.plot(
                     time_index,
-                    rpy_true[:, angle_idx],
-                    color="black",
+                    rpy_true_plot[:, angle_idx],
+                    color=gt_colors[angle_idx],
                     linewidth=1.3,
                     linestyle="-",
                     label=f"{angle_name} gt",
                 )
                 ax_rpy.plot(
                     time_index,
-                    rpy_pred[:, angle_idx],
-                    color="#E41A1C",
+                    rpy_pred_plot[:, angle_idx],
+                    color=pred_colors[angle_idx],
                     linewidth=1.2,
                     alpha=0.9,
-                    linestyle="-",
+                    linestyle=":",
                     label=f"{angle_name} pred",
                 )
-            ax_rpy.set_title("Computed RPY from pose (rad, unwrapped)")
-            ax_rpy.set_xlabel("step")
-            ax_rpy.set_ylabel("rad")
-            ax_rpy.grid(alpha=0.25)
-            ax_rpy.legend(loc="upper right", ncol=3, frameon=False, fontsize=8)
+        unit = _get_rpy_plot_unit()
+        rpy_title = f"Computed RPY from pose ({unit}, unwrapped)"
+        if bool(RPY_SUBTRACT_PI):
+            axis_names = ["roll", "pitch", "yaw"]
+            axis_idx = int(np.clip(int(RPY_SUBTRACT_PI_AXIS), 0, len(axis_names) - 1))
+            if shift_value > 0.0:
+                rpy_title += f", +pi on {axis_names[axis_idx]}"
+            elif shift_value < 0.0:
+                rpy_title += f", -pi on {axis_names[axis_idx]}"
+            else:
+                rpy_title += f", no pi shift on {axis_names[axis_idx]}"
+        ax_rpy.set_title(rpy_title)
+        ax_rpy.set_xlabel("step")
+        ax_rpy.set_ylabel(unit)
+        ax_rpy.grid(alpha=0.25)
+        ax_rpy.legend(loc="upper right", ncol=3, frameon=False, fontsize=8)
+
+        geod_rad = _compute_pose_geodesic_distance(true_obs, pred_mean)
+        if ax_geo is not None and geod_rad.shape[0] == len(time_index):
+            geod_deg = np.rad2deg(geod_rad)
+            ax_geo.plot(
+                time_index,
+                geod_deg,
+                color="#1F78B4",
+                linewidth=1.4,
+                alpha=0.9,
+                linestyle="-",
+                label="geodesic distance (deg)",
+            )
+            ax_geo.set_title("Geodesic Distance (rotation error)")
+            ax_geo.set_xlabel("step")
+            ax_geo.set_ylabel("deg")
+            ax_geo.grid(alpha=0.25)
+            ax_geo.legend(loc="upper right", ncol=1, frameon=False, fontsize=8)
 
     fig.suptitle("Observation prediction on raw episode", fontsize=12)
-    fig.tight_layout(rect=[0.02, 0.03, 0.98, 0.95 if ax_rpy is None else 0.94])
+    fig.tight_layout(rect=[0.02, 0.03, 0.98, 0.95 if ax_rpy is None else 0.93])
     return fig
 
 
