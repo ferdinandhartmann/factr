@@ -11,7 +11,7 @@ hydra:
 buffer_path: /home/ferdinand/activeinference/factr/process_data/processed_data/fourgoals_1_act/buf_train.pkl
 test_buffer_path: /home/ferdinand/activeinference/factr/process_data/processed_data/fourgoals_1_act/buf_test.pkl
 
-exp_base_name: ai_act_13_freebitsmediumsmall
+exp_base_name: ai_act_14_freebitsmedsmall_beta01
 suffix: _
 exp_name: ${exp_base_name}
 

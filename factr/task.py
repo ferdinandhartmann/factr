@@ -554,11 +554,11 @@ class BCTask(DefaultTask):
             #         wandb.log({f"eval/chunk_step_{i + 1}_mse": float(v)}, step=global_step)
 
             log_dict = {
-                "eval/task_loss": mean_val_loss,
+                "eval/posterior_l1": mean_val_loss,
                 "eval/prior_l1": mean_prior_l1,
                 "eval/posterior_kl": mean_posterior_kl,
-                "eval/action_l2": ac_l2,
-                "eval/action_lsig": ac_lsig,
+                "eval/prior_l2": ac_l2,
+                "eval/prior_lsig": ac_lsig,
                 "eval/prior_std_mean": mean_prior_std,
                 "eval/posterior_std_mean": mean_posterior_std,
                 "eval/prior_entropy": mean_prior_entropy,

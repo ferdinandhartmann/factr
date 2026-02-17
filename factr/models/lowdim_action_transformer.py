@@ -152,7 +152,7 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         self.context_encoder = nn.TransformerEncoder(encoder_layer, num_layers=encoder_layers)
         self.context_norm = nn.LayerNorm(token_dim)
 
-        if self.z_context_mode == "cls_all_obs":
+        if self.z_context_mode == "cls_all_obs":  # used for now
             context_dim = 5 * token_dim
             self.pool_proj = None
         elif self.z_context_mode == "cls_force":
@@ -257,13 +257,21 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         return tokens
 
     def _build_z_context(self, context_tokens):
+        """
+        Args:
+            context_tokens: Tensor of shape (batch_size, num_tokens, token_dim) containing
+                           [cls_token, pose_token, vel_token, wrench_token, track_token]
+        Returns:
+            Tensor of shape (batch_size, context_dim) representing the concatenated context vector.
+            "cls_all_obs": Concatenates all tokens and uses attention-weighted pooling.
+        """
         cls_token = context_tokens[:, 0]
         pose_token = context_tokens[:, 1]
         vel_token = context_tokens[:, 2]
         wrench_token = context_tokens[:, 3]
         track_token = context_tokens[:, 4]
 
-        if self.z_context_mode == "cls_all_obs":
+        if self.z_context_mode == "cls_all_obs":  # used for now
             return torch.cat([cls_token, pose_token, vel_token, wrench_token, track_token], dim=-1)
 
         if self.z_context_mode == "cls_force":
@@ -304,7 +312,7 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         mask = self._reshape_actions(mask_flat)
 
         context_tokens = self._build_context_tokens(obs, class_labels=class_labels)
-        z_context = self._build_z_context(context_tokens)
+        z_context = self._build_z_context(context_tokens)  #  Concatenates all tokens and uses attention-weighted pooling 
 
         mu_p, logvar_p = self._prior(z_context)
         mu_q, logvar_q = self.posterior(context_tokens.detach(), target_actions)

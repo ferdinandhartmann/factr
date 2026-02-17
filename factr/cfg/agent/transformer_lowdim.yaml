@@ -1,24 +1,43 @@
 _target_: factr.models.lowdim_action_transformer.LowdimStiffnessCVAEAgent
 
+# --- IO shapes / contracts ---
+# obs is windowed: `obs` has shape (B, W, obs_dim) where W = obs_window.
 obs_dim: ${task.obs_dim}
 ac_dim: ${task.ac_dim}
 ac_chunk: ${ac_chunk}
 obs_window: ${obs_window}
 
 stiffness_classes: 3
-d_z: 32 # 32
+
+# --- Model size knobs ---
+# token_dim: embedding width of every transformer token
+# hidden_dim: MLP width used inside Transformer layers (dim_feedforward) AND the prior MLP
 token_dim: 128
 hidden_dim: 256
 
+# --- CVAE latent ---
+# d_z: dimensionality of latent z.
+d_z: 16 # 32
+
 # Light KL floor to reduce "KL -> 0 + z ignored" collapse.
 # With d_z=32, free_bits=0.05 corresponds to a KL floor of 1.6.
-beta: 0.02 # 0.1 # 0.02 # 0.01
-free_bits: 0.1 # null # 0.5 # null
+beta: 10 # 0.001 # 1           # KL weight in total_loss = recon + beta * KL. 
+                    # Higher beta ⇒ stronger pressure for prior ≈ posterior (latent carries less extra “action-only” info)
+                    # Lower beta ⇒ easier for posterior to use z to fit actions well, but the prior may lag behind (bigger prior-vs-posterior gap).
+free_bits: null      # KL floor per dim (null = disable). Effective floor = free_bits * d_z.
 
+# Controls which context tokens the prior p(z|context) gets to look at.
+# - cls_all_obs: concatenate [cls, pose, vel, wrench, track] tokens
 z_context_mode: cls_all_obs
+
+# --- Transformer depths ---
+# encoder_layers: layers of the context encoder over [cls, pose, vel, wrench, track, stiffness]
+# decoder_layers: layers of the action decoder (queries -> action chunk)
+# posterior_layers: layers of the posterior encoder over [posterior_cls, context_tokens, action_tokens]
 encoder_layers: 2
 decoder_layers: 2
 posterior_layers: 2
 nhead: 8
 dropout: 0.1
+
 factr_baseline: False

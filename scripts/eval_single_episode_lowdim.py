@@ -29,7 +29,7 @@ CHECKPOINT_NAME = "latest_ckpt.ckpt"
 
 # Raw episode source
 RAW_EPISODE_DIR = Path.home() / "activeinference" / "factr" / "process_data" / "data_to_process" / "fourgoals_1" / "data"
-EPISODE_FILE_NAME = "ep_19_medium.pkl"
+EPISODE_FILE_NAME = "ep_23_stiff.pkl"
 EPISODE_INDEX = 0  # index in sorted *.pkl files
 USE_EPISODE_LIST = False
 EPISODE_LIST = [
@@ -57,7 +57,7 @@ PREDICTION_STRIDE = 50  # stride for fan plot + 3d plot
 SAMPLE_ANCHOR_STEP = -1  # -1 means middle step
 VIEW_ELEV = 24
 VIEW_AZIM = -60
-SHOW_PLOT = False  # shows also 3d plot
+SHOW_PLOT = True  # shows also 3d plot
 ENABLE_TRAIN_BACKGROUND = True
 TRAIN_BACKGROUND_MAX_TRAJ = 200
 TRAIN_BACKGROUND_ONLY_MEDIUM = True

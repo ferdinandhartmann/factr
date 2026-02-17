@@ -404,3 +404,19 @@ actions = ac_flat.view(B, self.ac_chunk, self.ac_dim)
 mu_q, logvar_q = self.posterior(c_for_posterior.detach(), actions, gt_only=self.gt_only)This confirms that the Ground Truth actions are being reshaped and passed directly to the posterior encoder at this step.
 
 (I looked it up, wrote an explanation of the process in Japanese, and then had it translated.)
+
+---
+
+  - Created patches/reapply_sampling_diversity.patch from backup-vs-current diffs.
+      - z = mu + T * sigma * eps
+  - Effect:
+      - T = 1.0: normal learned stochasticity.
+      - T > 1.0: wider spread, more diverse but can become less realistic.
+      - T < 1.0: tighter, more conservative, less diversity.
+  - In your code, it was only used for sampled trajectory generation (fan-plot/eval sampling path),
+
+  Sampling temperature:
+- `sample_temperature` multiplies latent noise:
+  - `z = mu + temperature * sigma * eps`
+- temperature > 1 increases diversity.
+- Used in eval fan plotting to visualize multi-modal behavior.
