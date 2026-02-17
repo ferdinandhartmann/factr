@@ -24,6 +24,7 @@ d_z: 8 # 16
 beta: 0.01 # 10 # 0.001 # 1           # KL weight in total_loss = recon + beta * KL. 
                     # Higher beta ⇒ stronger pressure for prior ≈ posterior (latent carries less extra “action-only” info)
                     # Lower beta ⇒ easier for posterior to use z to fit actions well, but the prior may lag behind (bigger prior-vs-posterior gap).
+kl_balance_alpha: 0.5  # KL-balance alpha in [0,1]. 0.5 keeps legacy behavior; increase (>0.5) to reduce posterior KL influence and increase prior KL influence.
 free_bits: 0.01      # KL floor per dim (null = disable). Effective floor = free_bits * d_z.
 
 # Controls which context tokens the prior p(z|context) gets to look at.

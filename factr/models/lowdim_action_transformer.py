@@ -84,6 +84,7 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         hidden_dim=512,
         beta=1.0,
         free_bits=None,
+        kl_balance_alpha=0.5,
         z_context_mode="cls_all_obs",
         encoder_layers=2,
         decoder_layers=2,
@@ -101,6 +102,7 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         self.stiffness_classes = int(stiffness_classes)
         self.beta = float(beta)
         self.free_bits = free_bits
+        self.kl_balance_alpha = float(kl_balance_alpha)
         self.z_context_mode = z_context_mode
         self.factr_baseline = bool(factr_baseline)
 
@@ -108,6 +110,8 @@ class LowdimStiffnessCVAEAgent(nn.Module):
             raise ValueError(f"Expected obs_dim=27 for grouped tokens, got {self._obs_dim}.")
         if self._ac_dim != 9:
             raise ValueError(f"Expected ac_dim=9 for pose-only prediction, got {self._ac_dim}.")
+        if not 0.0 <= self.kl_balance_alpha <= 1.0:
+            raise ValueError(f"kl_balance_alpha must be in [0, 1], got {self.kl_balance_alpha}.")
 
         self.state_slices = {
             "pose": slice(0, 9),
@@ -325,10 +329,20 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         recon_l2 = F.mse_loss(pred_actions, target_actions, reduction="none")
         recon_l2 = (recon_l2 * mask).sum() / torch.clamp(mask.sum(), min=1.0)
 
-        kl = _kl_diag_gaussians(mu_q, logvar_q, mu_p, logvar_p)
-        if self.free_bits is not None:
-            kl = torch.clamp(kl, min=float(self.free_bits) * mu_q.shape[-1])
-        kl = kl.mean()
+        # Keep the legacy behavior exactly when alpha=0.5.
+        if math.isclose(self.kl_balance_alpha, 0.5):
+            kl = _kl_diag_gaussians(mu_q, logvar_q, mu_p, logvar_p)
+            if self.free_bits is not None:
+                kl = torch.clamp(kl, min=float(self.free_bits) * mu_q.shape[-1])
+            kl = kl.mean()
+        else:
+            kl_prior = _kl_diag_gaussians(mu_q.detach(), logvar_q.detach(), mu_p, logvar_p)
+            kl_post = _kl_diag_gaussians(mu_q, logvar_q, mu_p.detach(), logvar_p.detach())
+            if self.free_bits is not None:
+                kl_floor = float(self.free_bits) * mu_q.shape[-1]
+                kl_prior = torch.clamp(kl_prior, min=kl_floor)
+                kl_post = torch.clamp(kl_post, min=kl_floor)
+            kl = (self.kl_balance_alpha * kl_prior + (1.0 - self.kl_balance_alpha) * kl_post).mean()
 
         prior_std_mean = torch.exp(0.5 * logvar_p).mean()
         posterior_std_mean = torch.exp(0.5 * logvar_q).mean()
