@@ -18,7 +18,7 @@ TRAIN_LOG_FREQ, EVAL_LOG_FREQ = 100, 1
 
 
 class RunningMean:
-    def __init__(self, max_len=TRAIN_LOG_FREQ):
+    def __init__(self, max_len=100):
         self._values = []
         self._ctr, self._max_len = 0, max_len
 
@@ -37,8 +37,9 @@ class RunningMean:
 
 
 class BaseTrainer(ABC):
-    def __init__(self, model, device_id, optim_builder, schedule_builder=None):
+    def __init__(self, model, device_id, optim_builder, schedule_builder=None, train_log_freq=TRAIN_LOG_FREQ):
         self.model, self.device_id = model, device_id
+        self.train_log_freq = int(train_log_freq)
         self.set_device(device_id)
         optimizer_type = getattr(optim_builder, "optimizer_type", None)
 
@@ -141,15 +142,16 @@ class BaseTrainer(ABC):
         # reset running mean for eval trackers
         for k in self._trackers:
             if "eval/" in k:
-                self._trackers[k] = RunningMean()
+                self._trackers[k] = RunningMean(max_len=EVAL_LOG_FREQ)
 
     def log(self, key, global_step, value):
-        log_freq = TRAIN_LOG_FREQ if self._is_train else EVAL_LOG_FREQ
+        log_freq = self.train_log_freq if self._is_train else EVAL_LOG_FREQ
         key_prepend = "train/" if self._is_train else "eval/"
         key = key_prepend + key
 
         if key not in self._trackers:
-            self._trackers[key] = RunningMean()
+            max_len = self.train_log_freq if self._is_train else EVAL_LOG_FREQ
+            self._trackers[key] = RunningMean(max_len=max_len)
 
         tracker = self._trackers[key]
         tracker.append(value)

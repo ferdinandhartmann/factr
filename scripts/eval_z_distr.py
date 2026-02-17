@@ -47,23 +47,6 @@ except Exception:
     pass
 
 
-STATE_TOPIC_SPECS = {
-    "/franka_robot_state_broadcaster/robot_state": {"keys": ["ee_pose", "pose", "data"], "dim": 9},
-    "/cartesian_impedance_controller/ee_velocity": {"keys": ["ee_velocity", "data"], "dim": 6},
-    "/franka_robot_state_broadcaster/external_wrench_in_stiffness_frame": {
-        "keys": ["external_wrench", "wrench", "data"],
-        "dim": 6,
-    },
-    "/cartesian_impedance_controller/tracking_error": {"keys": ["tracking_error", "data"], "dim": 6},
-}
-
-ACTION_TOPIC_SPECS = {
-    "/cartesian_impedance_controller/pose_command": {"keys": ["ee_pose_commanded", "position", "data"], "dim": 9},
-    "/joint_impedance_dynamic_gain_controller/joint_impedance_command": {"keys": ["position", "data"], "dim": 9},
-    "/joint_impedance_command_controller/joint_trajectory": {"keys": ["position", "data"], "dim": 9},
-}
-
-
 # ---------------------------------------------------------------------------
 # User Config (edit these variables, then run this script directly)
 # ---------------------------------------------------------------------------
@@ -73,7 +56,7 @@ CHECKPOINT_NAME = "latest_ckpt.ckpt"  # or "ckpt_020000.ckpt"
 RAW_EPISODE_DIR = Path("/home/ferdinand/activeinference/factr/process_data/data_to_process/fourgoals_1/data")
 
 USE_EPISODE_LIST = False
-EPISODE_FILE_NAME = "ep_19_medium.pkl"
+EPISODE_FILE_NAME = "ep_23_stiff.pkl"
 EPISODE_LIST = [
     # "ep_03_soft",
     "ep_09_stiff",
@@ -90,14 +73,14 @@ EPISODE_LIST = [
 ]
 
 GPU_ID = 0
-SAVE_DIR_OVERRIDE = None
+SAVE_DIR_OVERRIDE = Path.home() / "activeinference/factr/plots" / "eval_z"
 SAVE_STATIC_PLOTS = True
 SAVE_VIDEO = True
-VIDEO_FPS = 30 # playback speed
-VIDEO_DPI = 70
-VIDEO_FRAME_STRIDE = 4 # use every Nth frame for video 
-VIDEO_X_POINTS = 80 # number of x points in distribution plots
-VIDEO_X_STD_MULT = 4.0 # x range for distribution plots will be [mu - x_std_mult*std, mu + x_std_mult*std]
+VIDEO_FPS = 30  # playback speed
+VIDEO_DPI = 55
+VIDEO_FRAME_STRIDE = 4  # use every Nth frame for video
+VIDEO_X_POINTS = 80  # number of x points in distribution plots
+VIDEO_X_STD_MULT = 4.0  # x range for distribution plots will be [mu - x_std_mult*std, mu + x_std_mult*std]
 
 
 def parse_args():
@@ -188,6 +171,53 @@ def _extract_vector(msg, keys: List[str], dim: int) -> np.ndarray:
     return out
 
 
+def _extract_vector_flexible(msg, keys: List[str], expected_dim: Optional[int] = None) -> np.ndarray:
+    arr = None
+    if isinstance(msg, dict):
+        for key in keys:
+            if key in msg and msg[key] is not None:
+                arr = np.asarray(msg[key], dtype=np.float32).reshape(-1)
+                break
+
+    if arr is None:
+        arr = np.asarray(msg, dtype=np.float32).reshape(-1)
+
+    if expected_dim is None:
+        return arr
+
+    if arr.size == expected_dim:
+        return arr
+    if arr.size > expected_dim:
+        return arr[:expected_dim]
+
+    out = np.full((expected_dim,), np.nan, dtype=np.float32)
+    out[: arr.size] = arr
+    return out
+
+
+def _state_candidate_keys(topic: str) -> List[str]:
+    if topic == "/franka_robot_state_broadcaster/robot_state":
+        return ["ee_pose", "pose", "data"]
+    if topic == "/cartesian_impedance_controller/ee_velocity":
+        return ["ee_velocity", "data"]
+    if topic == "/franka_robot_state_broadcaster/external_wrench_in_stiffness_frame":
+        return ["external_wrench", "wrench", "data"]
+    if topic == "/cartesian_impedance_controller/tracking_error":
+        return ["tracking_error", "data"]
+    return ["data"]
+
+
+def _action_candidate_keys(topic: str) -> List[str]:
+    if topic == "/cartesian_impedance_controller/pose_command":
+        return ["ee_pose_commanded", "position", "data"]
+    if topic in [
+        "/joint_impedance_dynamic_gain_controller/joint_impedance_command",
+        "/joint_impedance_command_controller/joint_trajectory",
+    ]:
+        return ["position", "data"]
+    return ["position", "data"]
+
+
 def _extract_stiffness_vector(msg, key: str) -> np.ndarray:
     if isinstance(msg, dict):
         if key in msg and msg[key] is not None:
@@ -270,25 +300,24 @@ def load_episode_arrays(episode_path: Path, rollout_cfg: Dict) -> Tuple[np.ndarr
 
     state_arrays = []
     for topic in state_topics:
-        spec = STATE_TOPIC_SPECS.get(topic, {"keys": ["data"], "dim": None})
-        dim = int(spec["dim"]) if spec["dim"] is not None else None
-        if dim is None:
-            vecs = [np.asarray(item, dtype=np.float32).reshape(-1) for item in synced[topic]]
-            max_dim = max(v.shape[0] for v in vecs)
-            padded = []
-            for v in vecs:
-                out = np.full((max_dim,), np.nan, dtype=np.float32)
-                out[: v.shape[0]] = v
-                padded.append(out)
-            arr = np.stack(padded, axis=0)
-        else:
-            arr = np.stack([_extract_vector(item, spec["keys"], dim) for item in synced[topic]], axis=0)
+        keys = _state_candidate_keys(topic)
+        vecs = [_extract_vector_flexible(item, keys, expected_dim=None) for item in synced[topic]]
+        max_dim = max(v.shape[0] for v in vecs)
+        padded = []
+        for v in vecs:
+            out = np.full((max_dim,), np.nan, dtype=np.float32)
+            out[: v.shape[0]] = v
+            padded.append(out)
+        arr = np.stack(padded, axis=0)
         state_arrays.append(arr)
 
     states = np.concatenate(state_arrays, axis=-1).astype(np.float32)
 
-    act_spec = ACTION_TOPIC_SPECS.get(action_topic, {"keys": ["position", "data"], "dim": action_dim})
-    actions = np.stack([_extract_vector(item, act_spec["keys"], action_dim) for item in synced[action_topic]], axis=0).astype(np.float32)
+    act_keys = _action_candidate_keys(action_topic)
+    actions = np.stack(
+        [_extract_vector_flexible(item, act_keys, expected_dim=action_dim) for item in synced[action_topic]],
+        axis=0,
+    ).astype(np.float32)
 
     classes = None
     if stiffness_topic is not None:
@@ -430,12 +459,12 @@ def visualize_z_statistics(dists_data: Dict, save_dir: Path, ep_name: str):
     time_steps, z_dim = prior_mu.shape
     x = np.arange(time_steps)
 
-    fig_height = max(3 * z_dim, 8)
+    fig_height = max(2 * z_dim, 8)
     fig, axes = plt.subplots(z_dim, 2, figsize=(16, fig_height), sharex=True)
     if z_dim == 1:
         axes = axes.reshape(1, 2)
 
-    plt.subplots_adjust(top=0.98, bottom=0.03, left=0.1, right=0.95, hspace=0.35, wspace=0.2)
+    plt.subplots_adjust(top=0.96, bottom=0.03, left=0.08, right=0.95, hspace=0.35, wspace=0.2)
     fig.suptitle(f"Z Statistics: {ep_name} (Dims 0-{z_dim - 1})", fontsize=16)
 
     for dim in range(z_dim):
@@ -459,8 +488,8 @@ def visualize_z_statistics(dists_data: Dict, save_dir: Path, ep_name: str):
     axes[-1, 0].set_xlabel("Time Index", fontsize=12)
     axes[-1, 1].set_xlabel("Time Index", fontsize=12)
 
-    save_path = save_dir / f"z_stat_{ep_name}_long.png"
-    plt.savefig(save_path)
+    save_path = save_dir / f"{ep_name}_z_distr.png"
+    plt.savefig(save_path, dpi=150)
     plt.close()
     print(f"Saved: {save_path}")
 
@@ -493,7 +522,7 @@ def visualize_distributions_video(
     nrows = int(np.ceil(z_dim / ncols))
     fig, axes = plt.subplots(nrows, ncols, figsize=(ncols * 2.5, nrows * 2.5))
     axes = np.asarray(axes).reshape(-1)
-    plt.subplots_adjust(left=0.03, right=0.97, bottom=0.04, top=0.93, hspace=0.38, wspace=0.28)
+    plt.subplots_adjust(left=0.05, right=0.97, bottom=0.04, top=0.93, hspace=0.38, wspace=0.28)
 
     all_stds = np.concatenate([prior_std.reshape(-1), post_std.reshape(-1)], axis=0)
     safe_stds = np.clip(all_stds, 1e-6, None)
@@ -600,7 +629,6 @@ def main():
     checkpoint_name = str(CHECKPOINT_NAME)
     data_root = Path(RAW_EPISODE_DIR)
 
-    project_root = Path(__file__).resolve().parent.parent
     device = torch.device(f"cuda:{int(GPU_ID)}" if torch.cuda.is_available() else "cpu")
 
     if not run_dir.exists():
@@ -626,7 +654,7 @@ def main():
         raise FileNotFoundError(f"data_root not found: {data_root}")
 
     model_name = run_dir.parent.name
-    save_dir = Path(SAVE_DIR_OVERRIDE) if SAVE_DIR_OVERRIDE is not None else (project_root / "result_output" / model_name / "z_stats")
+    save_dir = Path(SAVE_DIR_OVERRIDE)  / str(model_name)
     save_dir.mkdir(parents=True, exist_ok=True)
 
     with open(rollout_cfg_path, "r") as f:
@@ -666,7 +694,7 @@ def main():
             visualize_z_statistics(dists, save_dir, ep_name)
 
         if SAVE_VIDEO:
-            video_path = save_dir / f"z_dist_{ep_name}.mp4"
+            video_path = save_dir / f"{ep_name}_z_distr.mp4"
             try:
                 visualize_distributions_video(
                     dists,

@@ -16,7 +16,7 @@ from factr.replay_buffer import IterableWrapper
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-plt.rcParams["figure.dpi"] = 200
+plt.rcParams["figure.dpi"] = 150
 
 
 def seed_worker(_worker_id: int) -> None:
@@ -54,7 +54,6 @@ def _make_pose_dim_names(dim):
 
 
 def _build_eval_pose_figure(true_actions, pred_actions, mask, title):
-
     valid_rows = mask[:, 0] > 0
     if np.sum(valid_rows) < 2:
         return None
@@ -89,16 +88,17 @@ def _build_eval_pose_figure(true_actions, pred_actions, mask, title):
     for ax in axes[pose_dim:]:
         ax.axis("off")
 
+    fig.suptitle(title, fontsize=12)
+
     handles, labels = axes[0].get_legend_handles_labels()
     if handles:
-        fig.legend(handles, labels, loc="upper center", ncol=2)
-    fig.suptitle(title, fontsize=12)
+        fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.98), ncol=2, frameon=False)
+
     fig.tight_layout(rect=[0.02, 0.03, 0.98, 0.95])
     return fig
 
 
 def _build_eval_error_figure(chunk_mse, dim_mse):
-
     fig, axes = plt.subplots(1, 2, figsize=(12, 4))
 
     axes[0].plot(np.arange(len(chunk_mse)), chunk_mse, color="#377EB8", linewidth=1.8)
@@ -127,8 +127,8 @@ def _build_eval_trajectory_fan_figure(
     max_steps=300,
     stiffness_label=None,
     source_time_index=None,
+    global_step=None,
 ):
-
     total_plot_steps = int(max_steps)
     if total_plot_steps < 1:
         return None
@@ -181,13 +181,6 @@ def _build_eval_trajectory_fan_figure(
                 )
                 has_sample_label = True
 
-        ax.plot(
-            source_time_index,
-            true_action_chunks[:, 0, dim],
-            color="black",
-            linewidth=1.0,
-            label="ground truth" if dim == 0 else None,
-        )
         ax.set_xlim(0, total_plot_steps - 1)
         ax.set_title(f"{dim_names[dim]}")
         ax.grid(alpha=0.25)
@@ -195,20 +188,64 @@ def _build_eval_trajectory_fan_figure(
     for ax in axes[pose_dim:]:
         ax.axis("off")
 
-    handles, labels = axes[0].get_legend_handles_labels()
-    if handles:
-        fig.legend(handles, labels, loc="upper center", ncol=2)
+    # Reconstruct full ground truth trajectory from chunks
+    gt_timeline = []
+    gt_values_per_dim = [[] for _ in range(pose_dim)]
+    for t in range(anchor_steps):
+        t_base = int(source_time_index[t])
+        valid_h = mask_chunks[t, :, 0] > 0
+        if not np.any(valid_h):
+            continue
+        horizon_idx = np.where(valid_h)[0]
+        for h in horizon_idx:
+            time_val = t_base + h
+            if time_val >= total_plot_steps:
+                continue
+            gt_timeline.append(time_val)
+            for d in range(pose_dim):
+                gt_values_per_dim[d].append(true_action_chunks[t, h, d])
+
+    # Plot ground truth with full resolution
+    if len(gt_timeline) > 0:
+        # Sort by time and remove duplicates (keep first occurrence)
+        sorted_indices = np.argsort(gt_timeline)
+        unique_times = []
+        unique_values_per_dim = [[] for _ in range(pose_dim)]
+        seen_times = set()
+        for idx in sorted_indices:
+            t_val = gt_timeline[idx]
+            if t_val not in seen_times:
+                seen_times.add(t_val)
+                unique_times.append(t_val)
+                for d in range(pose_dim):
+                    unique_values_per_dim[d].append(gt_values_per_dim[d][idx])
+
+        for d, ax in enumerate(axes[:pose_dim]):
+            ax.plot(
+                unique_times,
+                unique_values_per_dim[d],
+                color="black",
+                linewidth=1.0,
+                label="ground truth" if d == 0 else None,
+                zorder=10,
+            )
+
     stiff_str = "all" if stiffness_label is None else str(stiffness_label)
+    step_str = f" | step={global_step}" if global_step is not None else ""
     fig.suptitle(
-        f"Sampled Prior Trajectories vs Ground Truth | stiffness={stiff_str}",
+        f"Sampled Prior Trajectories vs Ground Truth | stiffness={stiff_str}{step_str}",
         fontsize=12,
     )
+
+    handles, labels = axes[0].get_legend_handles_labels()
+    if handles:
+        fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.96), ncol=2, frameon=False)
+
     fig.tight_layout(rect=[0.02, 0.03, 0.98, 0.95])
     return fig
 
 
 def _build_missing_stiffness_figure(stiffness_label, available_labels):
-
     fig, ax = plt.subplots(1, 1, figsize=(8.5, 2.6))
     ax.axis("off")
     available_str = ", ".join(str(v) for v in available_labels) if len(available_labels) > 0 else "none"
@@ -343,7 +380,7 @@ class DefaultTask:
         )
         self.factr_baseline = factr_baseline
 
-    def eval(self, trainer, global_step):
+    def eval(self, trainer, global_step, generate_plots=True):
         losses = []
         for batch in self.test_loader:
             with torch.no_grad():
@@ -396,7 +433,7 @@ class BCTask(DefaultTask):
             pred_actions = pred_actions.unsqueeze(1)
         return pred_actions
 
-    def eval(self, trainer, global_step):
+    def eval(self, trainer, global_step, generate_plots=True):
         losses = []
         prior_l1_losses = []
         posterior_kl_losses = []
@@ -409,9 +446,9 @@ class BCTask(DefaultTask):
         chunk_mse_all = []
         accuracy_list = []
         first_plot_sample = None
-        plot_candidates = []
+        plot_candidates = [] if generate_plots else None
         raw_eval_index = 0
-        test_dataset = getattr(self.test_loader, "dataset", None)
+        test_dataset = getattr(self.test_loader, "dataset", None) if generate_plots else None
 
         model = trainer.model.module if hasattr(trainer.model, "module") else trainer.model
         was_training = model.training
@@ -467,40 +504,41 @@ class BCTask(DefaultTask):
                 lsig = (lsig.float() * mask).sum((1, 2)) / mask_den
                 action_lsig.append(lsig.mean().item())
 
-                if first_plot_sample is None:
+                if generate_plots and first_plot_sample is None:
                     first_plot_sample = {
                         "true": actions[0].detach().cpu().numpy(),
                         "pred": pred_actions[0].detach().cpu().numpy(),
                         "mask": mask[0].detach().cpu().numpy(),
                     }
 
-                for batch_idx in range(actions.shape[0]):
-                    fallback_label = int(labels[batch_idx].detach().cpu().item())
-                    meta = _extract_plot_metadata(
-                        dataset=test_dataset,
-                        sample_index=raw_eval_index,
-                        fallback_label=fallback_label,
-                    )
+                if generate_plots:
+                    for batch_idx in range(actions.shape[0]):
+                        fallback_label = int(labels[batch_idx].detach().cpu().item())
+                        meta = _extract_plot_metadata(
+                            dataset=test_dataset,
+                            sample_index=raw_eval_index,
+                            fallback_label=fallback_label,
+                        )
 
-                    keep_step = meta["episode_step"] % self.eval_plot_prediction_stride == 0
-                    within_step_limit = meta["episode_step"] < self.eval_plot_max_steps
-                    if keep_step and within_step_limit:
-                        candidate = {
-                            "obs": obs[batch_idx : batch_idx + 1].detach().cpu(),
-                            "actions": actions[batch_idx : batch_idx + 1].detach().cpu(),
-                            "mask": mask[batch_idx : batch_idx + 1].detach().cpu(),
-                            "labels": labels[batch_idx : batch_idx + 1].detach().cpu(),
-                            "imgs": {
-                                cam_key: cam_tensor[batch_idx : batch_idx + 1].detach().cpu()
-                                for cam_key, cam_tensor in imgs.items()
-                            },
-                            "episode_id": int(meta["episode_id"]),
-                            "episode_step": int(meta["episode_step"]),
-                            "episode_length": int(meta["episode_length"]),
-                            "stiffness_label": int(meta["stiffness_label"]),
-                        }
-                        plot_candidates.append(candidate)
-                    raw_eval_index += 1
+                        keep_step = meta["episode_step"] % self.eval_plot_prediction_stride == 0
+                        within_step_limit = meta["episode_step"] < self.eval_plot_max_steps
+                        if keep_step and within_step_limit:
+                            candidate = {
+                                "obs": obs[batch_idx : batch_idx + 1].detach().cpu(),
+                                "actions": actions[batch_idx : batch_idx + 1].detach().cpu(),
+                                "mask": mask[batch_idx : batch_idx + 1].detach().cpu(),
+                                "labels": labels[batch_idx : batch_idx + 1].detach().cpu(),
+                                "imgs": {
+                                    cam_key: cam_tensor[batch_idx : batch_idx + 1].detach().cpu()
+                                    for cam_key, cam_tensor in imgs.items()
+                                },
+                                "episode_id": int(meta["episode_id"]),
+                                "episode_step": int(meta["episode_step"]),
+                                "episode_length": int(meta["episode_length"]),
+                                "stiffness_label": int(meta["stiffness_label"]),
+                            }
+                            plot_candidates.append(candidate)
+                        raw_eval_index += 1
 
                 if output_dict.get("logits") is not None:
                     logits = output_dict["logits"]
@@ -522,19 +560,24 @@ class BCTask(DefaultTask):
         ac_lsig = np.mean(action_lsig)
         l2_per_joint_mean = np.mean(np.stack(l2_per_joint_all, axis=0), axis=0)
         chunk_mse_mean = np.mean(np.stack(chunk_mse_all, axis=0), axis=0) if chunk_mse_all else None
-        selected_all_candidates = _select_episode_plot_candidates(
-            plot_candidates,
-            max_steps=self.eval_plot_max_steps,
-        )
-        if len(selected_all_candidates) > 0:
-            plot_label_arr = np.asarray(
-                [int(item["stiffness_label"]) for item in selected_all_candidates], dtype=np.int64
+
+        if generate_plots:
+            selected_all_candidates = _select_episode_plot_candidates(
+                plot_candidates,
+                max_steps=self.eval_plot_max_steps,
             )
-            plot_label_counts = {k: int(np.sum(plot_label_arr == k)) for k in range(1, self.stiffness_classes + 1)}
-            plot_label_counts_str = ",".join([f"{k}:{v}" for k, v in plot_label_counts.items()])
+            if len(selected_all_candidates) > 0:
+                plot_label_arr = np.asarray(
+                    [int(item["stiffness_label"]) for item in selected_all_candidates], dtype=np.int64
+                )
+                plot_label_counts = {k: int(np.sum(plot_label_arr == k)) for k in range(1, self.stiffness_classes + 1)}
+                plot_label_counts_str = ",".join([f"{k}:{v}" for k, v in plot_label_counts.items()])
+            else:
+                plot_label_counts = {k: 0 for k in range(1, self.stiffness_classes + 1)}
+                plot_label_counts_str = "none"
         else:
-            plot_label_counts = {k: 0 for k in range(1, self.stiffness_classes + 1)}
-            plot_label_counts_str = "none"
+            selected_all_candidates = []
+            plot_label_counts_str = "skipped"
 
         print(
             f"Step: {global_step}\tPosterior L1: {mean_val_loss:.4f}\tPrior L1: {mean_prior_l1:.4f}\t"
@@ -592,7 +635,7 @@ class BCTask(DefaultTask):
             #         wandb.log({"eval/error_summary": wandb.Image(fig_err)}, step=global_step)
             #         plt.close(fig_err)
 
-            if len(selected_all_candidates) > 0:
+            if generate_plots and len(selected_all_candidates) > 0:
                 all_bundle = _stack_plot_candidates(selected_all_candidates, device=trainer.device_id)
                 if all_bundle is not None:
                     sampled_actions_all = self._sample_actions_for_plot(
@@ -610,12 +653,17 @@ class BCTask(DefaultTask):
                     #     max_steps=self.eval_plot_max_steps,
                     #     stiffness_label="all",
                     #     source_time_index=all_bundle["time_index"],
+                    #     global_step=global_step,
                     # )
                     # if fig_fan_all is not None:
                     #     wandb.log({"eval/prior_fan_all": wandb.Image(fig_fan_all)}, step=global_step)
                     #     plt.close(fig_fan_all)
 
-                available_labels = sorted({int(item["stiffness_label"]) for item in plot_candidates})
+                if generate_plots:
+                    available_labels = sorted({int(item["stiffness_label"]) for item in plot_candidates})
+                else:
+                    available_labels = []
+
                 for stiffness_label in range(1, self.stiffness_classes + 1):
                     label_candidates = [
                         item for item in plot_candidates if int(item["stiffness_label"]) == int(stiffness_label)
@@ -653,6 +701,7 @@ class BCTask(DefaultTask):
                         max_steps=self.eval_plot_max_steps,
                         stiffness_label=int(stiffness_label),
                         source_time_index=stiff_bundle["time_index"],
+                        global_step=global_step,
                     )
                     if fig_stiff is not None:
                         wandb.log(

@@ -1,5 +1,7 @@
 _target_: factr.trainers.bc.BehaviorCloning
 
+train_log_freq: ${train_log_freq}
+
 optim_builder:
   optimizer_type: AdamW
   optimizer_kwargs:

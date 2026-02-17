@@ -15,10 +15,10 @@ import hydra
 import pytorch_lightning as pl
 import torch
 import tqdm
+import wandb
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
 
-import wandb
 from factr import misc, transforms
 from factr.trainers.base import TRAIN_LOG_FREQ
 
@@ -52,6 +52,7 @@ def _grad_l2_norm(model) -> float:
 
 @hydra.main(version_base=None, config_path="cfg", config_name="train_bc_lowdim.yaml")
 def train_bc(cfg: DictConfig):
+    run_dir = None
     try:
         resume_model = misc.init_job(cfg)
 
@@ -204,7 +205,8 @@ def train_bc(cfg: DictConfig):
             if misc.GLOBAL_STEP % cfg.eval_freq == 0:
                 print("\nEvaluating model...")
                 trainer.set_eval()
-                task.eval(trainer, misc.GLOBAL_STEP)
+                generate_plots = misc.GLOBAL_STEP % cfg.eval_freq_plot == 0
+                task.eval(trainer, misc.GLOBAL_STEP, generate_plots=generate_plots)
                 trainer.set_train()
 
             if misc.GLOBAL_STEP >= cfg.max_iterations:
@@ -215,8 +217,14 @@ def train_bc(cfg: DictConfig):
 
     # gracefully handle and log errors
     except Exception:
-        traceback.print_exc(file=open("exception.log", "w"))
-        with open("exception.log", "r") as f:
+        # Try to write exception.log to run_dir if available, otherwise current directory
+        if run_dir is not None:
+            exception_log_path = run_dir / "exception.log"
+        else:
+            exception_log_path = Path("exception.log")
+
+        traceback.print_exc(file=open(exception_log_path, "w"))
+        with open(exception_log_path, "r") as f:
             print(f.read())
 
 
