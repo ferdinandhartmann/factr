@@ -469,3 +469,210 @@ class RobobufReplayBufferLowdim(ReplayBuffer):
         if idx < 0 or idx >= len(self.sample_metadata):
             raise IndexError(f"Sample index out of range: {idx}")
         return self.sample_metadata[idx]
+
+
+class RobobufReplayBufferObsPredLowdim(ReplayBuffer):
+    def __init__(
+        self,
+        buffer_path,
+        n_test_ratio=0.0,
+        mode="train",
+        use_internal_split=False,
+        obs_window=8,
+        obs_dim=27,
+        input_obs_dim=21,
+        predict_obs_dim=21,
+        pred_horizon=30,
+        pose_action_dim=9,
+        action_index_offset=0,
+        target_index_offset=1,
+        stiffness_classes=3,
+        goal_classes=4,
+        shuffle=True,
+    ):
+        assert mode in ("train", "test"), "Mode must be train/test"
+        assert obs_window >= 1, "obs_window must be >= 1"
+
+        self.obs_window = int(obs_window)
+        self.obs_dim = int(obs_dim)
+        self.input_obs_dim = int(input_obs_dim)
+        self.predict_obs_dim = int(predict_obs_dim)
+        self.pred_horizon = int(pred_horizon)
+        self.pose_action_dim = int(pose_action_dim)
+        self.action_index_offset = int(action_index_offset)
+        self.target_index_offset = int(target_index_offset)
+        self.stiffness_classes = int(stiffness_classes)
+        self.goal_classes = int(goal_classes)
+        self.use_internal_split = bool(use_internal_split)
+        self.transform = None
+        self.s_a_mask = []
+        self.sample_metadata = []
+
+        if self.action_index_offset < 0:
+            raise ValueError(f"action_index_offset must be >= 0, got {self.action_index_offset}.")
+        if self.target_index_offset < 1:
+            raise ValueError(f"target_index_offset must be >= 1, got {self.target_index_offset}.")
+        if self.input_obs_dim > self.obs_dim:
+            raise ValueError(f"input_obs_dim={self.input_obs_dim} cannot exceed obs_dim={self.obs_dim}.")
+        if self.predict_obs_dim > self.obs_dim:
+            raise ValueError(f"predict_obs_dim={self.predict_obs_dim} cannot exceed obs_dim={self.obs_dim}.")
+        if self.pred_horizon < 1:
+            raise ValueError(f"pred_horizon must be >= 1, got {self.pred_horizon}.")
+
+        buf = _cached_load(buffer_path)
+        episodes = RobobufReplayBufferLowdim._build_episodes(buf)
+        if len(episodes) == 0:
+            raise ValueError("No episodes found in buffer.")
+
+        episode_labels = self._infer_episode_stiffness_labels(episodes)
+
+        rng = random.Random(BUF_SHUFFLE_RNG)
+        episode_indices = list(range(len(episodes)))
+        if shuffle:
+            rng.shuffle(episode_indices)
+
+        if self.use_internal_split and len(episodes) > 1 and n_test_ratio > 0:
+            n_test_eps = max(1, int(len(episodes) * n_test_ratio))
+        else:
+            n_test_eps = 0
+
+        if mode == "train":
+            use_episode_indices = episode_indices[:-n_test_eps] if n_test_eps > 0 else episode_indices
+        else:
+            use_episode_indices = episode_indices[-n_test_eps:] if n_test_eps > 0 else episode_indices
+
+        print(
+            f"Building {mode} obs-pred buffer with episodes={len(use_episode_indices)}, "
+            f"obs_window={self.obs_window}, input_obs_dim={self.input_obs_dim}, "
+            f"target_obs_dim={self.predict_obs_dim}, pred_horizon={self.pred_horizon}"
+        )
+        print(f"Loaded from file: {buffer_path}")
+
+        for ep_idx in tqdm.tqdm(use_episode_indices):
+            episode = episodes[ep_idx]
+            stiffness_label = episode_labels[ep_idx]
+            self._append_episode_samples(episode=episode, stiffness_label=stiffness_label, episode_id=ep_idx)
+
+    def _extract_state_vector(self, step):
+        obs_dict = _obs_to_dict(step.obs)
+        state = np.asarray(obs_dict["state"], dtype=np.float32).reshape(-1)
+        if state.shape[0] != self.obs_dim:
+            raise ValueError(f"Expected obs_dim={self.obs_dim}, got {state.shape[0]}.")
+        return state
+
+    def _extract_pose_action(self, step):
+        action = np.asarray(step.action, dtype=np.float32).reshape(-1)
+        if action.shape[0] < self.pose_action_dim:
+            raise ValueError(f"Action dim {action.shape[0]} smaller than pose_action_dim={self.pose_action_dim}.")
+        return action[: self.pose_action_dim]
+
+    def _extract_goal_label(self, step):
+        obs_dict = _obs_to_dict(step.obs)
+        raw_goal = obs_dict.get("goals", obs_dict.get("goal", None))
+        if raw_goal is None:
+            return 1
+
+        goal_array = np.asarray(raw_goal).reshape(-1)
+        if goal_array.size == 0:
+            return 1
+
+        # Some buffers may store goals as one-hot vectors instead of scalar class ids.
+        if goal_array.size > 1:
+            if np.all(np.logical_or(np.isclose(goal_array, 0.0), np.isclose(goal_array, 1.0))):
+                raw_goal_value = int(np.argmax(goal_array)) + 1
+            else:
+                raw_goal_value = int(goal_array[0])
+        else:
+            raw_goal_value = int(goal_array[0])
+
+        return _to_label_index(raw_goal_value, self.goal_classes) + 1
+
+    def _infer_episode_stiffness_labels(self, episodes):
+        labels = []
+        for episode in episodes:
+            first_step = episode[0]
+            obs_dict = _obs_to_dict(first_step.obs)
+            raw_label = None
+            for key in ("stiffness_label", "stiffness_class", "stiffness"):
+                if key in obs_dict:
+                    raw_label = obs_dict[key]
+                    break
+
+            if raw_label is None:
+                labels.append(1)
+            else:
+                labels.append(_to_label_index(raw_label, self.stiffness_classes) + 1)
+        return labels
+
+    def _append_episode_samples(self, episode, stiffness_label, episode_id):
+        episode_states = [self._extract_state_vector(step) for step in episode]
+        episode_goals = [self._extract_goal_label(step) for step in episode]
+        max_t = len(episode) - max(self.action_index_offset, self.target_index_offset)
+        if max_t <= 0:
+            return
+
+        # We keep windows inside episode boundaries and pad with the first valid step.
+        for t_idx in range(max_t):
+            start = max(0, t_idx - self.obs_window + 1)
+            window_states = [state[: self.input_obs_dim] for state in episode_states[start : t_idx + 1]]
+            while len(window_states) < self.obs_window:
+                window_states.insert(0, window_states[0])
+            obs_window = np.stack(window_states, axis=0).astype(np.float32)
+
+            action_idx = t_idx + self.action_index_offset
+            target_idx = t_idx + self.target_index_offset
+
+            action_chunk = []
+            target_chunk = []
+            target_mask = []
+            for horizon_idx in range(self.pred_horizon):
+                a_idx = action_idx + horizon_idx
+                y_idx = target_idx + horizon_idx
+
+                if a_idx < len(episode):
+                    action_chunk.append(self._extract_pose_action(episode[a_idx]))
+                else:
+                    fallback_a_idx = min(len(episode) - 1, action_idx)
+                    action_chunk.append(self._extract_pose_action(episode[fallback_a_idx]))
+
+                if y_idx < len(episode_states):
+                    target_chunk.append(episode_states[y_idx][: self.predict_obs_dim])
+                    target_mask.append(1.0)
+                else:
+                    fallback_y_idx = min(len(episode_states) - 1, target_idx)
+                    target_chunk.append(episode_states[fallback_y_idx][: self.predict_obs_dim])
+                    target_mask.append(0.0)
+
+            action_chunk = np.stack(action_chunk, axis=0).astype(np.float32)
+            target_chunk = np.stack(target_chunk, axis=0).astype(np.float32)
+            target_mask = np.asarray(target_mask, dtype=np.float32)
+            goal_label = int(episode_goals[target_idx])
+
+            self.s_a_mask.append((obs_window, action_chunk, target_chunk, target_mask, int(stiffness_label), goal_label))
+            self.sample_metadata.append(
+                {
+                    "episode_id": int(episode_id),
+                    "episode_step": int(t_idx),
+                    "episode_length": int(len(episode)),
+                    "target_step": int(target_idx),
+                    "pred_horizon": int(self.pred_horizon),
+                    "stiffness_label": int(stiffness_label),
+                    "goal_label": int(goal_label),
+                }
+            )
+
+    def __getitem__(self, idx):
+        obs_window, action_chunk, target_chunk, target_mask, stiffness_label, goal_label = self.s_a_mask[idx]
+        return (
+            _to_tensor(obs_window),
+            _to_tensor(action_chunk),
+            _to_tensor(target_chunk),
+            _to_tensor(target_mask),
+            torch.tensor(stiffness_label, dtype=torch.long),
+            torch.tensor(goal_label, dtype=torch.long),
+        )
+
+    def get_sample_metadata(self, idx):
+        if idx < 0 or idx >= len(self.sample_metadata):
+            raise IndexError(f"Sample index out of range: {idx}")
+        return self.sample_metadata[idx]

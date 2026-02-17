@@ -1,0 +1,14 @@
+_target_: factr.models.lowdim_obs_mlp.LowdimGaussianObsMLP
+
+obs_window: ${obs_window}
+obs_input_dim: ${obs_input_dim}
+predict_obs_dim: ${obs_target_dim}
+pred_horizon: ${pred_horizon}
+pose_action_dim: ${pose_action_dim}
+stiffness_classes: ${stiffness_classes}
+goal_classes: ${goal_classes}
+
+hidden_dim: 384
+num_layers: 3
+dropout: 0.1
+min_var: 0.0001

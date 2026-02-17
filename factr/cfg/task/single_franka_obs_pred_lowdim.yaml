@@ -1,0 +1,42 @@
+_target_: factr.task_obs_pred.ObsPredictionTask
+obs_dim: ${obs_target_dim}
+pose_action_dim: ${pose_action_dim}
+pred_horizon: ${pred_horizon}
+eval_plot_max_steps: 400
+eval_plot_dims: 9
+
+train_buffer:
+  _target_: factr.replay_buffer.RobobufReplayBufferObsPredLowdim
+  buffer_path: ${buffer_path}
+  n_test_ratio: 0.0
+  mode: train
+  use_internal_split: False
+  obs_window: ${obs_window}
+  obs_dim: ${raw_obs_dim}
+  input_obs_dim: ${obs_input_dim}
+  predict_obs_dim: ${obs_target_dim}
+  pred_horizon: ${pred_horizon}
+  pose_action_dim: ${pose_action_dim}
+  action_index_offset: ${action_index_offset}
+  target_index_offset: ${target_index_offset}
+  stiffness_classes: ${stiffness_classes}
+  goal_classes: ${goal_classes}
+  shuffle: True
+
+test_buffer:
+  _target_: factr.replay_buffer.RobobufReplayBufferObsPredLowdim
+  buffer_path: ${test_buffer_path}
+  n_test_ratio: 0.0
+  mode: test
+  use_internal_split: False
+  obs_window: ${obs_window}
+  obs_dim: ${raw_obs_dim}
+  input_obs_dim: ${obs_input_dim}
+  predict_obs_dim: ${obs_target_dim}
+  pred_horizon: ${pred_horizon}
+  pose_action_dim: ${pose_action_dim}
+  action_index_offset: ${action_index_offset}
+  target_index_offset: ${target_index_offset}
+  stiffness_classes: ${stiffness_classes}
+  goal_classes: ${goal_classes}
+  shuffle: False
