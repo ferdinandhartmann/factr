@@ -4,6 +4,7 @@ import torch
 from torch.utils.data import DataLoader, IterableDataset
 
 import wandb
+from factr.goal_inference import build_goal_likelihood_figure
 from factr.replay_buffer import IterableWrapper
 
 matplotlib.use("Agg")
@@ -131,8 +132,13 @@ class ObsPredictionTask:
         mean_mse_vals = []
         pred_var_vals = []
         tracking_err_vals = []
+        goal_acc_vals = []
+        goal_loglik_vals = []
+        goal_entropy_vals = []
+        goal_prob_sum_err_vals = []
 
         first_plot_chunk = None
+        first_goal_plot_chunk = None
 
         model_ref = trainer.model.module if hasattr(trainer.model, "module") else trainer.model
         was_training = model_ref.training
@@ -165,12 +171,49 @@ class ObsPredictionTask:
                 pred_var_vals.append(output["var"].mean().item())
                 tracking_err_vals.append(tracking_l2.mean().item())
 
+                if hasattr(model_ref, "infer_goals"):
+                    goal_eval = model_ref.infer_goals(
+                        obs_window=obs_window,
+                        action_chunk=action_chunk,
+                        stiffness_labels=stiffness_labels,
+                        target_obs=target_obs,
+                        target_mask=target_mask,
+                        num_goal_samples=1,
+                    )
+                    true_goal_idx = model_ref.normalize_goal_labels(
+                        goal_labels,
+                        batch_size=goal_labels.shape[0],
+                        device=goal_labels.device,
+                    )
+                    pred_goal_idx = torch.argmax(goal_eval["goal_posterior"], dim=-1)
+                    goal_acc = (pred_goal_idx == true_goal_idx).float().mean()
+                    true_goal_loglik = goal_eval["log_likelihood_per_goal"].gather(1, true_goal_idx.unsqueeze(-1)).squeeze(-1)
+                    goal_entropy = -torch.sum(
+                        goal_eval["goal_posterior"] * torch.log(goal_eval["goal_posterior"].clamp_min(1e-8)),
+                        dim=-1,
+                    ).mean()
+                    goal_prob_sum_err = torch.abs(goal_eval["goal_posterior"].sum(dim=-1) - 1.0).mean()
+
+                    goal_acc_vals.append(goal_acc.item())
+                    goal_loglik_vals.append(true_goal_loglik.mean().item())
+                    goal_entropy_vals.append(goal_entropy.item())
+                    goal_prob_sum_err_vals.append(goal_prob_sum_err.item())
+
                 if generate_plots and first_plot_chunk is None:
                     first_plot_chunk = {
                         "true": target_obs[0].detach().cpu().numpy(),
                         "pred_mean": output["mean"][0].detach().cpu().numpy(),
                         "pred_std": output["std"][0].detach().cpu().numpy(),
                         "mask": target_mask[0].detach().cpu().numpy(),
+                    }
+                if generate_plots and first_goal_plot_chunk is None and hasattr(model_ref, "infer_goals"):
+                    loglik_t = goal_eval["log_likelihood_per_timestep"][0].detach().cpu().numpy().T
+                    posterior_t = goal_eval["goal_posterior_over_time"][0].detach().cpu().numpy()
+                    first_goal_plot_chunk = {
+                        "loglik_t": loglik_t,
+                        "posterior_t": posterior_t,
+                        "true_goal": int(true_goal_idx[0].item()) + 1,
+                        "pred_goal": int(pred_goal_idx[0].item()) + 1,
                     }
 
         if was_training:
@@ -180,11 +223,17 @@ class ObsPredictionTask:
         mean_mean_mse = float(np.mean(mean_mse_vals)) if len(mean_mse_vals) > 0 else float("nan")
         mean_pred_var = float(np.mean(pred_var_vals)) if len(pred_var_vals) > 0 else float("nan")
         mean_tracking_l2 = float(np.mean(tracking_err_vals)) if len(tracking_err_vals) > 0 else float("nan")
+        mean_goal_acc = float(np.mean(goal_acc_vals)) if len(goal_acc_vals) > 0 else float("nan")
+        mean_goal_loglik = float(np.mean(goal_loglik_vals)) if len(goal_loglik_vals) > 0 else float("nan")
+        mean_goal_entropy = float(np.mean(goal_entropy_vals)) if len(goal_entropy_vals) > 0 else float("nan")
+        mean_goal_prob_sum_err = float(np.mean(goal_prob_sum_err_vals)) if len(goal_prob_sum_err_vals) > 0 else float("nan")
 
         print(
             f"Step: {global_step}\tEval sample_mse: {mean_sample_mse:.5f}\t"
             f"Eval mean_mse: {mean_mean_mse:.5f}\tPred var: {mean_pred_var:.5f}\t"
-            f"Tracking L2: {mean_tracking_l2:.5f}"
+            f"Tracking L2: {mean_tracking_l2:.5f}\tGoal acc: {mean_goal_acc:.5f}\t"
+            f"Goal loglik: {mean_goal_loglik:.5f}\tGoal H: {mean_goal_entropy:.5f}\t"
+            f"Goal prob sum err: {mean_goal_prob_sum_err:.3e}"
         )
 
         if wandb.run is not None:
@@ -194,6 +243,10 @@ class ObsPredictionTask:
                     "eval/mean_mse": mean_mean_mse,
                     "eval/pred_var_mean": mean_pred_var,
                     "eval/tracking_error_l2": mean_tracking_l2,
+                    "eval/goal_inference_acc": mean_goal_acc,
+                    "eval/goal_true_loglik": mean_goal_loglik,
+                    "eval/goal_posterior_entropy": mean_goal_entropy,
+                    "eval/goal_prob_sum_error": mean_goal_prob_sum_err,
                 },
                 step=global_step,
             )
@@ -214,3 +267,14 @@ class ObsPredictionTask:
                     if fig_obs is not None:
                         wandb.log({"eval/obs_prediction_plot": wandb.Image(fig_obs)}, step=global_step)
                         plt.close(fig_obs)
+
+            if generate_plots and first_goal_plot_chunk is not None:
+                fig_goal = build_goal_likelihood_figure(
+                    log_likelihood_over_time=first_goal_plot_chunk["loglik_t"],
+                    posterior_over_time=first_goal_plot_chunk["posterior_t"],
+                    true_goal_label=first_goal_plot_chunk["true_goal"],
+                    pred_goal_label=first_goal_plot_chunk["pred_goal"],
+                    title_prefix="Goal Inference (Parallel over 4 goals)",
+                )
+                wandb.log({"eval/goal_likelihood_plot": wandb.Image(fig_goal)}, step=global_step)
+                plt.close(fig_goal)

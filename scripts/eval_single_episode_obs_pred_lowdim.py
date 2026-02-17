@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-import json
 import sys
 import warnings
 from pathlib import Path
@@ -22,6 +21,8 @@ PROJECT_ROOT = SCRIPT_DIR.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from factr.goal_inference import build_episode_goal_probability_figure  # noqa: E402
+
 # ---------------------------------------------------------------------------
 # User Config (edit these variables, then run this script directly)
 # ---------------------------------------------------------------------------
@@ -30,7 +31,7 @@ CHECKPOINT_NAME = "latest_ckpt.ckpt"
 
 # Raw episode source
 RAW_EPISODE_DIR = Path.home() / "activeinference" / "factr" / "process_data" / "data_to_process" / "fourgoals_1" / "data"
-EPISODE_FILE_NAME = "ep_29_medium.pkl"
+EPISODE_FILE_NAME = "ep_23_stiff.pkl"
 EPISODE_INDEX = 0  # index in sorted *.pkl files
 USE_EPISODE_LIST = False
 EPISODE_LIST = [
@@ -47,14 +48,13 @@ EPISODE_LIST = [
 LIST_EPISODES_ONLY = False
 
 BUFFER_PATH_OVERRIDE = Path.home() / "activeinference" / "factr" / "process_data" / "processed_data" / "fourgoals_1_act" / "buf_test.pkl"
-ROLLOUT_CONFIG_OVERRIDE = (
-    Path.home() / "activeinference" / "factr" / "process_data" / "processed_data" / "fourgoals_1_act" / "rollout_config.yaml"
-)
+ROLLOUT_CONFIG_OVERRIDE = Path.home() / "activeinference" / "factr" / "process_data" / "processed_data" / "fourgoals_1_act" / "rollout_config.yaml"
 
 NUM_SAMPLES = 10  # Monte-Carlo samples from predicted Gaussian for eval-only sample MSE
 NORMALIZATION_MODE = "apply"  # one of: auto, apply, skip
 PREDICTION_STRIDE = 1
 MAX_PLOT_DIMS = 9
+GOAL_EPISODE_POST_TEMP = 5.0
 
 OUT_DIR_OVERRIDE = None
 
@@ -676,6 +676,67 @@ def _make_obs_dim_names(dim: int) -> List[str]:
     return [f"obs_{idx + 1}" for idx in range(dim)]
 
 
+def _normalize_vec(vec: np.ndarray) -> np.ndarray:
+    norm = float(np.linalg.norm(vec))
+    if (not np.isfinite(norm)) or norm < 1e-9:
+        return np.array([1.0, 0.0, 0.0], dtype=np.float32)
+    return vec / norm
+
+
+def _rot6d_to_matrix(rot6: np.ndarray) -> np.ndarray:
+    a1 = np.asarray(rot6[:3], dtype=np.float32)
+    a2 = np.asarray(rot6[3:6], dtype=np.float32)
+    if np.any(~np.isfinite(a1)) or np.any(~np.isfinite(a2)):
+        return np.eye(3, dtype=np.float32)
+
+    b1 = _normalize_vec(a1)
+    a2_orth = a2 - float(np.dot(b1, a2)) * b1
+    b2 = _normalize_vec(a2_orth)
+    b3 = _normalize_vec(np.cross(b1, b2))
+    return np.stack([b1, b2, b3], axis=1)
+
+
+def _matrix_to_rpy(rot: np.ndarray) -> np.ndarray:
+    # Intrinsic XYZ (roll, pitch, yaw) extracted from rotation matrix.
+    pitch = float(np.arcsin(np.clip(-rot[2, 0], -1.0, 1.0)))
+    if abs(np.cos(pitch)) > 1e-6:
+        roll = float(np.arctan2(rot[2, 1], rot[2, 2]))
+        yaw = float(np.arctan2(rot[1, 0], rot[0, 0]))
+    else:
+        # Gimbal-lock fallback: keep yaw fixed and solve roll from remaining terms.
+        roll = float(np.arctan2(-rot[1, 2], rot[1, 1]))
+        yaw = 0.0
+    return np.asarray([roll, pitch, yaw], dtype=np.float32)
+
+
+def _unwrap_angles(angles: np.ndarray) -> np.ndarray:
+    if angles.ndim != 2 or angles.shape[0] < 2:
+        return angles
+    return np.unwrap(angles, axis=0).astype(np.float32)
+
+
+def _wrap_to_pi(angles: np.ndarray) -> np.ndarray:
+    return ((angles + np.pi) % (2.0 * np.pi) - np.pi).astype(np.float32)
+
+
+def _align_angles_to_reference(reference: np.ndarray, values: np.ndarray) -> np.ndarray:
+    if reference.shape != values.shape or reference.ndim != 2:
+        return values
+    return (reference + _wrap_to_pi(values - reference)).astype(np.float32)
+
+
+def _compute_pose_rpy(obs: np.ndarray) -> np.ndarray:
+    if obs.ndim != 2 or obs.shape[1] < 9:
+        return np.zeros((0, 3), dtype=np.float32)
+
+    pose = obs[:, :9]
+    out = np.zeros((pose.shape[0], 3), dtype=np.float32)
+    for idx in range(pose.shape[0]):
+        rot = _rot6d_to_matrix(pose[idx, 3:9])
+        out[idx] = _matrix_to_rpy(rot)
+    return _unwrap_angles(out)
+
+
 def _build_obs_prediction_figure(
     true_obs: np.ndarray,
     pred_mean: np.ndarray,
@@ -691,8 +752,22 @@ def _build_obs_prediction_figure(
     dim_names = _make_obs_dim_names(true_obs.shape[1])
     n_cols = min(3, n_dims)
     n_rows = int(np.ceil(n_dims / n_cols))
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 2.8 * n_rows), sharex=True)
-    axes = np.array(axes).reshape(-1)
+    has_rpy = true_obs.shape[1] >= 9 and pred_mean.shape[1] >= 9
+
+    if has_rpy:
+        fig = plt.figure(figsize=(5 * n_cols, 2.8 * n_rows + 3.4))
+        gs = fig.add_gridspec(n_rows + 1, n_cols, height_ratios=[1.0] * n_rows + [1.25], hspace=0.35)
+        axes = []
+        for row in range(n_rows):
+            for col in range(n_cols):
+                shared = axes[0] if len(axes) > 0 else None
+                axes.append(fig.add_subplot(gs[row, col], sharex=shared))
+        axes = np.asarray(axes, dtype=object)
+        ax_rpy = fig.add_subplot(gs[n_rows, :], sharex=axes[0] if len(axes) > 0 else None)
+    else:
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 2.8 * n_rows), sharex=True)
+        axes = np.array(axes).reshape(-1)
+        ax_rpy = None
 
     for dim in range(n_dims):
         ax = axes[dim]
@@ -719,8 +794,39 @@ def _build_obs_prediction_figure(
     handles, labels = axes[0].get_legend_handles_labels()
     if handles:
         fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.98), ncol=4, frameon=False)
+
+    if ax_rpy is not None:
+        rpy_true = _compute_pose_rpy(true_obs)
+        rpy_pred = _compute_pose_rpy(pred_mean)
+        if rpy_true.shape[0] == len(time_index) and rpy_pred.shape[0] == len(time_index):
+            rpy_pred = _align_angles_to_reference(rpy_true, rpy_pred)
+            angle_names = ["roll", "pitch", "yaw"]
+            for angle_idx, angle_name in enumerate(angle_names):
+                ax_rpy.plot(
+                    time_index,
+                    rpy_true[:, angle_idx],
+                    color="black",
+                    linewidth=1.3,
+                    linestyle="-",
+                    label=f"{angle_name} gt",
+                )
+                ax_rpy.plot(
+                    time_index,
+                    rpy_pred[:, angle_idx],
+                    color="#E41A1C",
+                    linewidth=1.2,
+                    alpha=0.9,
+                    linestyle="-",
+                    label=f"{angle_name} pred",
+                )
+            ax_rpy.set_title("Computed RPY from pose (rad, unwrapped)")
+            ax_rpy.set_xlabel("step")
+            ax_rpy.set_ylabel("rad")
+            ax_rpy.grid(alpha=0.25)
+            ax_rpy.legend(loc="upper right", ncol=3, frameon=False, fontsize=8)
+
     fig.suptitle("Observation prediction on raw episode", fontsize=12)
-    fig.tight_layout(rect=[0.02, 0.03, 0.98, 0.95])
+    fig.tight_layout(rect=[0.02, 0.03, 0.98, 0.95 if ax_rpy is None else 0.94])
     return fig
 
 
@@ -806,6 +912,32 @@ def _build_tracking_error_figure(tracking_error: np.ndarray, per_dim_mse: np.nda
     return fig
 
 
+def _build_episode_goal_probabilities(log_likelihood_per_timestep: np.ndarray, goal_classes: int, obs_dim: int) -> np.ndarray:
+    """Build per-episode goal probabilities with a uniform start and softened per-step evidence."""
+    if log_likelihood_per_timestep.ndim != 3:
+        raise ValueError(f"Expected log_likelihood_per_timestep shape (T, G, H), got {tuple(log_likelihood_per_timestep.shape)}.")
+    if log_likelihood_per_timestep.shape[1] != int(goal_classes):
+        raise ValueError(f"Expected goal axis size {int(goal_classes)}, got {int(log_likelihood_per_timestep.shape[1])}.")
+    episode_steps = int(log_likelihood_per_timestep.shape[0])
+    probs = np.zeros((episode_steps, int(goal_classes)), dtype=np.float32)
+    uniform = np.full((int(goal_classes),), 1.0 / float(goal_classes), dtype=np.float32)
+    if episode_steps == 0:
+        return probs
+    probs[0] = uniform
+    if episode_steps == 1:
+        return probs
+
+    # Use 1-step-ahead likelihood (h=0), averaged by obs dimension and softened by temperature.
+    step_logits = np.asarray(log_likelihood_per_timestep[:, :, 0], dtype=np.float32)
+    denom = max(1.0, float(obs_dim) * float(GOAL_EPISODE_POST_TEMP))
+    step_logits = step_logits / denom
+    step_logits = step_logits - np.max(step_logits, axis=-1, keepdims=True)
+    exp_logits = np.exp(step_logits)
+    step_probs = exp_logits / np.clip(np.sum(exp_logits, axis=-1, keepdims=True), 1e-8, None)
+    probs[1:] = step_probs[:-1]
+    return probs
+
+
 def _summarize_metrics(
     model,
     device: torch.device,
@@ -824,6 +956,7 @@ def _summarize_metrics(
     stiffness_t = torch.from_numpy(stiffness_labels).long().to(device)
     goal_t = torch.from_numpy(goal_labels).long().to(device)
 
+    goal_artifacts = None
     with torch.no_grad():
         output = model(
             obs_window=obs_t,
@@ -853,6 +986,41 @@ def _summarize_metrics(
         track_l2_mean = (track_l2_mean * mask_t).sum() / torch.clamp(mask_t.sum(), min=1.0)
         track_l2_sample = (track_l2_sample * mask_t).sum() / torch.clamp(mask_t.sum(), min=1.0)
 
+        if hasattr(model, "infer_goals"):
+            goal_eval = model.infer_goals(
+                obs_window=obs_t,
+                action_chunk=action_t,
+                stiffness_labels=stiffness_t,
+                target_obs=target_t,
+                target_mask=mask_t,
+                num_goal_samples=1,
+            )
+            true_goal_idx = model.normalize_goal_labels(goal_t, batch_size=goal_t.shape[0], device=goal_t.device)
+            pred_goal_idx = torch.argmax(goal_eval["goal_posterior"], dim=-1)
+            goal_acc = (pred_goal_idx == true_goal_idx).float().mean()
+            goal_entropy = -torch.sum(
+                goal_eval["goal_posterior"] * torch.log(goal_eval["goal_posterior"].clamp_min(1e-8)),
+                dim=-1,
+            ).mean()
+            goal_prob_sum_err = torch.abs(goal_eval["goal_posterior"].sum(dim=-1) - 1.0)
+            true_goal_loglik = goal_eval["log_likelihood_per_goal"].gather(1, true_goal_idx.unsqueeze(-1)).squeeze(-1)
+            goal_artifacts = {
+                "goal_ids": goal_eval["goal_labels"].detach().cpu().numpy(),
+                "log_likelihood_per_timestep": goal_eval["log_likelihood_per_timestep"].detach().cpu().numpy(),
+                "log_likelihood_per_goal": goal_eval["log_likelihood_per_goal"].detach().cpu().numpy(),
+                "goal_posterior": goal_eval["goal_posterior"].detach().cpu().numpy(),
+                "goal_posterior_over_time": goal_eval["goal_posterior_over_time"].detach().cpu().numpy(),
+                "true_goal_idx": true_goal_idx.detach().cpu().numpy(),
+                "pred_goal_idx": pred_goal_idx.detach().cpu().numpy(),
+                "goal_prob_sum_error": goal_prob_sum_err.detach().cpu().numpy(),
+                "sample_by_goal": goal_eval["sample"].detach().cpu().numpy(),
+            }
+        else:
+            goal_acc = torch.tensor(float("nan"), device=device)
+            goal_entropy = torch.tensor(float("nan"), device=device)
+            true_goal_loglik = torch.tensor(float("nan"), device=device)
+            goal_prob_sum_err = torch.tensor(float("nan"), device=device)
+
     metrics = {
         "sample_mse_norm": float(output["sample_mse"].item()),
         "mean_mse_norm": float(output["mean_mse"].item()),
@@ -860,6 +1028,11 @@ def _summarize_metrics(
         "pred_var_mean_norm": float(output["var"].mean().item()),
         "tracking_l2_mean_norm": float(track_l2_mean.item()),
         "tracking_l2_sample_norm": float(track_l2_sample.item()),
+        "goal_inference_acc": float(goal_acc.item()),
+        "goal_true_loglik_norm": float(true_goal_loglik.mean().item()),
+        "goal_posterior_entropy": float(goal_entropy.item()),
+        "goal_prob_sum_error_max": float(goal_prob_sum_err.max().item()),
+        "goal_prob_sum_error_mean": float(goal_prob_sum_err.mean().item()),
     }
     return (
         metrics,
@@ -867,6 +1040,7 @@ def _summarize_metrics(
         std.detach().cpu().numpy(),
         sample.detach().cpu().numpy(),
         tracking_error_mean.detach().cpu().numpy(),
+        goal_artifacts,
     )
 
 
@@ -926,26 +1100,15 @@ def main():
     obs_window = int(OmegaConf.select(cfg, "obs_window", default=8))
     raw_obs_dim = int(OmegaConf.select(cfg, "raw_obs_dim", default=27))
     obs_input_dim = int(OmegaConf.select(cfg, "obs_input_dim", default=OmegaConf.select(cfg, "agent.obs_input_dim", default=21)))
-    obs_target_dim = int(
-        OmegaConf.select(cfg, "obs_target_dim", default=OmegaConf.select(cfg, "agent.predict_obs_dim", default=21))
-    )
+    obs_target_dim = int(OmegaConf.select(cfg, "obs_target_dim", default=OmegaConf.select(cfg, "agent.predict_obs_dim", default=21)))
     pred_horizon = int(OmegaConf.select(cfg, "pred_horizon", default=OmegaConf.select(cfg, "agent.pred_horizon", default=30)))
-    pose_action_dim = int(
-        OmegaConf.select(cfg, "pose_action_dim", default=OmegaConf.select(cfg, "agent.pose_action_dim", default=9))
-    )
+    pose_action_dim = int(OmegaConf.select(cfg, "pose_action_dim", default=OmegaConf.select(cfg, "agent.pose_action_dim", default=9)))
     goal_classes = int(OmegaConf.select(cfg, "goal_classes", default=OmegaConf.select(cfg, "agent.goal_classes", default=4)))
-    action_index_offset = int(
-        OmegaConf.select(cfg, "action_index_offset", default=OmegaConf.select(cfg, "task.test_buffer.action_index_offset", default=0))
-    )
-    target_index_offset = int(
-        OmegaConf.select(cfg, "target_index_offset", default=OmegaConf.select(cfg, "task.test_buffer.target_index_offset", default=1))
-    )
+    action_index_offset = int(OmegaConf.select(cfg, "action_index_offset", default=OmegaConf.select(cfg, "task.test_buffer.action_index_offset", default=0)))
+    target_index_offset = int(OmegaConf.select(cfg, "target_index_offset", default=OmegaConf.select(cfg, "task.test_buffer.target_index_offset", default=1)))
 
     if obs_input_dim > raw_obs_dim or obs_target_dim > raw_obs_dim:
-        raise ValueError(
-            f"obs_input_dim/obs_target_dim must be <= raw_obs_dim. "
-            f"Got input={obs_input_dim}, target={obs_target_dim}, raw={raw_obs_dim}."
-        )
+        raise ValueError(f"obs_input_dim/obs_target_dim must be <= raw_obs_dim. Got input={obs_input_dim}, target={obs_target_dim}, raw={raw_obs_dim}.")
 
     for episode_file in selected:
         print(f"Selected episode file: {episode_file}")
@@ -979,7 +1142,14 @@ def main():
         target_model_norm = target_full_norm[..., :obs_target_dim]
         action_model_norm = action_norm[..., :pose_action_dim]
 
-        metrics, pred_mean_norm, pred_std_norm, pred_sample_norm, tracking_err_mean_norm = _summarize_metrics(
+        (
+            metrics,
+            pred_mean_norm,
+            pred_std_norm,
+            pred_sample_norm,
+            tracking_err_mean_norm,
+            goal_artifacts,
+        ) = _summarize_metrics(
             model=model,
             device=device,
             obs_model_norm=obs_model_norm,
@@ -1015,9 +1185,7 @@ def main():
         metrics["mean_mse_denorm"] = float(np.sum(sq_mean * mask_expanded) / valid_elements)
         metrics["sample_mse_denorm"] = float(np.sum(sq_sample * mask_expanded) / valid_elements)
         metrics["tracking_l2_mean_denorm"] = float(np.sum(tracking_l2_denorm * target_mask) / valid_steps)
-        metrics["tracking_l2_mean_norm"] = float(
-            np.sum(np.linalg.norm(tracking_err_mean_norm, axis=-1) * target_mask) / valid_steps
-        )
+        metrics["tracking_l2_mean_norm"] = float(np.sum(np.linalg.norm(tracking_err_mean_norm, axis=-1) * target_mask) / valid_steps)
 
         split_label = _get_split_label(rollout_cfg, episode_file.stem)
         if split_label == "test":
@@ -1034,10 +1202,7 @@ def main():
             f"steps={len(steps_arr)} | horizon={pred_horizon} | "
             f"stiffness={int(stiffness_arr[0])} | raw_episode_length={raw_ep['num_steps']}"
         )
-        print(
-            "Normalization | "
-            f"state_window={obs_applied} state_target={target_applied} action={action_applied}"
-        )
+        print(f"Normalization | state_window={obs_applied} state_target={target_applied} action={action_applied}")
         print(
             "Metrics | "
             f"sample_mse_norm={metrics['sample_mse_norm']:.5f} "
@@ -1045,6 +1210,10 @@ def main():
             f"mc_sample_mse_norm={metrics['sample_mse_mc_norm']:.5f} "
             f"pred_var_mean_norm={metrics['pred_var_mean_norm']:.5f} "
             f"tracking_l2_norm={metrics['tracking_l2_mean_norm']:.5f} "
+            f"goal_acc={metrics['goal_inference_acc']:.5f} "
+            f"goal_true_loglik={metrics['goal_true_loglik_norm']:.5f} "
+            f"goal_H={metrics['goal_posterior_entropy']:.5f} "
+            f"goal_prob_sum_err_max={metrics['goal_prob_sum_error_max']:.3e} "
             f"mean_mse_denorm={metrics['mean_mse_denorm']:.5f} "
             f"tracking_l2_denorm={metrics['tracking_l2_mean_denorm']:.5f}"
         )
@@ -1096,38 +1265,31 @@ def main():
             print(f"Saved: {track_path}")
             plt.close(fig_track)
 
-        # metrics_path = out_dir / f"{episode_file.stem}_metrics.json"
-        # payload = {
-        #     "episode_file": episode_file.name,
-        #     "episode_index": int(episode_files.index(episode_file)),
-        #     "buffer_path": str(buffer_path),
-        #     "raw_episode_dir": str(raw_episode_dir),
-        #     "checkpoint": str(ckpt_path),
-        #     "rollout_config": str(rollout_config_path),
-        #     "normalization_mode": NORMALIZATION_MODE,
-        #     "state_window_normalization_applied": bool(obs_applied),
-        #     "state_target_normalization_applied": bool(target_applied),
-        #     "action_normalization_applied": bool(action_applied),
-        #     "num_samples": int(NUM_SAMPLES),
-        #     "prediction_stride": int(PREDICTION_STRIDE),
-        #     "obs_window": int(obs_window),
-        #     "raw_obs_dim": int(raw_obs_dim),
-        #     "obs_input_dim": int(obs_input_dim),
-        #     "obs_target_dim": int(obs_target_dim),
-        #     "pose_action_dim": int(pose_action_dim),
-        #     "action_index_offset": int(action_index_offset),
-        #     "target_index_offset": int(target_index_offset),
-        #     "num_eval_steps": int(len(steps_arr)),
-        #     "raw_episode_num_steps": int(raw_ep["num_steps"]),
-        #     "stiffness_label": int(stiffness_arr[0]),
-        #     "goal_label_counts": {
-        #         str(k): int(v) for k, v in zip(*np.unique(goal_arr, return_counts=True))
-        #     },
-        #     "metrics": metrics,
-        # }
-        # with open(metrics_path, "w") as f:
-        #     json.dump(payload, f, indent=2)
-        # print(f"Saved: {metrics_path}")
+        if goal_artifacts is not None and goal_artifacts["goal_posterior"].shape[0] > 0:
+            episode_goal_probs = _build_episode_goal_probabilities(
+                log_likelihood_per_timestep=goal_artifacts["log_likelihood_per_timestep"],
+                goal_classes=goal_classes,
+                obs_dim=obs_target_dim,
+            )
+            pred_goal_labels_episode = np.argmax(episode_goal_probs, axis=-1).astype(np.int64) + 1
+            true_goal_labels_episode = goal_artifacts["true_goal_idx"] + 1
+            fig_goal_episode, goal_episode_payload = build_episode_goal_probability_figure(
+                goal_probabilities=episode_goal_probs,
+                true_goal_labels=true_goal_labels_episode,
+                pred_goal_labels=pred_goal_labels_episode,
+                time_index=steps_arr,
+                title_prefix=f"Goal Posterior over Episode ({episode_file.stem})",
+            )
+            goal_episode_fig_path = out_dir / f"{episode_file.stem}_goal_probability_episode.png"
+            fig_goal_episode.savefig(goal_episode_fig_path, dpi=300, bbox_inches="tight")
+            print(f"Saved: {goal_episode_fig_path}")
+            plt.close(fig_goal_episode)
+
+            print(
+                "Goal probability check | "
+                f"max|sum(p)-1|={goal_episode_payload['max_sum_error']:.3e} "
+                f"mean|sum(p)-1|={goal_episode_payload['mean_sum_error']:.3e}"
+            )
 
 
 if __name__ == "__main__":
