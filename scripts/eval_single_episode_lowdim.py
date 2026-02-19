@@ -21,28 +21,30 @@ PROJECT_ROOT = SCRIPT_DIR.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from factr.plot_utils import RPYPlotConfig, build_pose_comparison_figure, build_pose_fan_figure, rot6d_to_matrix as _shared_rot6d_to_matrix
+
 # ---------------------------------------------------------------------------
 # User Config (edit these variables, then run this script directly)
 # ---------------------------------------------------------------------------
-RUN_DIR = Path.home() / "activeinference" / "factr" / "checkpoints" / "aiact_1_beta0001" / "rollout"
+RUN_DIR = Path.home() / "activeinference" / "factr" / "checkpoints" / "aiact_beta005_z8_fb0005_klb065" / "rollout"
 CHECKPOINT_NAME = "latest_ckpt.ckpt"
 
 # Raw episode source
 RAW_EPISODE_DIR = Path.home() / "activeinference" / "factr" / "process_data" / "data_to_process" / "fourgoals_1" / "data"
-EPISODE_FILE_NAME = "ep_29_soft.pkl"
+EPISODE_FILE_NAME = "ep_29_medium.pkl"
 EPISODE_INDEX = 0  # index in sorted *.pkl files
-USE_EPISODE_LIST = False
+USE_EPISODE_LIST = True
 EPISODE_LIST = [
     # "ep_03_soft",
     "ep_09_stiff",
     "ep_09_soft",
-    "ep_10_soft",
+    # "ep_10_soft",
     "ep_14_medium",
-    "ep_19_medium",
-    "ep_23_stiff",
-    "ep_29_medium",
-    "ep_29_soft",
-    "ep_33_medium",
+    # "ep_19_medium",
+    # "ep_23_stiff",
+    # "ep_29_medium",
+    # "ep_29_soft",
+    # "ep_33_medium",
     # "ep_39_soft",
     # "ep_40_soft",
 ]
@@ -61,6 +63,9 @@ SHOW_PLOT = False  # shows also 3d plot
 ENABLE_TRAIN_BACKGROUND = True
 TRAIN_BACKGROUND_MAX_TRAJ = 200
 TRAIN_BACKGROUND_ONLY_MEDIUM = True
+RPY_SUBTRACT_PI = True  # If True, subtract pi from one selected RPY axis for plotting.
+RPY_SUBTRACT_PI_AXIS = 0  # 0=roll, 1=pitch, 2=yaw
+RPY_PLOT_UNIT = "deg"  # "rad" or "deg"
 
 GLOBAL_AXIS_LIMITS = {
     "x": (0.2, 0.6),
@@ -548,47 +553,20 @@ def _ensure_normalized(values: np.ndarray, stats: Dict, mode: str, name: str) ->
     return _apply_grouped_transform(values, stats, inverse=False), True
 
 
-def _make_pose_dim_names(dim: int) -> List[str]:
-    default_names = ["x", "y", "z", "r1", "r2", "r3", "r4", "r5", "r6"]
-    if dim <= len(default_names):
-        return default_names[:dim]
-    return [f"dim{i + 1}" for i in range(dim)]
-
-
 def _build_pose_figure_with_measured(true_actions, pred_actions, measured_pose, mask, title):
-    valid_rows = mask[:, 0] > 0
-    if np.sum(valid_rows) < 2:
-        return None
-
-    true_valid = true_actions[valid_rows]
-    pred_valid = pred_actions[valid_rows]
-    meas_valid = measured_pose[valid_rows]
-    time_index = np.arange(true_valid.shape[0])
-
-    pose_dim = true_valid.shape[1]
-    dim_names = _make_pose_dim_names(pose_dim)
-    n_cols = min(3, pose_dim)
-    n_rows = int(np.ceil(pose_dim / n_cols))
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 2.8 * n_rows), sharex=True)
-    axes = np.array(axes).reshape(-1)
-
-    for dim in range(pose_dim):
-        ax = axes[dim]
-        ax.plot(time_index, true_valid[:, dim], color="black", linewidth=1.0, label="ground truth" if dim == 0 else None)
-        ax.plot(time_index, pred_valid[:, dim], color="#E41A1C", linewidth=1.4, alpha=1.0, label="prediction" if dim == 0 else None)
-        ax.plot(time_index, meas_valid[:, dim], color="#1f78b4", linestyle="--", linewidth=1.0, alpha=0.6, label="measured_pose" if dim == 0 else None)
-        ax.set_title(dim_names[dim])
-        ax.grid(alpha=0.25)
-
-    for ax in axes[pose_dim:]:
-        ax.axis("off")
-
-    handles, labels = axes[0].get_legend_handles_labels()
-    if handles:
-        fig.legend(handles, labels, loc="upper center", ncol=3, bbox_to_anchor=(0.5, 0.92))
-    fig.suptitle(title, fontsize=12, y=0.98)
-    fig.tight_layout(rect=[0.02, 0.03, 0.98, 0.9])
-    return fig
+    rpy_cfg = RPYPlotConfig(
+        subtract_pi=bool(RPY_SUBTRACT_PI),
+        subtract_pi_axis=int(RPY_SUBTRACT_PI_AXIS),
+        unit=str(RPY_PLOT_UNIT),
+    )
+    return build_pose_comparison_figure(
+        true_values=true_actions,
+        pred_values=pred_actions,
+        mask=mask,
+        title=title,
+        measured_values=measured_pose,
+        rpy_config=rpy_cfg,
+    )
 
 
 def _build_fan_figure_with_measured(
@@ -600,137 +578,31 @@ def _build_fan_figure_with_measured(
     prediction_stride: int,
     background_actions: Optional[List[np.ndarray]] = None,
 ):
-    anchor_steps = int(
-        min(
-            true_action_chunks.shape[0],
-            pred_action_chunks.shape[0],
-            mask_chunks.shape[0],
-            measured_pose.shape[0],
-            source_time_index.shape[0],
-        )
+    rpy_cfg = RPYPlotConfig(
+        subtract_pi=bool(RPY_SUBTRACT_PI),
+        subtract_pi_axis=int(RPY_SUBTRACT_PI_AXIS),
+        unit=str(RPY_PLOT_UNIT),
     )
-    if anchor_steps < 1:
-        return None
-
-    pose_dim = int(true_action_chunks.shape[-1])
-    n_samples = int(pred_action_chunks.shape[1])
-    anchor_idx = np.arange(0, anchor_steps, max(1, int(prediction_stride)), dtype=np.int64)
-    if anchor_idx[-1] != (anchor_steps - 1):
-        anchor_idx = np.concatenate([anchor_idx, np.asarray([anchor_steps - 1], dtype=np.int64)])
-    anchor_colors = plt.cm.rainbow(np.linspace(0.0, 1.0, max(1, len(anchor_idx))))
-
-    dim_names = _make_pose_dim_names(pose_dim)
-    n_cols = min(3, pose_dim)
-    n_rows = int(np.ceil(pose_dim / n_cols))
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(6 * n_cols, 3 * n_rows), sharex=True)
-    axes = np.array(axes).reshape(-1)
-
-    episode_x_max = int(source_time_index[anchor_steps - 1] + true_action_chunks.shape[1] - 1)
-    if episode_x_max < 1:
-        episode_x_max = int(anchor_steps)
-
-    for dim in range(pose_dim):
-        ax = axes[dim]
-
-        if background_actions:
-            start_t = int(source_time_index[0]) if len(source_time_index) > 0 else 0
-            max_len = max(0, episode_x_max - start_t + 1)
-            for traj in background_actions:
-                if traj.ndim != 2 or traj.shape[1] < pose_dim:
-                    continue
-                use_len = min(int(traj.shape[0]), int(max_len))
-                if use_len < 2:
-                    continue
-                x_vals = start_t + np.arange(use_len)
-                ax.plot(
-                    x_vals,
-                    traj[:use_len, dim],
-                    color="#BDBDBD",
-                    linewidth=0.6,
-                    alpha=0.2,
-                )
-
-        ax.plot(
-            source_time_index[:anchor_steps],
-            true_action_chunks[:anchor_steps, 0, dim],
-            color="black",
-            linewidth=1.0,
-            label="ground_truth" if dim == 0 else None,
-        )
-        ax.plot(
-            source_time_index[:anchor_steps],
-            measured_pose[:anchor_steps, dim],
-            color="#1f78b4",
-            linestyle="--",
-            linewidth=1.0,
-            alpha=0.6,
-            label="measured_pose" if dim == 0 else None,
-        )
-
-        for anchor_pos, t in enumerate(anchor_idx):
-            valid_h = mask_chunks[t, :, 0] > 0
-            if not np.any(valid_h):
-                continue
-            c_t = anchor_colors[anchor_pos]
-            base_t = int(source_time_index[t])
-            horizon_idx = np.where(valid_h)[0]
-            x_vals = base_t + horizon_idx
-            within = x_vals <= episode_x_max
-            if not np.any(within):
-                continue
-            x_vals = x_vals[within]
-            h_idx = horizon_idx[within]
-            for s_idx in range(n_samples):
-                ax.plot(
-                    x_vals,
-                    pred_action_chunks[t, s_idx, h_idx, dim],
-                    color=c_t,
-                    linewidth=0.8,
-                    alpha=0.7,
-                    label="prior_samples" if (t == anchor_idx[0] and s_idx == 0) else None,
-                )
-
-        ax.set_xlim(int(source_time_index[0]), episode_x_max)
-        ax.set_title(dim_names[dim])
-        ax.grid(alpha=0.25)
-
-    for ax in axes[pose_dim:]:
-        ax.axis("off")
-
-    handles, labels = axes[0].get_legend_handles_labels()
-    if handles:
-        fig.legend(handles, labels, loc="upper center", ncol=3, bbox_to_anchor=(0.5, 0.92))
-    fig.suptitle(
-        f"Sampled Prior Fan + Measured Pose (full episode, stride={max(1, int(prediction_stride))})",
-        fontsize=12,
-        y=0.98,
+    return build_pose_fan_figure(
+        true_action_chunks=true_action_chunks,
+        pred_action_chunks=pred_action_chunks,
+        mask_chunks=mask_chunks,
+        source_time_index=source_time_index,
+        prediction_stride=prediction_stride,
+        measured_pose=measured_pose,
+        background_actions=background_actions,
+        max_plot_steps=None,
+        title=f"Sampled Prior Fan + Measured Pose (full episode, stride={max(1, int(prediction_stride))})",
+        plot_ground_truth_h0=True,
+        plot_ground_truth_reconstructed=False,
+        rpy_config=rpy_cfg,
     )
-    fig.tight_layout(rect=[0.02, 0.03, 0.98, 0.9])
-    return fig
-
-
-def _normalize_vec(vec: np.ndarray) -> np.ndarray:
-    norm = float(np.linalg.norm(vec))
-    if norm < 1e-9:
-        return np.array([1.0, 0.0, 0.0], dtype=np.float32)
-    return vec / norm
-
-
-def _rot6d_to_matrix(rot6: np.ndarray) -> np.ndarray:
-    a1 = np.asarray(rot6[:3], dtype=np.float32)
-    a2 = np.asarray(rot6[3:6], dtype=np.float32)
-    b1 = _normalize_vec(a1)
-    a2_orth = a2 - float(np.dot(b1, a2)) * b1
-    b2 = _normalize_vec(a2_orth)
-    b3 = np.cross(b1, b2)
-    b3 = _normalize_vec(b3)
-    return np.stack([b1, b2, b3], axis=1)
 
 
 def _draw_frame(ax, pose9: np.ndarray, axis_len: float, alpha: float, lw: float):
     pos = np.asarray(pose9[:3], dtype=np.float32)
     rot6 = np.asarray(pose9[3:9], dtype=np.float32)
-    rot = _rot6d_to_matrix(rot6)
+    rot = _shared_rot6d_to_matrix(rot6)
     colors = ["#e41a1c", "#4daf4a", "#377eb8"]
     for i in range(3):
         end = pos + axis_len * rot[:, i]
@@ -747,7 +619,7 @@ def _draw_frame(ax, pose9: np.ndarray, axis_len: float, alpha: float, lw: float)
 def _draw_frame_dimmed(ax, pose9: np.ndarray, axis_len: float, alpha: float, lw: float, dim: float):
     pos = np.asarray(pose9[:3], dtype=np.float32)
     rot6 = np.asarray(pose9[3:9], dtype=np.float32)
-    rot = _rot6d_to_matrix(rot6)
+    rot = _shared_rot6d_to_matrix(rot6)
     colors = ["#e41a1c", "#4daf4a", "#377eb8"]
     dim = float(np.clip(dim, 0.0, 1.0))
     for i in range(3):
@@ -1089,18 +961,18 @@ def main():
             f"post_H={metrics['posterior_entropy']:.4f}"
         )
 
-        # fig_pose = _build_pose_figure_with_measured(
-        #     true_actions=true_first,
-        #     pred_actions=pred_first,
-        #     measured_pose=measured_first,
-        #     mask=mask_first,
-        #     title=f"Episode {episode_file.name} | Ground Truth vs Prior Mean vs Measured Pose",
-        # )
-        # if fig_pose is not None:
-        #     pose_path = out_dir / f"{episode_file.stem}_pred_firststeps.png"
-        #     fig_pose.savefig(pose_path, dpi=300, bbox_inches="tight")
-        #     plt.close(fig_pose)
-        #     print(f"Saved: {pose_path}")
+        fig_pose = _build_pose_figure_with_measured(
+            true_actions=true_first,
+            pred_actions=pred_first,
+            measured_pose=measured_first,
+            mask=mask_first,
+            title=f"Episode {episode_file.name} | Ground Truth vs Prior Mean vs Measured Pose",
+        )
+        if fig_pose is not None:
+            pose_path = out_dir / f"{episode_file.stem}_pred_firststeps.png"
+            fig_pose.savefig(pose_path, dpi=300, bbox_inches="tight")
+            print(f"Saved: {pose_path}")
+            plt.close(fig_pose)
 
         fig_fan = _build_fan_figure_with_measured(
             true_action_chunks=actions_denorm[:, :, :pose_dim],

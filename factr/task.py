@@ -11,12 +11,21 @@ import torch
 from torch.utils.data import DataLoader, IterableDataset
 
 import wandb
+from factr.plot_utils import (
+    RPYPlotConfig,
+    build_pose_comparison_figure,
+    build_pose_fan_figure,
+    make_pose_dim_names as _shared_make_pose_dim_names,
+)
 from factr.replay_buffer import IterableWrapper
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 plt.rcParams["figure.dpi"] = 150
+RPY_SUBTRACT_PI = True
+RPY_SUBTRACT_PI_AXIS = 0  # 0=roll, 1=pitch, 2=yaw
+RPY_PLOT_UNIT = "deg"  # "rad" or "deg"
 
 
 def seed_worker(_worker_id: int) -> None:
@@ -47,55 +56,23 @@ def _build_data_loader(buffer, batch_size, num_workers, is_train=False, shuffle=
 
 
 def _make_pose_dim_names(dim):
-    default_names = ["x", "y", "z", "r1", "r2", "r3", "r4", "r5", "r6"]
-    if dim <= len(default_names):
-        return default_names[:dim]
-    return [f"dim{i + 1}" for i in range(dim)]
+    return _shared_make_pose_dim_names(int(dim))
 
 
 def _build_eval_pose_figure(true_actions, pred_actions, mask, title):
-    valid_rows = mask[:, 0] > 0
-    if np.sum(valid_rows) < 2:
-        return None
-
-    true_valid = true_actions[valid_rows]
-    pred_valid = pred_actions[valid_rows]
-    time_index = np.arange(true_valid.shape[0])
-
-    pose_dim = true_valid.shape[1]
-    dim_names = _make_pose_dim_names(pose_dim)
-    n_cols = min(3, pose_dim)
-    n_rows = int(np.ceil(pose_dim / n_cols))
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 2.8 * n_rows), sharex=True)
-    axes = np.array(axes).reshape(-1)
-
-    for dim in range(pose_dim):
-        ax = axes[dim]
-        ax.plot(
-            time_index, true_valid[:, dim], color="black", linewidth=1.7, label="ground truth" if dim == 0 else None
-        )
-        ax.plot(
-            time_index,
-            pred_valid[:, dim],
-            color="#E41A1C",
-            linewidth=1.4,
-            alpha=0.9,
-            label="prediction" if dim == 0 else None,
-        )
-        ax.set_title(f"{dim_names[dim]}")
-        ax.grid(alpha=0.25)
-
-    for ax in axes[pose_dim:]:
-        ax.axis("off")
-
-    fig.suptitle(title, fontsize=12)
-
-    handles, labels = axes[0].get_legend_handles_labels()
-    if handles:
-        fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.98), ncol=2, frameon=False)
-
-    fig.tight_layout(rect=[0.02, 0.03, 0.98, 0.95])
-    return fig
+    rpy_cfg = RPYPlotConfig(
+        subtract_pi=bool(RPY_SUBTRACT_PI),
+        subtract_pi_axis=int(RPY_SUBTRACT_PI_AXIS),
+        unit=str(RPY_PLOT_UNIT),
+    )
+    return build_pose_comparison_figure(
+        true_values=true_actions,
+        pred_values=pred_actions,
+        mask=mask,
+        title=title,
+        measured_values=None,
+        rpy_config=rpy_cfg,
+    )
 
 
 def _build_eval_error_figure(chunk_mse, dim_mse):
@@ -129,120 +106,27 @@ def _build_eval_trajectory_fan_figure(
     source_time_index=None,
     global_step=None,
 ):
-    total_plot_steps = int(max_steps)
-    if total_plot_steps < 1:
-        return None
-    anchor_steps = min(true_action_chunks.shape[0], pred_action_chunks.shape[0], mask_chunks.shape[0])
-    if anchor_steps < 1:
-        return None
-
-    true_action_chunks = true_action_chunks[:anchor_steps]
-    pred_action_chunks = pred_action_chunks[:anchor_steps]
-    mask_chunks = mask_chunks[:anchor_steps]
     if source_time_index is None:
-        source_time_index = np.arange(anchor_steps)
-    else:
-        source_time_index = np.asarray(source_time_index, dtype=np.int64)[:anchor_steps]
-        if source_time_index.shape[0] != anchor_steps:
-            source_time_index = np.arange(anchor_steps)
-
-    pose_dim = true_action_chunks.shape[-1]
-    n_samples = pred_action_chunks.shape[1]
-    time_colors = plt.cm.turbo(np.linspace(0.0, 1.0, anchor_steps))
-    dim_names = _make_pose_dim_names(pose_dim)
-    n_cols = min(3, pose_dim)
-    n_rows = int(np.ceil(pose_dim / n_cols))
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 2.8 * n_rows), sharex=True)
-    axes = np.array(axes).reshape(-1)
-
-    for dim in range(pose_dim):
-        ax = axes[dim]
-        has_sample_label = False
-        for t in range(anchor_steps):
-            valid_h = mask_chunks[t, :, 0] > 0
-            if not np.any(valid_h):
-                continue
-            c_t = time_colors[t]
-            t_base = int(source_time_index[t])
-            horizon_idx = np.where(valid_h)[0]
-            x_vals = t_base + horizon_idx
-            within_window = x_vals < total_plot_steps
-            if not np.any(within_window):
-                continue
-            x_vals = x_vals[within_window]
-            for sample_idx in range(n_samples):
-                ax.plot(
-                    x_vals,
-                    pred_action_chunks[t, sample_idx, horizon_idx[within_window], dim],
-                    color=c_t,
-                    linewidth=0.6,
-                    alpha=0.7,
-                    label=f"{n_samples}x{anchor_steps} sampled trajectories" if not has_sample_label else None,
-                )
-                has_sample_label = True
-
-        ax.set_xlim(0, total_plot_steps - 1)
-        ax.set_title(f"{dim_names[dim]}")
-        ax.grid(alpha=0.25)
-
-    for ax in axes[pose_dim:]:
-        ax.axis("off")
-
-    # Reconstruct full ground truth trajectory from chunks
-    gt_timeline = []
-    gt_values_per_dim = [[] for _ in range(pose_dim)]
-    for t in range(anchor_steps):
-        t_base = int(source_time_index[t])
-        valid_h = mask_chunks[t, :, 0] > 0
-        if not np.any(valid_h):
-            continue
-        horizon_idx = np.where(valid_h)[0]
-        for h in horizon_idx:
-            time_val = t_base + h
-            if time_val >= total_plot_steps:
-                continue
-            gt_timeline.append(time_val)
-            for d in range(pose_dim):
-                gt_values_per_dim[d].append(true_action_chunks[t, h, d])
-
-    # Plot ground truth with full resolution
-    if len(gt_timeline) > 0:
-        # Sort by time and remove duplicates (keep first occurrence)
-        sorted_indices = np.argsort(gt_timeline)
-        unique_times = []
-        unique_values_per_dim = [[] for _ in range(pose_dim)]
-        seen_times = set()
-        for idx in sorted_indices:
-            t_val = gt_timeline[idx]
-            if t_val not in seen_times:
-                seen_times.add(t_val)
-                unique_times.append(t_val)
-                for d in range(pose_dim):
-                    unique_values_per_dim[d].append(gt_values_per_dim[d][idx])
-
-        for d, ax in enumerate(axes[:pose_dim]):
-            ax.plot(
-                unique_times,
-                unique_values_per_dim[d],
-                color="black",
-                linewidth=1.0,
-                label="ground truth" if d == 0 else None,
-                zorder=10,
-            )
-
-    stiff_str = "all" if stiffness_label is None else str(stiffness_label)
-    step_str = f" | step={global_step}" if global_step is not None else ""
-    fig.suptitle(
-        f"Sampled Prior Trajectories vs Ground Truth | stiffness={stiff_str}{step_str}",
-        fontsize=12,
+        source_time_index = np.arange(true_action_chunks.shape[0])
+    rpy_cfg = RPYPlotConfig(
+        subtract_pi=bool(RPY_SUBTRACT_PI),
+        subtract_pi_axis=int(RPY_SUBTRACT_PI_AXIS),
+        unit=str(RPY_PLOT_UNIT),
     )
-
-    handles, labels = axes[0].get_legend_handles_labels()
-    if handles:
-        fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.96), ncol=2, frameon=False)
-
-    fig.tight_layout(rect=[0.02, 0.03, 0.98, 0.95])
-    return fig
+    return build_pose_fan_figure(
+        true_action_chunks=true_action_chunks,
+        pred_action_chunks=pred_action_chunks,
+        mask_chunks=mask_chunks,
+        source_time_index=np.asarray(source_time_index, dtype=np.int64),
+        prediction_stride=1,
+        measured_pose=None,
+        max_plot_steps=int(max_steps),
+        stiffness_label=stiffness_label,
+        global_step=global_step,
+        plot_ground_truth_h0=False,
+        plot_ground_truth_reconstructed=True,
+        rpy_config=rpy_cfg,
+    )
 
 
 def _build_missing_stiffness_figure(stiffness_label, available_labels):

@@ -22,6 +22,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from factr.goal_inference import build_episode_goal_probability_figure  # noqa: E402
+from factr.plot_utils import RPYPlotConfig, build_obs_prediction_figure, build_tracking_error_figure
 
 # ---------------------------------------------------------------------------
 # User Config (edit these variables, then run this script directly)
@@ -650,167 +651,6 @@ def _replace_prefix_and_inverse(part_norm: np.ndarray, reference_full_norm: np.n
     return denorm[..., :part_dim]
 
 
-def _make_obs_dim_names(dim: int) -> List[str]:
-    names = [
-        "pose_x",
-        "pose_y",
-        "pose_z",
-        "pose_r1",
-        "pose_r2",
-        "pose_r3",
-        "pose_r4",
-        "pose_r5",
-        "pose_r6",
-        "vel_x",
-        "vel_y",
-        "vel_z",
-        "vel_rx",
-        "vel_ry",
-        "vel_rz",
-        "wrench_fx",
-        "wrench_fy",
-        "wrench_fz",
-        "wrench_tx",
-        "wrench_ty",
-        "wrench_tz",
-    ]
-    if dim <= len(names):
-        return names[:dim]
-    return [f"obs_{idx + 1}" for idx in range(dim)]
-
-
-def _normalize_vec(vec: np.ndarray) -> np.ndarray:
-    norm = float(np.linalg.norm(vec))
-    if (not np.isfinite(norm)) or norm < 1e-9:
-        return np.array([1.0, 0.0, 0.0], dtype=np.float32)
-    return vec / norm
-
-
-def _rot6d_to_matrix(rot6: np.ndarray) -> np.ndarray:
-    a1 = np.asarray(rot6[:3], dtype=np.float32)
-    a2 = np.asarray(rot6[3:6], dtype=np.float32)
-    if np.any(~np.isfinite(a1)) or np.any(~np.isfinite(a2)):
-        return np.eye(3, dtype=np.float32)
-
-    b1 = _normalize_vec(a1)
-    a2_orth = a2 - float(np.dot(b1, a2)) * b1
-    b2 = _normalize_vec(a2_orth)
-    b3 = _normalize_vec(np.cross(b1, b2))
-    return np.stack([b1, b2, b3], axis=1)
-
-
-def _matrix_to_rpy(rot: np.ndarray) -> np.ndarray:
-    # Intrinsic XYZ (roll, pitch, yaw) extracted from rotation matrix.
-    pitch = float(np.arcsin(np.clip(-rot[2, 0], -1.0, 1.0)))
-    if abs(np.cos(pitch)) > 1e-6:
-        roll = float(np.arctan2(rot[2, 1], rot[2, 2]))
-        yaw = float(np.arctan2(rot[1, 0], rot[0, 0]))
-    else:
-        # Gimbal-lock fallback: keep yaw fixed and solve roll from remaining terms.
-        roll = float(np.arctan2(-rot[1, 2], rot[1, 1]))
-        yaw = 0.0
-    return np.asarray([roll, pitch, yaw], dtype=np.float32)
-
-
-def _unwrap_angles(angles: np.ndarray) -> np.ndarray:
-    if angles.ndim != 2 or angles.shape[0] < 2:
-        return angles
-    return np.unwrap(angles, axis=0).astype(np.float32)
-
-
-def _wrap_to_pi(angles: np.ndarray) -> np.ndarray:
-    return ((angles + np.pi) % (2.0 * np.pi) - np.pi).astype(np.float32)
-
-
-def _align_angles_to_reference(reference: np.ndarray, values: np.ndarray) -> np.ndarray:
-    if reference.shape != values.shape or reference.ndim != 2:
-        return values
-    return (reference + _wrap_to_pi(values - reference)).astype(np.float32)
-
-
-def _get_configured_rpy_axis(angles: np.ndarray) -> int:
-    if angles.ndim != 2 or angles.shape[1] < 3:
-        return -1
-    axis = int(RPY_SUBTRACT_PI_AXIS)
-    if axis < 0 or axis >= angles.shape[1]:
-        return -1
-    return axis
-
-
-def _get_pi_shift_from_axis_start(angles: np.ndarray) -> float:
-    if not bool(RPY_SUBTRACT_PI):
-        return 0.0
-    axis = _get_configured_rpy_axis(angles)
-    if axis < 0:
-        return 0.0
-    start_val = float(angles[0, axis])
-    if not np.isfinite(start_val):
-        return 0.0
-    if start_val < -2.0:
-        return float(np.pi)
-    if start_val > 2.0:
-        return float(-np.pi)
-    return 0.0
-
-
-def _apply_rpy_axis_shift(angles: np.ndarray, shift_value: float) -> np.ndarray:
-    axis = _get_configured_rpy_axis(angles)
-    if axis < 0 or abs(float(shift_value)) < 1e-12:
-        return angles
-    shifted = angles.copy()
-    shifted[:, axis] = shifted[:, axis] + float(shift_value)
-    return shifted.astype(np.float32)
-
-
-def _get_rpy_plot_unit() -> str:
-    unit = str(RPY_PLOT_UNIT).strip().lower()
-    if unit not in ("rad", "deg"):
-        return "rad"
-    return unit
-
-
-def _convert_rpy_to_plot_unit(angles_rad: np.ndarray) -> np.ndarray:
-    unit = _get_rpy_plot_unit()
-    if unit == "deg":
-        return np.rad2deg(angles_rad).astype(np.float32)
-    return angles_rad.astype(np.float32)
-
-
-def _compute_pose_rpy(obs: np.ndarray) -> np.ndarray:
-    if obs.ndim != 2 or obs.shape[1] < 9:
-        return np.zeros((0, 3), dtype=np.float32)
-
-    pose = obs[:, :9]
-    out = np.zeros((pose.shape[0], 3), dtype=np.float32)
-    for idx in range(pose.shape[0]):
-        rot = _rot6d_to_matrix(pose[idx, 3:9])
-        out[idx] = _matrix_to_rpy(rot)
-    return _unwrap_angles(out)
-
-
-def _rotation_geodesic_distance_rad(rot_a: np.ndarray, rot_b: np.ndarray) -> float:
-    rel = rot_a.T @ rot_b
-    trace_rel = float(np.trace(rel))
-    cos_theta = np.clip((trace_rel - 1.0) * 0.5, -1.0, 1.0)
-    return float(np.arccos(cos_theta))
-
-
-def _compute_pose_geodesic_distance(true_obs: np.ndarray, pred_obs: np.ndarray) -> np.ndarray:
-    if true_obs.ndim != 2 or pred_obs.ndim != 2:
-        return np.zeros((0,), dtype=np.float32)
-    if true_obs.shape[1] < 9 or pred_obs.shape[1] < 9:
-        return np.zeros((0,), dtype=np.float32)
-    if true_obs.shape[0] != pred_obs.shape[0]:
-        return np.zeros((0,), dtype=np.float32)
-
-    geod = np.zeros((true_obs.shape[0],), dtype=np.float32)
-    for idx in range(true_obs.shape[0]):
-        rot_true = _rot6d_to_matrix(true_obs[idx, 3:9])
-        rot_pred = _rot6d_to_matrix(pred_obs[idx, 3:9])
-        geod[idx] = _rotation_geodesic_distance_rad(rot_true, rot_pred)
-    return geod
-
-
 def _build_obs_prediction_figure(
     true_obs: np.ndarray,
     pred_mean: np.ndarray,
@@ -819,127 +659,21 @@ def _build_obs_prediction_figure(
     time_index: np.ndarray,
     max_dims: int,
 ):
-    n_dims = min(int(max_dims), int(true_obs.shape[1]))
-    if n_dims <= 0:
-        return None
-
-    dim_names = _make_obs_dim_names(true_obs.shape[1])
-    n_cols = min(3, n_dims)
-    n_rows = int(np.ceil(n_dims / n_cols))
-    has_rpy = true_obs.shape[1] >= 9 and pred_mean.shape[1] >= 9
-
-    if has_rpy:
-        fig = plt.figure(figsize=(5 * n_cols, 2.8 * n_rows + 5.2))
-        gs = fig.add_gridspec(n_rows + 2, n_cols, height_ratios=[1.0] * n_rows + [1.15, 0.95], hspace=0.35)
-        axes = []
-        for row in range(n_rows):
-            for col in range(n_cols):
-                shared = axes[0] if len(axes) > 0 else None
-                axes.append(fig.add_subplot(gs[row, col], sharex=shared))
-        axes = np.asarray(axes, dtype=object)
-        ax_rpy = fig.add_subplot(gs[n_rows, :], sharex=axes[0] if len(axes) > 0 else None)
-        ax_geo = fig.add_subplot(gs[n_rows + 1, :], sharex=axes[0] if len(axes) > 0 else None)
-    else:
-        fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 2.8 * n_rows), sharex=True)
-        axes = np.array(axes).reshape(-1)
-        ax_rpy = None
-        ax_geo = None
-
-    for dim in range(n_dims):
-        ax = axes[dim]
-        lower = pred_mean[:, dim] - pred_std[:, dim]
-        upper = pred_mean[:, dim] + pred_std[:, dim]
-        ax.plot(time_index, true_obs[:, dim], color="black", linewidth=1.3, label="target" if dim == 0 else None)
-        ax.plot(time_index, pred_mean[:, dim], color="#E41A1C", linewidth=1.2, label="pred mean" if dim == 0 else None)
-        ax.plot(
-            time_index,
-            pred_sample[:, dim],
-            color="#377EB8",
-            linewidth=0.9,
-            alpha=0.7,
-            linestyle="--",
-            label="pred sample" if dim == 0 else None,
-        )
-        ax.fill_between(time_index, lower, upper, color="#FB9A99", alpha=0.25, label="mean ± std" if dim == 0 else None)
-        ax.set_title(dim_names[dim])
-        ax.grid(alpha=0.25)
-
-    for ax in axes[n_dims:]:
-        ax.axis("off")
-
-    handles, labels = axes[0].get_legend_handles_labels()
-    if handles:
-        fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.98), ncol=4, frameon=False)
-
-    if ax_rpy is not None:
-        rpy_true = _compute_pose_rpy(true_obs)
-        rpy_pred = _compute_pose_rpy(pred_mean)
-        shift_value = _get_pi_shift_from_axis_start(rpy_true)
-        if rpy_true.shape[0] == len(time_index) and rpy_pred.shape[0] == len(time_index):
-            rpy_true = _apply_rpy_axis_shift(rpy_true, shift_value)
-            rpy_pred = _apply_rpy_axis_shift(rpy_pred, shift_value)
-            rpy_pred = _align_angles_to_reference(rpy_true, rpy_pred)
-            rpy_true_plot = _convert_rpy_to_plot_unit(rpy_true)
-            rpy_pred_plot = _convert_rpy_to_plot_unit(rpy_pred)
-            angle_names = ["roll", "pitch", "yaw"]
-            gt_colors = ["#8B0000", "#006400", "#00008B"]
-            pred_colors = ["#FF4D4D", "#33CC66", "#4D79FF"]
-            for angle_idx, angle_name in enumerate(angle_names):
-                ax_rpy.plot(
-                    time_index,
-                    rpy_true_plot[:, angle_idx],
-                    color=gt_colors[angle_idx],
-                    linewidth=1.3,
-                    linestyle="-",
-                    label=f"{angle_name} gt",
-                )
-                ax_rpy.plot(
-                    time_index,
-                    rpy_pred_plot[:, angle_idx],
-                    color=pred_colors[angle_idx],
-                    linewidth=1.2,
-                    alpha=0.9,
-                    linestyle=":",
-                    label=f"{angle_name} pred",
-                )
-        unit = _get_rpy_plot_unit()
-        rpy_title = f"Computed RPY from pose ({unit}, unwrapped)"
-        if bool(RPY_SUBTRACT_PI):
-            axis_names = ["roll", "pitch", "yaw"]
-            axis_idx = int(np.clip(int(RPY_SUBTRACT_PI_AXIS), 0, len(axis_names) - 1))
-            if shift_value > 0.0:
-                rpy_title += f", +pi on {axis_names[axis_idx]}"
-            elif shift_value < 0.0:
-                rpy_title += f", -pi on {axis_names[axis_idx]}"
-            else:
-                rpy_title += f", no pi shift on {axis_names[axis_idx]}"
-        ax_rpy.set_title(rpy_title)
-        ax_rpy.set_xlabel("step")
-        ax_rpy.set_ylabel(unit)
-        ax_rpy.grid(alpha=0.25)
-        ax_rpy.legend(loc="upper right", ncol=3, frameon=False, fontsize=8)
-
-        geod_rad = _compute_pose_geodesic_distance(true_obs, pred_mean)
-        if ax_geo is not None and geod_rad.shape[0] == len(time_index):
-            geod_deg = np.rad2deg(geod_rad)
-            ax_geo.plot(
-                time_index,
-                geod_deg,
-                color="#1F78B4",
-                linewidth=1.4,
-                alpha=0.9,
-                linestyle="-",
-                label="geodesic distance (deg)",
-            )
-            ax_geo.set_title("Geodesic Distance (rotation error)")
-            ax_geo.set_xlabel("step")
-            ax_geo.set_ylabel("deg")
-            ax_geo.grid(alpha=0.25)
-            ax_geo.legend(loc="upper right", ncol=1, frameon=False, fontsize=8)
-
-    fig.suptitle("Observation prediction on raw episode", fontsize=12)
-    fig.tight_layout(rect=[0.02, 0.03, 0.98, 0.95 if ax_rpy is None else 0.93])
-    return fig
+    rpy_cfg = RPYPlotConfig(
+        subtract_pi=bool(RPY_SUBTRACT_PI),
+        subtract_pi_axis=int(RPY_SUBTRACT_PI_AXIS),
+        unit=str(RPY_PLOT_UNIT),
+    )
+    return build_obs_prediction_figure(
+        true_obs=true_obs,
+        pred_mean=pred_mean,
+        pred_std=pred_std,
+        max_dims=int(max_dims),
+        time_index=time_index,
+        pred_sample=pred_sample,
+        title="Observation prediction on raw episode",
+        rpy_config=rpy_cfg,
+    )
 
 
 def _collapse_chunk_predictions(
@@ -992,36 +726,7 @@ def _collapse_chunk_predictions(
 
 
 def _build_tracking_error_figure(tracking_error: np.ndarray, per_dim_mse: np.ndarray):
-    if tracking_error.size == 0:
-        return None
-
-    l2 = np.linalg.norm(tracking_error, axis=-1)
-    pose_dim = int(tracking_error.shape[-1])
-    dim_names = _make_obs_dim_names(pose_dim)
-    mean_abs = np.mean(np.abs(tracking_error), axis=0)
-
-    fig, axes = plt.subplots(1, 3, figsize=(18, 4))
-    axes[0].plot(np.arange(l2.shape[0]), l2, color="#377EB8", linewidth=1.5)
-    axes[0].set_title("Tracking error L2 per step")
-    axes[0].set_xlabel("step")
-    axes[0].set_ylabel("L2")
-    axes[0].grid(alpha=0.25)
-
-    axes[1].bar(np.arange(pose_dim), mean_abs, color="#FB9A99")
-    axes[1].set_title("Mean |tracking error| by pose dim")
-    axes[1].set_xticks(np.arange(pose_dim))
-    axes[1].set_xticklabels(dim_names, rotation=45, ha="right")
-    axes[1].grid(alpha=0.25)
-
-    mse_dim = per_dim_mse[:pose_dim]
-    axes[2].bar(np.arange(pose_dim), mse_dim, color="#A6CEE3")
-    axes[2].set_title("Prediction MSE by pose dim")
-    axes[2].set_xticks(np.arange(pose_dim))
-    axes[2].set_xticklabels(dim_names, rotation=45, ha="right")
-    axes[2].grid(alpha=0.25)
-
-    fig.tight_layout()
-    return fig
+    return build_tracking_error_figure(tracking_error=tracking_error, per_dim_mse=per_dim_mse)
 
 
 def _build_episode_goal_probabilities(log_likelihood_per_timestep: np.ndarray, goal_classes: int, obs_dim: int) -> np.ndarray:

@@ -5,12 +5,16 @@ from torch.utils.data import DataLoader, IterableDataset
 
 import wandb
 from factr.goal_inference import build_goal_likelihood_figure
+from factr.plot_utils import RPYPlotConfig, build_obs_prediction_figure
 from factr.replay_buffer import IterableWrapper
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 plt.rcParams["figure.dpi"] = 150
+RPY_SUBTRACT_PI = True
+RPY_SUBTRACT_PI_AXIS = 0  # 0=roll, 1=pitch, 2=yaw
+RPY_PLOT_UNIT = "deg"  # "rad" or "deg"
 
 
 def _seed_worker(_worker_id):
@@ -34,66 +38,20 @@ def _build_data_loader(buffer, batch_size, num_workers, is_train=False):
     )
 
 
-def _make_obs_dim_names(dim):
-    names = [
-        "pose_x",
-        "pose_y",
-        "pose_z",
-        "pose_r1",
-        "pose_r2",
-        "pose_r3",
-        "pose_r4",
-        "pose_r5",
-        "pose_r6",
-        "vel_x",
-        "vel_y",
-        "vel_z",
-        "vel_rx",
-        "vel_ry",
-        "vel_rz",
-        "wrench_fx",
-        "wrench_fy",
-        "wrench_fz",
-        "wrench_tx",
-        "wrench_ty",
-        "wrench_tz",
-    ]
-    if dim <= len(names):
-        return names[:dim]
-    return [f"obs_{idx + 1}" for idx in range(dim)]
-
-
 def _build_prediction_figure(true_obs, pred_mean, pred_std, max_dims):
-    n_dims = min(int(max_dims), true_obs.shape[1])
-    if n_dims <= 0:
-        return None
-
-    n_cols = min(3, n_dims)
-    n_rows = int(np.ceil(n_dims / n_cols))
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 2.8 * n_rows), sharex=True)
-    axes = np.array(axes).reshape(-1)
-    time_axis = np.arange(true_obs.shape[0])
-    dim_names = _make_obs_dim_names(true_obs.shape[1])
-
-    for dim in range(n_dims):
-        ax = axes[dim]
-        ax.plot(time_axis, true_obs[:, dim], color="black", linewidth=1.3, label="ground truth" if dim == 0 else None)
-        ax.plot(time_axis, pred_mean[:, dim], color="#E41A1C", linewidth=1.2, label="pred mean" if dim == 0 else None)
-        lower = pred_mean[:, dim] - pred_std[:, dim]
-        upper = pred_mean[:, dim] + pred_std[:, dim]
-        ax.fill_between(time_axis, lower, upper, color="#FB9A99", alpha=0.3, label="pred std" if dim == 0 else None)
-        ax.set_title(dim_names[dim])
-        ax.grid(alpha=0.25)
-
-    for ax in axes[n_dims:]:
-        ax.axis("off")
-
-    handles, labels = axes[0].get_legend_handles_labels()
-    if handles:
-        fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.98), ncol=3, frameon=False)
-    fig.suptitle("Observation Prediction (mean ± std)", fontsize=12)
-    fig.tight_layout(rect=[0.02, 0.03, 0.98, 0.95])
-    return fig
+    rpy_cfg = RPYPlotConfig(
+        subtract_pi=bool(RPY_SUBTRACT_PI),
+        subtract_pi_axis=int(RPY_SUBTRACT_PI_AXIS),
+        unit=str(RPY_PLOT_UNIT),
+    )
+    return build_obs_prediction_figure(
+        true_obs=true_obs,
+        pred_mean=pred_mean,
+        pred_std=pred_std,
+        max_dims=int(max_dims),
+        title="Observation Prediction (mean +- std)",
+        rpy_config=rpy_cfg,
+    )
 
 
 class ObsPredictionTask:

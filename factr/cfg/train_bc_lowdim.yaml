@@ -14,14 +14,14 @@ hydra:
 buffer_path: /home/ferdinand/activeinference/factr/process_data/processed_data/fourgoals_1_act/buf_train.pkl
 test_buffer_path: /home/ferdinand/activeinference/factr/process_data/processed_data/fourgoals_1_act/buf_test.pkl
 
-exp_base_name: aiact_1_beta001_z8_fb001_batch128
+exp_base_name: aiact_beta005_z8_fb0005_klb065
 suffix: _
 exp_name: ${exp_base_name}
 
 batch_size: 128
 num_workers: 8
 lr: 0.00035
-max_iterations: 15000
+max_iterations: 10000
 schedule_freq: 1
 devices: 1
 seed: 42

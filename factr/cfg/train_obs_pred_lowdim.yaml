@@ -45,7 +45,7 @@ save_freq: 2000
 
 wandb:
   name: ${exp_name}
-  project: aiact
+  project: aiact_obspred
   group: obs_pred
   debug: False
   entity: None

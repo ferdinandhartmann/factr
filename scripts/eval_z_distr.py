@@ -50,7 +50,7 @@ except Exception:
 # ---------------------------------------------------------------------------
 # User Config (edit these variables, then run this script directly)
 # ---------------------------------------------------------------------------
-RUN_DIR = Path.home() / "activeinference" / "factr" / "checkpoints" / "aiact_1_beta0001" / "rollout"
+RUN_DIR = Path.home() / "activeinference" / "factr" / "checkpoints" / "aiact_beta005_z8_fb0005_klb065" / "rollout"
 CHECKPOINT_NAME = "latest_ckpt.ckpt"  # or "ckpt_020000.ckpt"
 
 RAW_EPISODE_DIR = Path("/home/ferdinand/activeinference/factr/process_data/data_to_process/fourgoals_1/data")
