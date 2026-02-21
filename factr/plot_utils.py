@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -942,3 +942,211 @@ def build_tracking_error_figure(tracking_error: np.ndarray, per_dim_mse: np.ndar
 
     fig.tight_layout()
     return fig
+
+
+def _extract_gaussian_entry_arrays(entry: Any) -> Tuple[np.ndarray, np.ndarray]:
+    if isinstance(entry, dict):
+        mean = entry.get("mean", entry.get("mu", None))
+        std = entry.get("std", None)
+        if mean is None or std is None:
+            raise KeyError("Gaussian entry dict must include mean/mu and std.")
+        return np.asarray(mean, dtype=np.float32), np.asarray(std, dtype=np.float32)
+
+    if isinstance(entry, (tuple, list)) and len(entry) >= 2:
+        return np.asarray(entry[0], dtype=np.float32), np.asarray(entry[1], dtype=np.float32)
+
+    raise TypeError("Unsupported Gaussian entry format. Expected dict or tuple/list.")
+
+
+def extract_gaussian_prior_posterior(dists_data: Dict[str, Any]) -> Tuple[np.ndarray, np.ndarray]:
+    if "Prior" not in dists_data or "Posterior" not in dists_data:
+        raise KeyError("dists_data must include 'Prior' and 'Posterior'.")
+
+    _, prior_std = _extract_gaussian_entry_arrays(dists_data["Prior"])
+    _, post_std = _extract_gaussian_entry_arrays(dists_data["Posterior"])
+    prior_var = np.maximum(prior_std**2, 1e-10)
+    post_var = np.maximum(post_std**2, 1e-10)
+    return prior_var, post_var
+
+
+def _softmax_last(x: np.ndarray) -> np.ndarray:
+    shifted = x - np.max(x, axis=-1, keepdims=True)
+    exp_x = np.exp(np.clip(shifted, -50.0, 50.0))
+    return exp_x / np.clip(np.sum(exp_x, axis=-1, keepdims=True), 1e-8, None)
+
+
+def _extract_categorical_probs_entry(entry: Any) -> np.ndarray:
+    if isinstance(entry, dict):
+        if "probs" in entry:
+            arr = np.asarray(entry["probs"], dtype=np.float32)
+        elif "probabilities" in entry:
+            arr = np.asarray(entry["probabilities"], dtype=np.float32)
+        elif "logits" in entry:
+            arr = _softmax_last(np.asarray(entry["logits"], dtype=np.float32))
+        else:
+            raise KeyError("Categorical entry dict must include probs/probabilities/logits.")
+    elif isinstance(entry, (tuple, list)):
+        if len(entry) < 1:
+            raise ValueError("Categorical tuple/list entry is empty.")
+        arr = np.asarray(entry[0], dtype=np.float32)
+    else:
+        raise TypeError("Unsupported categorical entry format. Expected dict or tuple/list.")
+
+    if arr.ndim != 3:
+        raise ValueError(f"Expected categorical array shape (T, num_variables, num_categories), got {arr.shape}.")
+
+    is_prob_like = bool(np.all(arr >= -1e-6) and np.mean(np.abs(np.sum(arr, axis=-1) - 1.0)) < 1e-3)
+    probs = arr if is_prob_like else _softmax_last(arr)
+    probs = np.clip(probs, 1e-8, 1.0)
+    probs = probs / np.clip(np.sum(probs, axis=-1, keepdims=True), 1e-8, None)
+    return probs.astype(np.float32)
+
+
+def extract_categorical_prior_posterior_probs(dists_data: Dict[str, Any]) -> Tuple[np.ndarray, np.ndarray]:
+    if "Prior" not in dists_data or "Posterior" not in dists_data:
+        raise KeyError("dists_data must include 'Prior' and 'Posterior'.")
+
+    prior_probs = _extract_categorical_probs_entry(dists_data["Prior"])
+    post_probs = _extract_categorical_probs_entry(dists_data["Posterior"])
+    if prior_probs.shape != post_probs.shape:
+        time_len = min(int(prior_probs.shape[0]), int(post_probs.shape[0]))
+        prior_probs = prior_probs[:time_len]
+        post_probs = post_probs[:time_len]
+    return prior_probs, post_probs
+
+
+def build_z_gaussian_variance_with_frames_figure(
+    dists_data: Dict[str, Any],
+    raw_images: Sequence[np.ndarray],
+    target_steps: Optional[Sequence[int]] = None,
+):
+    prior_var, post_var = extract_gaussian_prior_posterior(dists_data)
+    time_len, z_dim = post_var.shape
+    time_steps = np.arange(time_len, dtype=np.int64)
+
+    if target_steps is None:
+        target_steps = [150, 175, 200, 225, 250, 275, 300, 325]
+    target_steps = [int(step) for step in target_steps]
+    num_imgs = len(target_steps)
+
+    post_mean_var = np.mean(post_var, axis=1)
+    prior_mean_var = np.mean(prior_var, axis=1)
+
+    fig = plt.figure(figsize=(20, 10))
+    gs = fig.add_gridspec(2, max(1, num_imgs), height_ratios=[1.5, 1.0], hspace=0.08, wspace=0.1)
+
+    ax_main = fig.add_subplot(gs[0, :])
+    for dim in range(z_dim):
+        if dim == 0:
+            ax_main.plot(time_steps, post_var[:, dim], color="red", alpha=0.3, linewidth=0.5, label="Individual (Post)")
+            ax_main.plot(time_steps, prior_var[:, dim], color="blue", alpha=0.3, linewidth=0.5, label="Individual (Prior)")
+        else:
+            ax_main.plot(time_steps, post_var[:, dim], color="red", alpha=0.3, linewidth=0.5)
+            ax_main.plot(time_steps, prior_var[:, dim], color="blue", alpha=0.3, linewidth=0.5)
+
+    ax_main.plot(time_steps, post_mean_var, color="red", linewidth=2.5, label="Mean Variance (Posterior)")
+    ax_main.plot(time_steps, prior_mean_var, color="blue", linewidth=2.5, label="Mean Variance (Prior)")
+    for step in target_steps:
+        if 0 <= step < time_len:
+            ax_main.axvline(x=step, color="gray", linestyle="--", alpha=0.4)
+
+    ax_main.set_yscale("log")
+    ax_main.set_title("Z-Variance & Observations")
+    ax_main.set_ylabel("Variance (Log Scale)")
+    ax_main.set_xlabel("Timestep", labelpad=5)
+    ax_main.grid(True, which="both", linestyle=":", alpha=0.5)
+    ax_main.legend(loc="upper left", frameon=True, fontsize="small", ncol=2)
+
+    for img_idx, step in enumerate(target_steps):
+        img_ax = fig.add_subplot(gs[1, img_idx])
+        if 0 <= step < len(raw_images):
+            img_ax.imshow(raw_images[step])
+            img_ax.set_title(f"step={step}", fontsize=12)
+        else:
+            img_ax.text(0.5, 0.5, "N/A", ha="center", va="center")
+        img_ax.axis("off")
+
+    stats = {
+        "post_mean_var_max": float(np.max(post_mean_var)),
+        "post_mean_var_min": float(np.min(post_mean_var)),
+    }
+    return fig, stats
+
+
+def build_z_categorical_distribution_with_frames_figure(
+    dists_data: Dict[str, Any],
+    raw_images: Sequence[np.ndarray],
+    target_steps: Optional[Sequence[int]] = None,
+):
+    prior_probs, post_probs = extract_categorical_prior_posterior_probs(dists_data)
+    time_len, num_vars, num_cats = prior_probs.shape
+
+    if target_steps is None:
+        target_steps = [150, 175, 200, 225, 250, 275, 300, 325]
+    target_steps = [int(step) for step in target_steps]
+    num_imgs = len(target_steps)
+
+    prior_entropy = -np.sum(prior_probs * np.log(np.clip(prior_probs, 1e-8, 1.0)), axis=-1)
+    post_entropy = -np.sum(post_probs * np.log(np.clip(post_probs, 1e-8, 1.0)), axis=-1)
+    prior_flat = prior_probs.reshape(time_len, num_vars * num_cats)
+    post_flat = post_probs.reshape(time_len, num_vars * num_cats)
+
+    fig = plt.figure(figsize=(22, 12))
+    gs = fig.add_gridspec(3, max(1, num_imgs), height_ratios=[1.0, 1.0, 0.9], hspace=0.22, wspace=0.1)
+
+    ax_prior = fig.add_subplot(gs[0, :])
+    ax_post = fig.add_subplot(gs[1, :], sharex=ax_prior)
+
+    im_prior = ax_prior.imshow(
+        prior_flat.T,
+        aspect="auto",
+        origin="lower",
+        interpolation="nearest",
+        cmap="viridis",
+        vmin=0.0,
+        vmax=1.0,
+    )
+    im_post = ax_post.imshow(
+        post_flat.T,
+        aspect="auto",
+        origin="lower",
+        interpolation="nearest",
+        cmap="viridis",
+        vmin=0.0,
+        vmax=1.0,
+    )
+
+    for ax in (ax_prior, ax_post):
+        for step in target_steps:
+            if 0 <= step < time_len:
+                ax.axvline(x=step, color="white", linestyle="--", alpha=0.45, linewidth=0.8)
+        for var_idx in range(1, num_vars):
+            ax.axhline(y=var_idx * num_cats - 0.5, color="white", linestyle=":", alpha=0.25, linewidth=0.8)
+        ax.set_ylabel("var*cat channel")
+        ax.grid(False)
+
+    ax_prior.set_title(
+        f"Prior categorical probabilities | vars={num_vars}, cats={num_cats}, mean entropy={float(np.mean(prior_entropy)):.3f}"
+    )
+    ax_post.set_title(f"Posterior categorical probabilities | mean entropy={float(np.mean(post_entropy)):.3f}")
+    ax_post.set_xlabel("Timestep")
+
+    fig.colorbar(im_prior, ax=ax_prior, fraction=0.02, pad=0.01, label="probability")
+    fig.colorbar(im_post, ax=ax_post, fraction=0.02, pad=0.01, label="probability")
+
+    for img_idx, step in enumerate(target_steps):
+        img_ax = fig.add_subplot(gs[2, img_idx])
+        if 0 <= step < len(raw_images):
+            img_ax.imshow(raw_images[step])
+            img_ax.set_title(f"step={step}", fontsize=11)
+        else:
+            img_ax.text(0.5, 0.5, "N/A", ha="center", va="center")
+        img_ax.axis("off")
+
+    stats = {
+        "prior_entropy_mean": float(np.mean(prior_entropy)),
+        "post_entropy_mean": float(np.mean(post_entropy)),
+        "num_variables": int(num_vars),
+        "num_categories": int(num_cats),
+    }
+    return fig, stats

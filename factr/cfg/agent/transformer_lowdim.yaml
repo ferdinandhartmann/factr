@@ -17,7 +17,19 @@ hidden_dim: 256
 
 # --- CVAE latent ---
 # d_z: dimensionality of latent z.
+# - gaussian: direct latent size
+# - categorical: must equal categorical_num_variables * categorical_num_categories
 d_z: 8 # 16
+latent_distribution: gaussian  # gaussian | categorical
+fixed_prior: false             # true -> gaussian N(0,I) or categorical uniform prior
+
+# Categorical latent config (used only when latent_distribution=categorical).
+# z is represented as `categorical_num_variables` one-hot variables,
+# each variable with `categorical_num_categories` categories.
+categorical_num_variables: 8
+categorical_num_categories: 16
+categorical_temperature: 1.0 # Higher: softer, smoother, more mixed categories, Lower: sharper, closer to one-hot.
+categorical_straight_through: true # forward pass uses hard one-hot samples, but gradients flow through a soft version (straight-through estimator). false means fully soft samples (more smooth/stable, less discrete).
 
 # Light KL floor to reduce "KL -> 0 + z ignored" collapse.
 # With d_z=32, free_bits=0.05 corresponds to a KL floor of 1.6.
@@ -25,7 +37,7 @@ beta: 0.05 # 10 # 0.001 # 1           # KL weight in total_loss = recon + beta *
                     # Higher beta ⇒ stronger pressure for prior ≈ posterior (latent carries less extra “action-only” info)
                     # Lower beta ⇒ easier for posterior to use z to fit actions well, but the prior may lag behind (bigger prior-vs-posterior gap).
 kl_balance_alpha: 0.65  # KL-balance alpha in [0,1]. 0.5 keeps legacy behavior; increase (>0.5) to reduce posterior KL influence and increase prior KL influence.
-free_bits: 0.005      # KL floor per dim (null = disable). Effective floor = free_bits * d_z.
+free_bits: 0.005      # KL floor per dim (null = disable). Effective floor = free_bits * d_z (gaussian) or * categorical_num_variables (categorical).
 
 # Controls which context tokens the prior p(z|context) gets to look at.
 # - cls_all_obs: concatenate [cls, pose, vel, wrench, track] tokens

@@ -29,6 +29,7 @@ Style / hygiene
 - Seed everything in training scripts (Python/NumPy/Torch).
 - Don’t change FACTR or DreamerV2 internals unless necessary; add adapters first.
 - Prefer config-level changes (Hydra/YAML) over hard-coded constants.
+- When you implement something, add a few comments that descibe what is happening and comments at important steps. but dont add to many, just a few.n 
 
 When editing:
 - Scope changes tightly to the active pipeline unless asked otherwise.

@@ -11,9 +11,22 @@ def _kl_diag_gaussians(mu_q, logvar_q, mu_p, logvar_p):
     )
 
 
+def _kl_categorical(logits_q, logits_p):
+    log_q = F.log_softmax(logits_q, dim=-1)
+    log_p = F.log_softmax(logits_p, dim=-1)
+    q = torch.exp(log_q)
+    return (q * (log_q - log_p)).sum(dim=(-1, -2))
+
+
 def _reparameterize(mu, logvar):
     eps = torch.randn_like(mu)
     return mu + torch.exp(0.5 * logvar) * eps
+
+
+def _categorical_entropy(logits):
+    log_probs = F.log_softmax(logits, dim=-1)
+    probs = torch.exp(log_probs)
+    return -(probs * log_probs).sum(dim=(-1, -2))
 
 
 class _PosteriorTransformer(nn.Module):
@@ -27,9 +40,16 @@ class _PosteriorTransformer(nn.Module):
         nhead,
         num_layers,
         dropout,
+        latent_distribution,
+        categorical_num_variables,
+        categorical_num_categories,
     ):
         super().__init__()
         self.action_chunk = int(action_chunk)
+        self.latent_distribution = str(latent_distribution).lower()
+        self.categorical_num_variables = int(categorical_num_variables)
+        self.categorical_num_categories = int(categorical_num_categories)
+
         self.action_embed = nn.Linear(action_dim, token_dim)
         self.action_pos_embed = nn.Embedding(action_chunk, token_dim)
         self.post_cls = nn.Parameter(torch.zeros(1, 1, token_dim))
@@ -45,9 +65,18 @@ class _PosteriorTransformer(nn.Module):
         )
         self.encoder = nn.TransformerEncoder(enc_layer, num_layers=num_layers)
         self.encoder_norm = nn.LayerNorm(token_dim)
-        self.mu = nn.Linear(token_dim, d_z)
-        self.logvar = nn.Linear(token_dim, d_z)
-        nn.init.constant_(self.logvar.bias, -3.0)
+        if self.latent_distribution == "gaussian":
+            self.mu = nn.Linear(token_dim, d_z)
+            self.logvar = nn.Linear(token_dim, d_z)
+            nn.init.constant_(self.logvar.bias, -3.0)
+            self.logits = None
+        elif self.latent_distribution == "categorical":
+            out_dim = self.categorical_num_variables * self.categorical_num_categories
+            self.mu = None
+            self.logvar = None
+            self.logits = nn.Linear(token_dim, out_dim)
+        else:
+            raise ValueError(f"Unsupported latent_distribution={latent_distribution}.")
 
     def forward(self, context_tokens, target_actions):
         batch_size, chunk_len, _ = target_actions.shape
@@ -64,9 +93,13 @@ class _PosteriorTransformer(nn.Module):
         out = self.encoder_norm(out)
 
         summary = out[:, 0]
-        mu = self.mu(summary)
-        logvar = self.logvar(summary)
-        return mu, logvar
+        if self.latent_distribution == "gaussian":
+            mu = self.mu(summary)
+            logvar = self.logvar(summary)
+            return {"mu": mu, "logvar": logvar}
+
+        logits = self.logits(summary).view(batch_size, self.categorical_num_variables, self.categorical_num_categories)
+        return {"logits": logits}
 
 
 class LowdimStiffnessCVAEAgent(nn.Module):
@@ -80,6 +113,12 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         obs_window=8,
         stiffness_classes=3,
         d_z=32,
+        latent_distribution="gaussian",
+        categorical_num_variables=2,
+        categorical_num_categories=4,
+        categorical_temperature=1.0,
+        categorical_straight_through=True,
+        fixed_prior=False,
         token_dim=256,
         hidden_dim=512,
         beta=1.0,
@@ -105,6 +144,12 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         self.kl_balance_alpha = float(kl_balance_alpha)
         self.z_context_mode = z_context_mode
         self.factr_baseline = bool(factr_baseline)
+        self.latent_distribution = str(latent_distribution).lower()
+        self.fixed_prior = bool(fixed_prior)
+        self.categorical_num_variables = int(categorical_num_variables)
+        self.categorical_num_categories = int(categorical_num_categories)
+        self.categorical_temperature = float(categorical_temperature)
+        self.categorical_straight_through = bool(categorical_straight_through)
 
         if self._obs_dim != 27:
             raise ValueError(f"Expected obs_dim=27 for grouped tokens, got {self._obs_dim}.")
@@ -112,6 +157,28 @@ class LowdimStiffnessCVAEAgent(nn.Module):
             raise ValueError(f"Expected ac_dim=9 for pose-only prediction, got {self._ac_dim}.")
         if not 0.0 <= self.kl_balance_alpha <= 1.0:
             raise ValueError(f"kl_balance_alpha must be in [0, 1], got {self.kl_balance_alpha}.")
+        if self.latent_distribution not in {"gaussian", "categorical"}:
+            raise ValueError(
+                f"latent_distribution must be 'gaussian' or 'categorical', got {self.latent_distribution}."
+            )
+        if self.latent_distribution == "gaussian":
+            self._latent_dim = int(d_z)
+            self._free_bits_dims = self._latent_dim
+        else:
+            if self.categorical_num_variables < 1:
+                raise ValueError(f"categorical_num_variables must be >=1, got {self.categorical_num_variables}.")
+            if self.categorical_num_categories < 2:
+                raise ValueError(f"categorical_num_categories must be >=2, got {self.categorical_num_categories}.")
+            if self.categorical_temperature <= 0.0:
+                raise ValueError(f"categorical_temperature must be >0, got {self.categorical_temperature}.")
+            self._latent_dim = self.categorical_num_variables * self.categorical_num_categories
+            self._free_bits_dims = self.categorical_num_variables
+            if int(d_z) != self._latent_dim:
+                raise ValueError(
+                    "For categorical latent, d_z must match "
+                    f"categorical_num_variables * categorical_num_categories ({self._latent_dim}), got d_z={d_z}."
+                )
+        self.d_z = self._latent_dim
 
         self.state_slices = {
             "pose": slice(0, 9),
@@ -171,29 +238,45 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         else:
             raise ValueError(f"Unknown z_context_mode: {self.z_context_mode}")
 
-        self.prior_backbone = nn.Sequential(
-            nn.LayerNorm(context_dim),
-            nn.Linear(context_dim, hidden_dim),
-            nn.GELU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.GELU(),
-        )
-        self.prior_mu = nn.Linear(hidden_dim, d_z)
-        self.prior_logvar = nn.Linear(hidden_dim, d_z)
-        nn.init.constant_(self.prior_logvar.bias, -3.0)
+        if not self.fixed_prior:
+            self.prior_backbone = nn.Sequential(
+                nn.LayerNorm(context_dim),
+                nn.Linear(context_dim, hidden_dim),
+                nn.GELU(),
+                nn.Linear(hidden_dim, hidden_dim),
+                nn.GELU(),
+            )
+            if self.latent_distribution == "gaussian":
+                self.prior_mu = nn.Linear(hidden_dim, self._latent_dim)
+                self.prior_logvar = nn.Linear(hidden_dim, self._latent_dim)
+                nn.init.constant_(self.prior_logvar.bias, -3.0)
+                self.prior_logits = None
+            else:
+                out_dim = self.categorical_num_variables * self.categorical_num_categories
+                self.prior_logits = nn.Linear(hidden_dim, out_dim)
+                self.prior_mu = None
+                self.prior_logvar = None
+        else:
+            self.prior_backbone = None
+            self.prior_mu = None
+            self.prior_logvar = None
+            self.prior_logits = None
 
         self.posterior = _PosteriorTransformer(
             token_dim=token_dim,
-            d_z=d_z,
+            d_z=self._latent_dim,
             action_dim=self._ac_dim,
             action_chunk=self._ac_chunk,
             hidden_dim=hidden_dim,
             nhead=nhead,
             num_layers=posterior_layers,
             dropout=dropout,
+            latent_distribution=self.latent_distribution,
+            categorical_num_variables=self.categorical_num_variables,
+            categorical_num_categories=self.categorical_num_categories,
         )
 
-        self.z_to_token = nn.Linear(d_z, token_dim)
+        self.z_to_token = nn.Linear(self._latent_dim, token_dim)
         self.action_queries = nn.Embedding(self._ac_chunk, token_dim)
         decoder_layer = nn.TransformerDecoderLayer(
             d_model=token_dim,
@@ -290,10 +373,124 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         return torch.cat([cls_token, pooled], dim=-1)
 
     def _prior(self, z_context):
+        batch_size = z_context.shape[0]
+        if self.latent_distribution == "gaussian":
+            if self.fixed_prior:
+                # Fixed Gaussian prior p(z)=N(0,I), independent of context.
+                mu = torch.zeros(batch_size, self._latent_dim, device=z_context.device, dtype=z_context.dtype)
+                logvar = torch.zeros_like(mu)
+                return {"mu": mu, "logvar": logvar}
+            h = self.prior_backbone(z_context)
+            mu = self.prior_mu(h)
+            logvar = self.prior_logvar(h)
+            return {"mu": mu, "logvar": logvar}
+
+        if self.fixed_prior:
+            # Fixed categorical prior p(z): uniform over categories for each variable.
+            logits = torch.zeros(
+                batch_size,
+                self.categorical_num_variables,
+                self.categorical_num_categories,
+                device=z_context.device,
+                dtype=z_context.dtype,
+            )
+            return {"logits": logits}
+
         h = self.prior_backbone(z_context)
-        mu = self.prior_mu(h)
-        logvar = self.prior_logvar(h)
-        return mu, logvar
+        logits = self.prior_logits(h).view(batch_size, self.categorical_num_variables, self.categorical_num_categories)
+        return {"logits": logits}
+
+    def _apply_free_bits(self, kl_values):
+        if self.free_bits is None:
+            return kl_values
+        kl_floor = float(self.free_bits) * float(self._free_bits_dims)
+        return torch.clamp(kl_values, min=kl_floor)
+
+    def _compute_kl(self, posterior_params, prior_params):
+        if self.latent_distribution == "gaussian":
+            mu_q, logvar_q = posterior_params["mu"], posterior_params["logvar"]
+            mu_p, logvar_p = prior_params["mu"], prior_params["logvar"]
+            if math.isclose(self.kl_balance_alpha, 0.5):
+                kl = _kl_diag_gaussians(mu_q, logvar_q, mu_p, logvar_p)
+                return self._apply_free_bits(kl).mean()
+
+            kl_prior = _kl_diag_gaussians(mu_q.detach(), logvar_q.detach(), mu_p, logvar_p)
+            kl_post = _kl_diag_gaussians(mu_q, logvar_q, mu_p.detach(), logvar_p.detach())
+            kl_prior = self._apply_free_bits(kl_prior)
+            kl_post = self._apply_free_bits(kl_post)
+            return (self.kl_balance_alpha * kl_prior + (1.0 - self.kl_balance_alpha) * kl_post).mean()
+
+        logits_q, logits_p = posterior_params["logits"], prior_params["logits"]
+        if math.isclose(self.kl_balance_alpha, 0.5):
+            kl = _kl_categorical(logits_q, logits_p)
+            return self._apply_free_bits(kl).mean()
+
+        kl_prior = _kl_categorical(logits_q.detach(), logits_p)
+        kl_post = _kl_categorical(logits_q, logits_p.detach())
+        kl_prior = self._apply_free_bits(kl_prior)
+        kl_post = self._apply_free_bits(kl_post)
+        return (self.kl_balance_alpha * kl_prior + (1.0 - self.kl_balance_alpha) * kl_post).mean()
+
+    def _sample_train_latent(self, posterior_params):
+        if self.latent_distribution == "gaussian":
+            return _reparameterize(posterior_params["mu"], posterior_params["logvar"])
+
+        logits_q = posterior_params["logits"]
+        z = F.gumbel_softmax(
+            logits_q,
+            tau=self.categorical_temperature,
+            hard=self.categorical_straight_through,
+            dim=-1,
+        )
+        return z.reshape(logits_q.shape[0], self._latent_dim)
+
+    def _sample_latent_batch(self, latent_params, sample, num_samples):
+        if num_samples < 1:
+            raise ValueError(f"num_samples must be >=1, got {num_samples}.")
+
+        if self.latent_distribution == "gaussian":
+            mu, logvar = latent_params["mu"], latent_params["logvar"]
+            batch_size, z_dim = mu.shape
+            if sample:
+                eps = torch.randn(batch_size, num_samples, z_dim, device=mu.device, dtype=mu.dtype)
+                return mu.unsqueeze(1) + torch.exp(0.5 * logvar).unsqueeze(1) * eps
+            return mu.unsqueeze(1).expand(-1, num_samples, -1)
+
+        logits = latent_params["logits"]
+        batch_size, n_var, n_cat = logits.shape
+        probs = torch.softmax(logits, dim=-1)
+        if sample:
+            flat_probs = probs.reshape(batch_size * n_var, n_cat)
+            sampled_idx = torch.multinomial(flat_probs, num_samples=num_samples, replacement=True)
+            sampled_idx = sampled_idx.view(batch_size, n_var, num_samples).permute(0, 2, 1)
+            # Flatten (num_variables, num_categories) -> latent dim for the decoder.
+            sampled_one_hot = F.one_hot(sampled_idx, num_classes=n_cat).to(dtype=probs.dtype)
+            return sampled_one_hot.reshape(batch_size, num_samples, self._latent_dim)
+
+        expanded = probs.unsqueeze(1).expand(batch_size, num_samples, n_var, n_cat)
+        return expanded.reshape(batch_size, num_samples, self._latent_dim)
+
+    def _deterministic_latent(self, latent_params):
+        if self.latent_distribution == "gaussian":
+            return latent_params["mu"]
+
+        probs = torch.softmax(latent_params["logits"], dim=-1)
+        return probs.reshape(probs.shape[0], self._latent_dim)
+
+    def _latent_metrics(self, posterior_params, prior_params):
+        if self.latent_distribution == "gaussian":
+            logvar_p, logvar_q = prior_params["logvar"], posterior_params["logvar"]
+            prior_std_mean = torch.exp(0.5 * logvar_p).mean()
+            posterior_std_mean = torch.exp(0.5 * logvar_q).mean()
+            dim = float(logvar_q.shape[-1])
+            entropy_const = 0.5 * dim * (1.0 + math.log(2.0 * math.pi))
+            prior_entropy = entropy_const + 0.5 * logvar_p.sum(dim=-1).mean()
+            posterior_entropy = entropy_const + 0.5 * logvar_q.sum(dim=-1).mean()
+            return prior_std_mean, posterior_std_mean, prior_entropy, posterior_entropy
+
+        prior_entropy = _categorical_entropy(prior_params["logits"]).mean()
+        posterior_entropy = _categorical_entropy(posterior_params["logits"]).mean()
+        return None, None, prior_entropy, posterior_entropy
 
     def _decode_actions(self, context_tokens, z):
         z_query_bias = self.z_to_token(z).unsqueeze(1)
@@ -316,12 +513,12 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         mask = self._reshape_actions(mask_flat)
 
         context_tokens = self._build_context_tokens(obs, class_labels=class_labels)
-        z_context = self._build_z_context(context_tokens)  #  Concatenates all tokens and uses attention-weighted pooling 
+        z_context = self._build_z_context(context_tokens)
 
-        mu_p, logvar_p = self._prior(z_context)
-        mu_q, logvar_q = self.posterior(context_tokens.detach(), target_actions)
+        prior_params = self._prior(z_context)
+        posterior_params = self.posterior(context_tokens.detach(), target_actions)
 
-        z = _reparameterize(mu_q, logvar_q)
+        z = self._sample_train_latent(posterior_params)
         pred_actions = self._decode_actions(context_tokens, z)
 
         recon = F.l1_loss(pred_actions, target_actions, reduction="none")
@@ -329,27 +526,11 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         recon_l2 = F.mse_loss(pred_actions, target_actions, reduction="none")
         recon_l2 = (recon_l2 * mask).sum() / torch.clamp(mask.sum(), min=1.0)
 
-        # Keep the legacy behavior exactly when alpha=0.5.
-        if math.isclose(self.kl_balance_alpha, 0.5):
-            kl = _kl_diag_gaussians(mu_q, logvar_q, mu_p, logvar_p)
-            if self.free_bits is not None:
-                kl = torch.clamp(kl, min=float(self.free_bits) * mu_q.shape[-1])
-            kl = kl.mean()
-        else:
-            kl_prior = _kl_diag_gaussians(mu_q.detach(), logvar_q.detach(), mu_p, logvar_p)
-            kl_post = _kl_diag_gaussians(mu_q, logvar_q, mu_p.detach(), logvar_p.detach())
-            if self.free_bits is not None:
-                kl_floor = float(self.free_bits) * mu_q.shape[-1]
-                kl_prior = torch.clamp(kl_prior, min=kl_floor)
-                kl_post = torch.clamp(kl_post, min=kl_floor)
-            kl = (self.kl_balance_alpha * kl_prior + (1.0 - self.kl_balance_alpha) * kl_post).mean()
-
-        prior_std_mean = torch.exp(0.5 * logvar_p).mean()
-        posterior_std_mean = torch.exp(0.5 * logvar_q).mean()
-        dim = float(mu_q.shape[-1])
-        entropy_const = 0.5 * dim * (1.0 + math.log(2.0 * math.pi))
-        prior_entropy = entropy_const + 0.5 * logvar_p.sum(dim=-1).mean()
-        posterior_entropy = entropy_const + 0.5 * logvar_q.sum(dim=-1).mean()
+        # Keep KL-balance and free-bits behavior shared across latent families.
+        kl = self._compute_kl(posterior_params, prior_params)
+        prior_std_mean, posterior_std_mean, prior_entropy, posterior_entropy = self._latent_metrics(
+            posterior_params, prior_params
+        )
 
         total_loss = recon + self.beta * kl
         return {
@@ -368,8 +549,9 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         del imgs, kwargs, sample
         context_tokens = self._build_context_tokens(obs, class_labels=class_labels)
         z_context = self._build_z_context(context_tokens)
-        mu_p, _ = self._prior(z_context)
-        return self._decode_actions(context_tokens, mu_p)
+        prior_params = self._prior(z_context)
+        z = self._deterministic_latent(prior_params)
+        return self._decode_actions(context_tokens, z)
 
     @torch.no_grad()
     def get_actions_prior(
@@ -385,14 +567,10 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         del imgs
         context_tokens = self._build_context_tokens(obs, class_labels=class_labels)
         z_context = self._build_z_context(context_tokens)
-        mu_p, logvar_p = self._prior(z_context)
+        prior_params = self._prior(z_context)
 
-        batch_size, z_dim = mu_p.shape
-        if sample:
-            eps = torch.randn(batch_size, num_samples, z_dim, device=mu_p.device)
-            z = mu_p.unsqueeze(1) + torch.exp(0.5 * logvar_p).unsqueeze(1) * eps
-        else:
-            z = mu_p.unsqueeze(1).expand(-1, num_samples, -1)
+        z = self._sample_latent_batch(prior_params, sample=sample, num_samples=num_samples)
+        batch_size, _, z_dim = z.shape
 
         context_tokens = context_tokens.repeat_interleave(num_samples, dim=0)
         z = z.reshape(batch_size * num_samples, z_dim)
@@ -409,13 +587,9 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         target_action = self._reshape_actions(target_action)
         context_tokens = self._build_context_tokens(obs, class_labels=class_labels)
 
-        mu_q, logvar_q = self.posterior(context_tokens.detach(), target_action)
-        batch_size, z_dim = mu_q.shape
-        if sample:
-            eps = torch.randn(batch_size, num_samples, z_dim, device=mu_q.device)
-            z = mu_q.unsqueeze(1) + torch.exp(0.5 * logvar_q).unsqueeze(1) * eps
-        else:
-            z = mu_q.unsqueeze(1).expand(-1, num_samples, -1)
+        posterior_params = self.posterior(context_tokens.detach(), target_action)
+        z = self._sample_latent_batch(posterior_params, sample=sample, num_samples=num_samples)
+        batch_size, _, z_dim = z.shape
 
         context_tokens = context_tokens.repeat_interleave(num_samples, dim=0)
         z = z.reshape(batch_size * num_samples, z_dim)
