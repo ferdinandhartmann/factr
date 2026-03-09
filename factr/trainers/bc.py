@@ -38,6 +38,12 @@ class BehaviorCloning(BaseTrainer):
 
                     self.log(k, global_step, val)
 
+            if loss_dict.get("l1_loss") is not None:
+                posterior_l1 = reduce_loss(loss_dict["l1_loss"])
+                if hasattr(posterior_l1, "item"):
+                    posterior_l1 = posterior_l1.item()
+                self.log("posterior_l1", global_step, posterior_l1)
+
         self.last_train_loss = total_loss.item()
 
         return total_loss

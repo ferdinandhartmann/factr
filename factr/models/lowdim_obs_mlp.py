@@ -180,7 +180,9 @@ class LowdimGaussianObsMLP(nn.Module):
             .reshape(batch_size * self.goal_classes, pred_horizon, action_dim)
         )
         stiffness_all = (
-            stiffness_labels.view(batch_size, 1).expand(batch_size, self.goal_classes).reshape(batch_size * self.goal_classes)
+            stiffness_labels.view(batch_size, 1)
+            .expand(batch_size, self.goal_classes)
+            .reshape(batch_size * self.goal_classes)
         )
         goals_all = goals_1_indexed.reshape(batch_size * self.goal_classes)
         return obs_all, action_all, stiffness_all, goals_all, goals_1_indexed
@@ -266,8 +268,7 @@ class LowdimGaussianObsMLP(nn.Module):
     def compute_goal_posterior_over_time(self, log_likelihood_per_timestep, goal_prior=None):
         if log_likelihood_per_timestep.ndim != 3:
             raise ValueError(
-                "Expected log_likelihood_per_timestep shape (B, G, H), "
-                f"got {tuple(log_likelihood_per_timestep.shape)}."
+                f"Expected log_likelihood_per_timestep shape (B, G, H), got {tuple(log_likelihood_per_timestep.shape)}."
             )
         batch_size, goal_classes, _ = log_likelihood_per_timestep.shape
         if goal_classes != self.goal_classes:
@@ -334,7 +335,9 @@ class LowdimGaussianObsMLP(nn.Module):
 
         num_goal_samples = int(num_goal_samples)
         sampled_single = self.sample_from_gaussian(mean, std, num_samples=1)
-        sampled_multi = self.sample_from_gaussian(mean, std, num_samples=num_goal_samples) if num_goal_samples > 1 else None
+        sampled_multi = (
+            self.sample_from_gaussian(mean, std, num_samples=num_goal_samples) if num_goal_samples > 1 else None
+        )
 
         return {
             "goal_labels": goal_grid,
@@ -362,9 +365,7 @@ class LowdimGaussianObsMLP(nn.Module):
         result = {"dist_params": out, "mean": mean, "var": var, "std": std, "sample": sample}
         if target_obs is not None:
             if target_obs.ndim != 3 or target_obs.shape != mean.shape:
-                raise ValueError(
-                    f"Expected target_obs shape {tuple(mean.shape)}, got {tuple(target_obs.shape)}."
-                )
+                raise ValueError(f"Expected target_obs shape {tuple(mean.shape)}, got {tuple(target_obs.shape)}.")
             mask = self._reshape_target_mask(target_mask, reference=mean)
             mask_expanded = mask[..., None]
             normalizer = torch.clamp(mask_expanded.sum() * mean.shape[-1], min=1.0)

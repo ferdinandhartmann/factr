@@ -99,9 +99,9 @@ class BaseTrainer(ABC):
         run_dir = self._get_run_dir()
         run_dir.mkdir(parents=True, exist_ok=True)
 
-        # Save current checkpoint
-        current_ckpt = run_dir / f"ckpt_{global_step:06d}.ckpt"
-        torch.save(save_dict, current_ckpt)
+        # # Save current checkpoint
+        # current_ckpt = run_dir / f"ckpt_{global_step:06d}.ckpt"
+        # torch.save(save_dict, current_ckpt)
 
         # Remove old checkpoints, keeping only the 2 most recent
         ckpts = sorted(run_dir.glob("ckpt_*.ckpt"))

@@ -125,7 +125,9 @@ def get_pi_shift_from_axis_start(angles: np.ndarray, cfg: RPYPlotConfig = DEFAUL
     return 0.0
 
 
-def apply_rpy_axis_shift(angles: np.ndarray, shift_value: float, cfg: RPYPlotConfig = DEFAULT_RPY_PLOT_CONFIG) -> np.ndarray:
+def apply_rpy_axis_shift(
+    angles: np.ndarray, shift_value: float, cfg: RPYPlotConfig = DEFAULT_RPY_PLOT_CONFIG
+) -> np.ndarray:
     axis = _get_configured_rpy_axis(angles, cfg)
     if axis < 0 or abs(float(shift_value)) < 1e-12:
         return angles
@@ -255,7 +257,14 @@ def build_pose_comparison_figure(
     for dim in range(pose_dim):
         ax = axes[dim]
         ax.plot(time_index, true_valid[:, dim], color="black", linewidth=1.0, label=true_label if dim == 0 else None)
-        ax.plot(time_index, pred_valid[:, dim], color="#E41A1C", linewidth=1.4, alpha=0.95, label=pred_label if dim == 0 else None)
+        ax.plot(
+            time_index,
+            pred_valid[:, dim],
+            color="#E41A1C",
+            linewidth=1.4,
+            alpha=0.95,
+            label=pred_label if dim == 0 else None,
+        )
         if measured_valid is not None:
             ax.plot(
                 time_index,
@@ -430,6 +439,39 @@ def _reconstruct_true_by_time(
     return true_by_time
 
 
+def _build_true_rpy_reference(
+    true_action_chunks: np.ndarray,
+    mask_chunks: np.ndarray,
+    source_time_index: np.ndarray,
+    x_min: int,
+    x_max: int,
+    cfg: RPYPlotConfig,
+) -> Tuple[np.ndarray, np.ndarray, Dict[int, np.ndarray], float]:
+    true_pose_by_time = _reconstruct_true_by_time(
+        true_action_chunks=true_action_chunks,
+        mask_chunks=mask_chunks,
+        source_time_index=source_time_index,
+        pose_dim=9,
+        x_min=x_min,
+        x_max=x_max,
+    )
+    if len(true_pose_by_time) == 0:
+        return (
+            np.zeros((0,), dtype=np.int64),
+            np.zeros((0, 3), dtype=np.float32),
+            {},
+            0.0,
+        )
+
+    sorted_times = np.asarray(sorted(true_pose_by_time.keys()), dtype=np.int64)
+    pose_seq = np.stack([true_pose_by_time[int(time_val)] for time_val in sorted_times], axis=0).astype(np.float32)
+    rpy_seq = compute_pose_rpy(pose_seq)
+    shift_value = get_pi_shift_from_axis_start(rpy_seq, cfg=cfg)
+    rpy_seq = apply_rpy_axis_shift(rpy_seq, shift_value, cfg=cfg)
+    rpy_by_time = {int(time_val): rpy_seq[idx].astype(np.float32) for idx, time_val in enumerate(sorted_times)}
+    return sorted_times, rpy_seq, rpy_by_time, shift_value
+
+
 def build_pose_fan_figure(
     true_action_chunks: np.ndarray,
     pred_action_chunks: np.ndarray,
@@ -446,7 +488,9 @@ def build_pose_fan_figure(
     plot_ground_truth_reconstructed: bool = False,
     rpy_config: RPYPlotConfig = DEFAULT_RPY_PLOT_CONFIG,
 ):
-    anchor_steps = int(min(true_action_chunks.shape[0], pred_action_chunks.shape[0], mask_chunks.shape[0], source_time_index.shape[0]))
+    anchor_steps = int(
+        min(true_action_chunks.shape[0], pred_action_chunks.shape[0], mask_chunks.shape[0], source_time_index.shape[0])
+    )
     if measured_pose is not None:
         anchor_steps = int(min(anchor_steps, measured_pose.shape[0]))
     if anchor_steps < 1:
@@ -456,7 +500,9 @@ def build_pose_fan_figure(
     pred_action_chunks = np.asarray(pred_action_chunks, dtype=np.float32)[:anchor_steps]
     mask_chunks = np.asarray(mask_chunks, dtype=np.float32)[:anchor_steps]
     source_time_index = np.asarray(source_time_index, dtype=np.int64)[:anchor_steps]
-    measured_pose_arr = np.asarray(measured_pose, dtype=np.float32)[:anchor_steps] if measured_pose is not None else None
+    measured_pose_arr = (
+        np.asarray(measured_pose, dtype=np.float32)[:anchor_steps] if measured_pose is not None else None
+    )
 
     pose_dim = int(min(true_action_chunks.shape[-1], pred_action_chunks.shape[-1]))
     if measured_pose_arr is not None:
@@ -596,19 +642,45 @@ def build_pose_fan_figure(
 
     if has_orientation and ax_rpy is not None and ax_geo is not None:
         true_pose_first = true_action_chunks[:anchor_steps, 0, :9]
-        true_rpy = compute_pose_rpy(true_pose_first)
-        shift_value = get_pi_shift_from_axis_start(true_rpy, cfg=rpy_config)
+        true_rpy_anchor = compute_pose_rpy(true_pose_first)
+        (
+            true_rpy_reference_times,
+            true_rpy_reference,
+            true_rpy_reference_by_time,
+            shift_value,
+        ) = _build_true_rpy_reference(
+            true_action_chunks=true_action_chunks,
+            mask_chunks=mask_chunks,
+            source_time_index=source_time_index,
+            x_min=x_min,
+            x_max=x_max,
+            cfg=rpy_config,
+        )
+        if true_rpy_reference.shape[0] == 0:
+            shift_value = get_pi_shift_from_axis_start(true_rpy_anchor, cfg=rpy_config)
 
-        if true_rpy.shape[0] == anchor_steps:
-            true_rpy = apply_rpy_axis_shift(true_rpy, shift_value, cfg=rpy_config)
-            true_rpy_plot = convert_rpy_to_plot_unit(true_rpy, cfg=rpy_config)
+        if true_rpy_anchor.shape[0] == anchor_steps:
+            true_rpy_anchor = apply_rpy_axis_shift(true_rpy_anchor, shift_value, cfg=rpy_config)
+            true_rpy_anchor_reference = true_rpy_anchor
+            if true_rpy_reference.shape[0] > 0:
+                true_rpy_plot_times = true_rpy_reference_times
+                true_rpy_plot = convert_rpy_to_plot_unit(true_rpy_reference, cfg=rpy_config)
+                anchor_ref_vals = [
+                    true_rpy_reference_by_time.get(int(time_val)) for time_val in source_time_index[:anchor_steps]
+                ]
+                if all(val is not None for val in anchor_ref_vals):
+                    true_rpy_anchor_reference = np.stack(anchor_ref_vals, axis=0).astype(np.float32)
+            else:
+                true_rpy_plot_times = source_time_index[:anchor_steps]
+                true_rpy_plot = convert_rpy_to_plot_unit(true_rpy_anchor, cfg=rpy_config)
+
             angle_names = ["roll", "pitch", "yaw"]
             gt_colors = ["#8B0000", "#006400", "#00008B"]
             meas_colors = ["#FF8A8A", "#7FD18B", "#8EA8FF"]
 
             for angle_idx, angle_name in enumerate(angle_names):
                 ax_rpy.plot(
-                    source_time_index[:anchor_steps],
+                    true_rpy_plot_times,
                     true_rpy_plot[:, angle_idx],
                     color=gt_colors[angle_idx],
                     linewidth=1.2,
@@ -621,7 +693,7 @@ def build_pose_fan_figure(
                 meas_rpy = compute_pose_rpy(meas_pose_first)
                 if meas_rpy.shape[0] == anchor_steps:
                     meas_rpy = apply_rpy_axis_shift(meas_rpy, shift_value, cfg=rpy_config)
-                    meas_rpy = align_angles_to_reference(true_rpy, meas_rpy)
+                    meas_rpy = align_angles_to_reference(true_rpy_anchor_reference, meas_rpy)
                     meas_rpy_plot = convert_rpy_to_plot_unit(meas_rpy, cfg=rpy_config)
                     for angle_idx, angle_name in enumerate(angle_names):
                         ax_rpy.plot(
@@ -648,13 +720,22 @@ def build_pose_fan_figure(
                 h_idx = horizon_idx[within]
                 true_chunk_rpy = compute_pose_rpy(true_action_chunks[t, h_idx, :9])
                 true_chunk_rpy = apply_rpy_axis_shift(true_chunk_rpy, shift_value, cfg=rpy_config)
+                ref_chunk_rpy = None
+                if len(true_rpy_reference_by_time) > 0:
+                    ref_chunk_vals = [true_rpy_reference_by_time.get(int(time_val)) for time_val in x_vals]
+                    if all(val is not None for val in ref_chunk_vals):
+                        ref_chunk_rpy = np.stack(ref_chunk_vals, axis=0).astype(np.float32)
+                        true_chunk_rpy = align_angles_to_reference(ref_chunk_rpy, true_chunk_rpy)
                 true_chunk_rpy_plot = convert_rpy_to_plot_unit(true_chunk_rpy, cfg=rpy_config)
 
                 c_t = anchor_colors[anchor_pos]
                 for s_idx in range(n_samples):
                     pred_chunk_rpy = compute_pose_rpy(pred_action_chunks[t, s_idx, h_idx, :9])
                     pred_chunk_rpy = apply_rpy_axis_shift(pred_chunk_rpy, shift_value, cfg=rpy_config)
-                    pred_chunk_rpy = align_angles_to_reference(true_chunk_rpy, pred_chunk_rpy)
+                    if ref_chunk_rpy is not None:
+                        pred_chunk_rpy = align_angles_to_reference(ref_chunk_rpy, pred_chunk_rpy)
+                    else:
+                        pred_chunk_rpy = align_angles_to_reference(true_chunk_rpy, pred_chunk_rpy)
                     pred_chunk_rpy_plot = convert_rpy_to_plot_unit(pred_chunk_rpy, cfg=rpy_config)
                     for angle_idx in range(3):
                         ax_rpy.plot(
@@ -673,7 +754,7 @@ def build_pose_fan_figure(
                                 true_chunk_rpy_plot[:, angle_idx],
                                 color=gt_colors[angle_idx],
                                 linewidth=0.6,
-                                alpha=0.35,
+                                alpha=0.7,
                                 linestyle="--",
                                 label=None,
                             )
@@ -730,7 +811,7 @@ def build_pose_fan_figure(
                     geod_deg,
                     color=c_t,
                     linewidth=0.8,
-                    alpha=0.45,
+                    alpha=0.7,
                     linestyle="-",
                     label="geodesic prior samples" if (anchor_pos == 0 and s_idx == 0) else None,
                 )
@@ -1039,7 +1120,9 @@ def build_z_gaussian_variance_with_frames_figure(
     for dim in range(z_dim):
         if dim == 0:
             ax_main.plot(time_steps, post_var[:, dim], color="red", alpha=0.3, linewidth=0.5, label="Individual (Post)")
-            ax_main.plot(time_steps, prior_var[:, dim], color="blue", alpha=0.3, linewidth=0.5, label="Individual (Prior)")
+            ax_main.plot(
+                time_steps, prior_var[:, dim], color="blue", alpha=0.3, linewidth=0.5, label="Individual (Prior)"
+            )
         else:
             ax_main.plot(time_steps, post_var[:, dim], color="red", alpha=0.3, linewidth=0.5)
             ax_main.plot(time_steps, prior_var[:, dim], color="blue", alpha=0.3, linewidth=0.5)

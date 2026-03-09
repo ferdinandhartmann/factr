@@ -21,19 +21,20 @@ PROJECT_ROOT = SCRIPT_DIR.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from factr.plot_utils import RPYPlotConfig, build_pose_comparison_figure, build_pose_fan_figure, rot6d_to_matrix as _shared_rot6d_to_matrix
+from factr.plot_utils import RPYPlotConfig, build_pose_comparison_figure, build_pose_fan_figure
+from factr.plot_utils import rot6d_to_matrix as _shared_rot6d_to_matrix
 
 # ---------------------------------------------------------------------------
 # User Config (edit these variables, then run this script directly)
 # ---------------------------------------------------------------------------
-RUN_DIR = Path.home() / "activeinference" / "factr" / "checkpoints" / "aiact_beta005_z8_fb0005_klb065" / "rollout"
+RUN_DIR = Path.home() / "activeinference" / "factr" / "checkpoints" / "aiact_categ_ctxprior_projz8_c8_4" / "rollout"
 CHECKPOINT_NAME = "latest_ckpt.ckpt"
 
 # Raw episode source
 RAW_EPISODE_DIR = Path.home() / "activeinference" / "factr" / "process_data" / "data_to_process" / "fourgoals_1" / "data"
 EPISODE_FILE_NAME = "ep_29_medium.pkl"
 EPISODE_INDEX = 0  # index in sorted *.pkl files
-USE_EPISODE_LIST = True
+USE_EPISODE_LIST = False
 EPISODE_LIST = [
     # "ep_03_soft",
     "ep_09_stiff",
@@ -53,7 +54,8 @@ LIST_EPISODES_ONLY = False
 BUFFER_PATH_OVERRIDE = Path.home() / "activeinference" / "factr" / "process_data" / "processed_data" / "fourgoals_1_act" / "buf_test.pkl"
 ROLLOUT_CONFIG_OVERRIDE = Path.home() / "activeinference" / "factr" / "process_data" / "processed_data" / "fourgoals_1_act" / "rollout_config.yaml"
 
-NUM_SAMPLES = 10
+NUM_SAMPLES = 20
+ACTION_SOURCE = "prior"  # one of: prior, posterior
 NORMALIZATION_MODE = "apply"  # one of: auto, apply, skip
 PREDICTION_STRIDE = 50  # stride for fan plot + 3d plot
 SAMPLE_ANCHOR_STEP = -1  # -1 means middle step
@@ -89,6 +91,17 @@ if SHOW_PLOT:
 def _register_resolvers() -> None:
     if not OmegaConf.has_resolver("len"):
         OmegaConf.register_new_resolver("len", lambda x: len(x))
+
+
+def _normalize_action_source(value: str) -> str:
+    action_source = str(value).strip().lower()
+    if action_source not in {"prior", "posterior"}:
+        raise ValueError(f"ACTION_SOURCE must be one of prior/posterior, got: {value}")
+    return action_source
+
+
+def _action_source_title(action_source: str) -> str:
+    return "Prior" if action_source == "prior" else "Posterior"
 
 
 def _load_run_cfg(exp_config_path: Path):
@@ -142,6 +155,14 @@ def _resolve_train_buffer_path(rollout_cfg: Dict, buffer_path: Path) -> Path:
     if train_path.is_absolute():
         return train_path
     return buffer_path.parent / train_path
+
+
+def _optional_metric_float(value) -> float:
+    if value is None:
+        return float("nan")
+    if isinstance(value, torch.Tensor):
+        return float(value.item())
+    return float(value)
 
 
 def _load_train_buffer_actions(buf_path: Path) -> List[np.ndarray]:
@@ -576,6 +597,7 @@ def _build_fan_figure_with_measured(
     mask_chunks: np.ndarray,
     source_time_index: np.ndarray,
     prediction_stride: int,
+    action_source: str,
     background_actions: Optional[List[np.ndarray]] = None,
 ):
     rpy_cfg = RPYPlotConfig(
@@ -592,7 +614,10 @@ def _build_fan_figure_with_measured(
         measured_pose=measured_pose,
         background_actions=background_actions,
         max_plot_steps=None,
-        title=f"Sampled Prior Fan + Measured Pose (full episode, stride={max(1, int(prediction_stride))})",
+        title=(
+            f"Sampled {_action_source_title(action_source)} Fan + Measured Pose "
+            f"(full episode, stride={max(1, int(prediction_stride))})"
+        ),
         plot_ground_truth_h0=True,
         plot_ground_truth_reconstructed=False,
         rpy_config=rpy_cfg,
@@ -662,6 +687,7 @@ def _build_3d_pose_figure(
     pred_pose_first: np.ndarray,
     sampled_pose_chunks: np.ndarray,
     prediction_stride: int,
+    action_source: str,
     SHOW_PLOT: bool,
 ):
     if not SHOW_PLOT:
@@ -685,14 +711,23 @@ def _build_3d_pose_figure(
         label="measured",
     )
     ax.plot(gt_xyz[:, 0], gt_xyz[:, 1], gt_xyz[:, 2], color="black", linewidth=1.0, alpha=1.0, label="ground_truth")
-    # ax.plot(pred_xyz[:, 0], pred_xyz[:, 1], pred_xyz[:, 2], color="#e31a1c", linewidth=2.0, alpha=0.95, label="prior_mean")
+    # ax.plot(pred_xyz[:, 0], pred_xyz[:, 1], pred_xyz[:, 2], color="#e31a1c", linewidth=2.0, alpha=0.95, label="posterior_mean")
 
     num_steps, num_samples = sampled_pose_chunks.shape[0], sampled_pose_chunks.shape[1]
 
     # Draw start points
     ax.scatter(meas_xyz[0, 0], meas_xyz[0, 1], meas_xyz[0, 2], color="#1f78b4", s=30, marker="o", alpha=0.95, label="measured_start")
     ax.scatter(gt_xyz[0, 0], gt_xyz[0, 1], gt_xyz[0, 2], color="black", s=30, marker="o", alpha=0.95, label="ground_truth_start")
-    ax.scatter(pred_xyz[0, 0], pred_xyz[0, 1], pred_xyz[0, 2], color="#e31a1c", s=30, marker="o", alpha=0.95, label="prior_mean_start")
+    ax.scatter(
+        pred_xyz[0, 0],
+        pred_xyz[0, 1],
+        pred_xyz[0, 2],
+        color="#e31a1c",
+        s=30,
+        marker="o",
+        alpha=0.95,
+        label=f"{action_source}_mean_start",
+    )
 
     goal_pos_measured = meas_xyz[-1]
     ax.scatter(goal_pos_measured[0], goal_pos_measured[1], goal_pos_measured[2], color="#1f78b4", s=40, marker="s", alpha=0.95, label="goal measured")
@@ -732,7 +767,7 @@ def _build_3d_pose_figure(
                 color=c_t,
                 linewidth=0.9,
                 alpha=0.9,
-                label="prior_samples" if (anchor_pos == 0 and s_idx == 0) else None,
+                label=f"{action_source}_samples" if (anchor_pos == 0 and s_idx == 0) else None,
             )
             _draw_frame(ax, sampled_pose_chunks[t_idx, s_idx, 0], axis_len=axis_len * 0.7, alpha=0.8, lw=0.6)
             _draw_frame(ax, sampled_pose_chunks[t_idx, s_idx, -1], axis_len=axis_len * 0.7, alpha=0.8, lw=0.6)
@@ -761,7 +796,7 @@ def _build_3d_pose_figure(
     ax.set_xlabel("x")
     ax.set_ylabel("y")
     ax.set_zlabel("z")
-    ax.set_title("3D EE Pose Frames: measured vs ground truth vs sampled priors")
+    ax.set_title(f"3D EE Pose Frames: measured vs ground truth vs sampled {action_source}s")
     ax.view_init(elev=float(VIEW_ELEV), azim=float(VIEW_AZIM))
     _set_axes_equal_3d(ax)
     ax.legend(loc="upper left")
@@ -777,6 +812,7 @@ def _summarize_metrics(
     mask_norm: np.ndarray,
     labels: np.ndarray,
     num_samples: int,
+    action_source: str,
 ):
     obs_t = torch.from_numpy(obs_norm).float().to(device)
     actions_t = torch.from_numpy(actions_norm).float().to(device)
@@ -788,40 +824,55 @@ def _summarize_metrics(
 
     with torch.no_grad():
         output = model({}, obs_t, ac_flat, mask_flat, class_labels=labels_t)
-        prior_det = model.get_actions_prior({}, obs_t, class_labels=labels_t, sample=False, num_samples=1)
-        if prior_det.ndim == 4:
-            prior_det = prior_det[:, 0]
-        prior_samples = model.get_actions_prior({}, obs_t, class_labels=labels_t, sample=True, num_samples=num_samples)
+        if action_source == "prior":
+            pred_det = model.get_actions_prior(
+                {}, obs_t, class_labels=labels_t, sample=False, num_samples=1
+            )
+            pred_samples = model.get_actions_prior(
+                {}, obs_t, class_labels=labels_t, sample=True, num_samples=num_samples
+            )
+        else:
+            pred_det = model.get_actions_pos(
+                {}, obs_t, actions_t, class_labels=labels_t, sample=False, num_samples=1
+            )
+            pred_samples = model.get_actions_pos(
+                {}, obs_t, actions_t, class_labels=labels_t, sample=True, num_samples=num_samples
+            )
+
+        if pred_det.ndim == 4:
+            pred_det = pred_det[:, 0]
 
     mask_den = mask_t.sum((1, 2)).clamp(min=1.0)
-    prior_l1 = torch.abs(mask_t * (prior_det - actions_t))
-    prior_l1 = prior_l1.sum((1, 2)) / mask_den
-    action_l2 = torch.square(mask_t * (prior_det - actions_t))
+    selected_det_l1 = torch.abs(mask_t * (pred_det - actions_t))
+    selected_det_l1 = selected_det_l1.sum((1, 2)) / mask_den
+    action_l2 = torch.square(mask_t * (pred_det - actions_t))
     action_l2 = action_l2.sum((1, 2)) / mask_den
     lsig = torch.logical_or(
-        torch.logical_and(actions_t > 0, prior_det <= 0),
-        torch.logical_and(actions_t <= 0, prior_det > 0),
+        torch.logical_and(actions_t > 0, pred_det <= 0),
+        torch.logical_and(actions_t <= 0, pred_det > 0),
     )
     lsig = (lsig.float() * mask_t).sum((1, 2)) / mask_den
 
     metrics = {
         "posterior_l1": float(output["l1_loss"].item()),
-        "prior_l1": float(prior_l1.mean().item()),
+        "selected_det_l1": float(selected_det_l1.mean().item()),
         "posterior_kl": float(output["kl"].item()),
         "action_l2": float(action_l2.mean().item()),
         "action_lsig": float(lsig.mean().item()),
-        "prior_std_mean": float(output.get("prior_std_mean", torch.tensor(float("nan"), device=device)).item()),
-        "posterior_std_mean": float(output.get("posterior_std_mean", torch.tensor(float("nan"), device=device)).item()),
-        "prior_entropy": float(output.get("prior_entropy", torch.tensor(float("nan"), device=device)).item()),
-        "posterior_entropy": float(output.get("posterior_entropy", torch.tensor(float("nan"), device=device)).item()),
+        "prior_std_mean": _optional_metric_float(output.get("prior_std_mean")),
+        "posterior_std_mean": _optional_metric_float(output.get("posterior_std_mean")),
+        "prior_entropy": _optional_metric_float(output.get("prior_entropy")),
+        "posterior_entropy": _optional_metric_float(output.get("posterior_entropy")),
     }
 
-    return metrics, prior_det.detach().cpu().numpy(), prior_samples.detach().cpu().numpy()
+    return metrics, pred_det.detach().cpu().numpy(), pred_samples.detach().cpu().numpy()
 
 
 def main():
     if NORMALIZATION_MODE not in ("auto", "apply", "skip"):
         raise ValueError(f"NORMALIZATION_MODE must be one of auto/apply/skip, got: {NORMALIZATION_MODE}")
+    action_source = _normalize_action_source(ACTION_SOURCE)
+    action_source_title = _action_source_title(action_source)
 
     run_dir = Path(RUN_DIR)
     checkpoint_name = str(CHECKPOINT_NAME)
@@ -915,7 +966,7 @@ def main():
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         model = _load_model(cfg, ckpt_path, device)
 
-        metrics, prior_det_norm, prior_samples_norm = _summarize_metrics(
+        metrics, pred_det_norm, pred_samples_norm = _summarize_metrics(
             model=model,
             device=device,
             obs_norm=obs_norm,
@@ -923,18 +974,19 @@ def main():
             mask_norm=mask_arr,
             labels=labels_arr,
             num_samples=int(NUM_SAMPLES),
+            action_source=action_source,
         )
 
         actions_denorm = _apply_grouped_transform(actions_norm, action_stats, inverse=True)
-        prior_det_denorm = _apply_grouped_transform(prior_det_norm, action_stats, inverse=True)
-        prior_samples_denorm = _apply_grouped_transform(prior_samples_norm, action_stats, inverse=True)
+        pred_det_denorm = _apply_grouped_transform(pred_det_norm, action_stats, inverse=True)
+        pred_samples_denorm = _apply_grouped_transform(pred_samples_norm, action_stats, inverse=True)
         obs_denorm = _apply_grouped_transform(obs_norm, state_stats, inverse=True)
 
         ac_dim = actions_denorm.shape[-1]
         pose_dim = min(9, ac_dim)
 
         true_first = actions_denorm[:, 0, :pose_dim]
-        pred_first = prior_det_denorm[:, 0, :pose_dim]
+        pred_first = pred_det_denorm[:, 0, :pose_dim]
         measured_first = obs_denorm[:, -1, :pose_dim]
         mask_first = mask_arr[:, 0, :pose_dim]
 
@@ -951,7 +1003,7 @@ def main():
         print(
             "Metrics | "
             f"Posterior L1={metrics['posterior_l1']:.4f} "
-            f"Prior L1={metrics['prior_l1']:.4f} "
+            f"{action_source_title}(det) L1={metrics['selected_det_l1']:.4f} "
             f"KL={metrics['posterior_kl']:.4f} "
             f"Action L2={metrics['action_l2']:.4f} "
             f"LSign={metrics['action_lsig']:.4f} "
@@ -966,7 +1018,7 @@ def main():
             pred_actions=pred_first,
             measured_pose=measured_first,
             mask=mask_first,
-            title=f"Episode {episode_file.name} | Ground Truth vs Prior Mean vs Measured Pose",
+            title=f"Episode {episode_file.name} | Ground Truth vs {action_source_title} Prediction vs Measured Pose",
         )
         if fig_pose is not None:
             pose_path = out_dir / f"{episode_file.stem}_pred_firststeps.png"
@@ -976,11 +1028,12 @@ def main():
 
         fig_fan = _build_fan_figure_with_measured(
             true_action_chunks=actions_denorm[:, :, :pose_dim],
-            pred_action_chunks=prior_samples_denorm[:, :, :, :pose_dim],
+            pred_action_chunks=pred_samples_denorm[:, :, :, :pose_dim],
             measured_pose=measured_first,
             mask_chunks=mask_arr[:, :, :pose_dim],
             source_time_index=steps_arr,
             prediction_stride=max(1, int(PREDICTION_STRIDE)),
+            action_source=action_source,
             background_actions=train_background
             if (ENABLE_TRAIN_BACKGROUND and train_background) and (not TRAIN_BACKGROUND_ONLY_MEDIUM or "medium" in episode_name)
             else None,
@@ -998,8 +1051,9 @@ def main():
                 measured_pose_first=measured_first,
                 gt_pose_first=true_first,
                 pred_pose_first=pred_first,
-                sampled_pose_chunks=prior_samples_denorm[:, :, :, :pose_dim],
+                sampled_pose_chunks=pred_samples_denorm[:, :, :, :pose_dim],
                 prediction_stride=max(1, int(PREDICTION_STRIDE)),
+                action_source=action_source,
                 SHOW_PLOT=SHOW_PLOT,
             )
             plot3d_path = out_dir / f"{episode_file.stem}_predictions_3d.png"

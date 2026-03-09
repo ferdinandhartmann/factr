@@ -162,8 +162,12 @@ class LowdimStiffnessCVAEAgent(nn.Module):
                 f"latent_distribution must be 'gaussian' or 'categorical', got {self.latent_distribution}."
             )
         if self.latent_distribution == "gaussian":
-            self._latent_dim = int(d_z)
-            self._free_bits_dims = self._latent_dim
+            self.d_z = int(d_z)
+            if self.d_z < 1:
+                raise ValueError(f"d_z must be >=1, got {self.d_z}.")
+            self._latent_sample_dim = self.d_z
+            self._categorical_flat_dim = None
+            self._free_bits_dims = self.d_z
         else:
             if self.categorical_num_variables < 1:
                 raise ValueError(f"categorical_num_variables must be >=1, got {self.categorical_num_variables}.")
@@ -171,14 +175,12 @@ class LowdimStiffnessCVAEAgent(nn.Module):
                 raise ValueError(f"categorical_num_categories must be >=2, got {self.categorical_num_categories}.")
             if self.categorical_temperature <= 0.0:
                 raise ValueError(f"categorical_temperature must be >0, got {self.categorical_temperature}.")
-            self._latent_dim = self.categorical_num_variables * self.categorical_num_categories
+            self.d_z = int(d_z)
+            if self.d_z < 1:
+                raise ValueError(f"d_z must be >=1, got {self.d_z}.")
+            self._categorical_flat_dim = self.categorical_num_variables * self.categorical_num_categories
+            self._latent_sample_dim = self._categorical_flat_dim
             self._free_bits_dims = self.categorical_num_variables
-            if int(d_z) != self._latent_dim:
-                raise ValueError(
-                    "For categorical latent, d_z must match "
-                    f"categorical_num_variables * categorical_num_categories ({self._latent_dim}), got d_z={d_z}."
-                )
-        self.d_z = self._latent_dim
 
         self.state_slices = {
             "pose": slice(0, 9),
@@ -247,8 +249,8 @@ class LowdimStiffnessCVAEAgent(nn.Module):
                 nn.GELU(),
             )
             if self.latent_distribution == "gaussian":
-                self.prior_mu = nn.Linear(hidden_dim, self._latent_dim)
-                self.prior_logvar = nn.Linear(hidden_dim, self._latent_dim)
+                self.prior_mu = nn.Linear(hidden_dim, self._latent_sample_dim)
+                self.prior_logvar = nn.Linear(hidden_dim, self._latent_sample_dim)
                 nn.init.constant_(self.prior_logvar.bias, -3.0)
                 self.prior_logits = None
             else:
@@ -264,7 +266,7 @@ class LowdimStiffnessCVAEAgent(nn.Module):
 
         self.posterior = _PosteriorTransformer(
             token_dim=token_dim,
-            d_z=self._latent_dim,
+            d_z=self._latent_sample_dim,
             action_dim=self._ac_dim,
             action_chunk=self._ac_chunk,
             hidden_dim=hidden_dim,
@@ -276,7 +278,12 @@ class LowdimStiffnessCVAEAgent(nn.Module):
             categorical_num_categories=self.categorical_num_categories,
         )
 
-        self.z_to_token = nn.Linear(self._latent_dim, token_dim)
+        if self.latent_distribution == "categorical" and self._latent_sample_dim != self.d_z:
+            self.categorical_latent_proj = nn.Linear(self._latent_sample_dim, self.d_z)
+        else:
+            self.categorical_latent_proj = nn.Identity()
+
+        self.z_to_token = nn.Linear(self.d_z, token_dim)
         self.action_queries = nn.Embedding(self._ac_chunk, token_dim)
         decoder_layer = nn.TransformerDecoderLayer(
             d_model=token_dim,
@@ -377,7 +384,7 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         if self.latent_distribution == "gaussian":
             if self.fixed_prior:
                 # Fixed Gaussian prior p(z)=N(0,I), independent of context.
-                mu = torch.zeros(batch_size, self._latent_dim, device=z_context.device, dtype=z_context.dtype)
+                mu = torch.zeros(batch_size, self._latent_sample_dim, device=z_context.device, dtype=z_context.dtype)
                 logvar = torch.zeros_like(mu)
                 return {"mu": mu, "logvar": logvar}
             h = self.prior_backbone(z_context)
@@ -442,7 +449,7 @@ class LowdimStiffnessCVAEAgent(nn.Module):
             hard=self.categorical_straight_through,
             dim=-1,
         )
-        return z.reshape(logits_q.shape[0], self._latent_dim)
+        return z.reshape(logits_q.shape[0], self._latent_sample_dim)
 
     def _sample_latent_batch(self, latent_params, sample, num_samples):
         if num_samples < 1:
@@ -465,17 +472,34 @@ class LowdimStiffnessCVAEAgent(nn.Module):
             sampled_idx = sampled_idx.view(batch_size, n_var, num_samples).permute(0, 2, 1)
             # Flatten (num_variables, num_categories) -> latent dim for the decoder.
             sampled_one_hot = F.one_hot(sampled_idx, num_classes=n_cat).to(dtype=probs.dtype)
-            return sampled_one_hot.reshape(batch_size, num_samples, self._latent_dim)
+            return sampled_one_hot.reshape(batch_size, num_samples, self._latent_sample_dim)
 
-        expanded = probs.unsqueeze(1).expand(batch_size, num_samples, n_var, n_cat)
-        return expanded.reshape(batch_size, num_samples, self._latent_dim)
+        # Keep deterministic inference on the same one-hot support as the training path.
+        mode_idx = torch.argmax(logits, dim=-1)
+        mode_one_hot = F.one_hot(mode_idx, num_classes=n_cat).to(dtype=probs.dtype)
+        expanded = mode_one_hot.unsqueeze(1).expand(batch_size, num_samples, n_var, n_cat)
+        return expanded.reshape(batch_size, num_samples, self._latent_sample_dim)
 
     def _deterministic_latent(self, latent_params):
         if self.latent_distribution == "gaussian":
             return latent_params["mu"]
 
-        probs = torch.softmax(latent_params["logits"], dim=-1)
-        return probs.reshape(probs.shape[0], self._latent_dim)
+        logits = latent_params["logits"]
+        mode_idx = torch.argmax(logits, dim=-1)
+        mode_one_hot = F.one_hot(mode_idx, num_classes=self.categorical_num_categories).to(dtype=logits.dtype)
+        return mode_one_hot.reshape(mode_one_hot.shape[0], self._latent_sample_dim)
+
+    def _prepare_decoder_latent(self, z):
+        if self.latent_distribution == "gaussian":
+            return z
+
+        if z.ndim == 2:
+            return self.categorical_latent_proj(z)
+        if z.ndim == 3:
+            batch_size, num_samples, flat_dim = z.shape
+            z = self.categorical_latent_proj(z.reshape(batch_size * num_samples, flat_dim))
+            return z.view(batch_size, num_samples, self.d_z)
+        raise ValueError(f"Unsupported latent tensor shape: {tuple(z.shape)}")
 
     def _latent_metrics(self, posterior_params, prior_params):
         if self.latent_distribution == "gaussian":
@@ -495,7 +519,9 @@ class LowdimStiffnessCVAEAgent(nn.Module):
     def _decode_actions(self, context_tokens, z):
         z_query_bias = self.z_to_token(z).unsqueeze(1)
         target_queries = self.action_queries.weight.unsqueeze(0).expand(context_tokens.shape[0], -1, -1)
-        target_queries = target_queries + z_query_bias
+        target_queries = (
+            target_queries + z_query_bias
+        )  ### Here z is added as a bias to the action queries, allowing the latent variable to influence the decoding of actions based on the context tokens.
         decoded = self.decoder(tgt=target_queries, memory=context_tokens)
         return self.action_head(decoded)
 
@@ -519,6 +545,7 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         posterior_params = self.posterior(context_tokens.detach(), target_actions)
 
         z = self._sample_train_latent(posterior_params)
+        z = self._prepare_decoder_latent(z)
         pred_actions = self._decode_actions(context_tokens, z)
 
         recon = F.l1_loss(pred_actions, target_actions, reduction="none")
@@ -551,6 +578,7 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         z_context = self._build_z_context(context_tokens)
         prior_params = self._prior(z_context)
         z = self._deterministic_latent(prior_params)
+        z = self._prepare_decoder_latent(z)
         return self._decode_actions(context_tokens, z)
 
     @torch.no_grad()
@@ -570,6 +598,7 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         prior_params = self._prior(z_context)
 
         z = self._sample_latent_batch(prior_params, sample=sample, num_samples=num_samples)
+        z = self._prepare_decoder_latent(z)
         batch_size, _, z_dim = z.shape
 
         context_tokens = context_tokens.repeat_interleave(num_samples, dim=0)
@@ -589,6 +618,7 @@ class LowdimStiffnessCVAEAgent(nn.Module):
 
         posterior_params = self.posterior(context_tokens.detach(), target_action)
         z = self._sample_latent_batch(posterior_params, sample=sample, num_samples=num_samples)
+        z = self._prepare_decoder_latent(z)
         batch_size, _, z_dim = z.shape
 
         context_tokens = context_tokens.repeat_interleave(num_samples, dim=0)

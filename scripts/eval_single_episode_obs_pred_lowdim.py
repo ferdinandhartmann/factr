@@ -27,7 +27,7 @@ from factr.plot_utils import RPYPlotConfig, build_obs_prediction_figure, build_t
 # ---------------------------------------------------------------------------
 # User Config (edit these variables, then run this script directly)
 # ---------------------------------------------------------------------------
-RUN_DIR = Path.home() / "activeinference" / "factr" / "checkpoints" / "obs_pred_mlp_gaussian_h30_lowdim" / "rollout"
+RUN_DIR = Path.home() / "activeinference" / "factr" / "checkpoints" / "aiact_categ_ctxprior_projz8_c8_2" / "rollout"
 CHECKPOINT_NAME = "latest_ckpt.ckpt"
 
 # Raw episode source
@@ -51,7 +51,7 @@ LIST_EPISODES_ONLY = False
 BUFFER_PATH_OVERRIDE = Path.home() / "activeinference" / "factr" / "process_data" / "processed_data" / "fourgoals_1_act" / "buf_test.pkl"
 ROLLOUT_CONFIG_OVERRIDE = Path.home() / "activeinference" / "factr" / "process_data" / "processed_data" / "fourgoals_1_act" / "rollout_config.yaml"
 
-NUM_SAMPLES = 10  # Monte-Carlo samples from predicted Gaussian for eval-only sample MSE
+NUM_SAMPLES = 20  # Monte-Carlo samples from predicted Gaussian for eval-only sample MSE
 NORMALIZATION_MODE = "apply"  # one of: auto, apply, skip
 PREDICTION_STRIDE = 1
 MAX_PLOT_DIMS = 9

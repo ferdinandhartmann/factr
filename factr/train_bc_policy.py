@@ -20,7 +20,6 @@ from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
 
 from factr import misc, transforms
-from factr.trainers.base import TRAIN_LOG_FREQ
 
 base_path = os.path.dirname(os.path.abspath(__file__))
 
@@ -92,6 +91,7 @@ def train_bc(cfg: DictConfig):
         if int(getattr(cfg, "devices", 1)) > 0 and torch.cuda.is_available():
             device_id = 0
         trainer = hydra.utils.instantiate(cfg.trainer, model=agent, device_id=device_id)
+        terminal_log_freq = max(1, int(getattr(trainer, "train_log_freq", getattr(cfg, "train_log_freq", 100))))
         if resume_model is not None and os.path.exists(resume_model):
             restored_step = trainer.load_checkpoint(resume_model)
             misc.GLOBAL_STEP = int(restored_step)
@@ -106,7 +106,8 @@ def train_bc(cfg: DictConfig):
             f"test_buffer={OmegaConf.select(cfg, 'test_buffer_path', default=cfg.buffer_path)} "
             f"batch_size={cfg.batch_size} "
             f"ac_chunk={cfg.ac_chunk} "
-            f"obs_window={OmegaConf.select(cfg, 'obs_window', default='n/a')}"
+            f"obs_window={OmegaConf.select(cfg, 'obs_window', default='n/a')} "
+            f"train_log_freq={terminal_log_freq}"
         )
         if hasattr(task, "eval_plot_max_steps"):
             print(
@@ -185,7 +186,7 @@ def train_bc(cfg: DictConfig):
 
             pbar.set_postfix(dict(Loss=loss.item()))
 
-            if wandb.run is not None and misc.GLOBAL_STEP > 0 and misc.GLOBAL_STEP % TRAIN_LOG_FREQ == 0:
+            if wandb.run is not None and misc.GLOBAL_STEP > 0 and misc.GLOBAL_STEP % terminal_log_freq == 0:
                 payload = trainer.consume_wandb_payload(misc.GLOBAL_STEP)
                 try:
                     payload["train/grad_norm"] = float(grad_norm)
@@ -212,8 +213,8 @@ def train_bc(cfg: DictConfig):
             if misc.GLOBAL_STEP >= cfg.max_iterations:
                 trainer.save_checkpoint(misc.GLOBAL_STEP)
                 return
-            elif misc.GLOBAL_STEP % cfg.save_freq == 0:
-                trainer.save_checkpoint(misc.GLOBAL_STEP)
+            # elif misc.GLOBAL_STEP % cfg.save_freq == 0:
+            #     trainer.save_checkpoint(misc.GLOBAL_STEP)
 
     # gracefully handle and log errors
     except Exception:

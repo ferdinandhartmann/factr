@@ -9,6 +9,7 @@ import matplotlib.animation as animation
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+import torch.nn.functional as F
 import yaml
 from hydra.utils import instantiate
 from omegaconf import OmegaConf
@@ -50,7 +51,7 @@ except Exception:
 # ---------------------------------------------------------------------------
 # User Config (edit these variables, then run this script directly)
 # ---------------------------------------------------------------------------
-RUN_DIR = Path.home() / "activeinference" / "factr" / "checkpoints" / "aiact_beta005_z8_fb0005_klb065" / "rollout"
+RUN_DIR = Path.home() / "activeinference" / "factr" / "checkpoints" / "aiact_categ_ctxprior_projz8_c8_2" / "rollout"
 CHECKPOINT_NAME = "latest_ckpt.ckpt"  # or "ckpt_020000.ckpt"
 
 RAW_EPISODE_DIR = Path("/home/ferdinand/activeinference/factr/process_data/data_to_process/fourgoals_1/data")
@@ -424,19 +425,63 @@ def extract_z_params(policy, obs_np: np.ndarray, act_np: np.ndarray, cls_np: Opt
     context_tokens = policy._build_context_tokens(obs_tensor, class_labels=cls_tensor)
     z_context = policy._build_z_context(context_tokens)
 
-    mu_p, logvar_p = policy._prior(z_context)
-    mu_q, logvar_q = policy.posterior(context_tokens.detach(), act_tensor)
+    latent_distribution = str(getattr(policy, "latent_distribution", "gaussian")).lower()
+    prior_params = policy._prior(z_context)
+    posterior_params = policy.posterior(context_tokens.detach(), act_tensor)
+
+    if latent_distribution == "categorical":
+        if isinstance(prior_params, dict):
+            prior_logits = prior_params["logits"]
+        else:
+            prior_logits = prior_params
+
+        if isinstance(posterior_params, dict):
+            posterior_logits = posterior_params["logits"]
+        else:
+            posterior_logits = posterior_params
+
+        prior_probs = F.softmax(prior_logits, dim=-1)
+        posterior_probs = F.softmax(posterior_logits, dim=-1)
+        eps = 1e-8
+        prior_entropy = -(prior_probs * torch.log(prior_probs + eps)).sum(dim=-1)
+        posterior_entropy = -(posterior_probs * torch.log(posterior_probs + eps)).sum(dim=-1)
+
+        return {
+            "latent_distribution": "categorical",
+            "Prior": (prior_probs.cpu().numpy(), prior_entropy.cpu().numpy(), "blue"),
+            "Posterior": (posterior_probs.cpu().numpy(), posterior_entropy.cpu().numpy(), "red"),
+        }
+
+    if isinstance(prior_params, dict):
+        mu_p, logvar_p = prior_params["mu"], prior_params["logvar"]
+    else:
+        mu_p, logvar_p = prior_params
+
+    if isinstance(posterior_params, dict):
+        mu_q, logvar_q = posterior_params["mu"], posterior_params["logvar"]
+    else:
+        mu_q, logvar_q = posterior_params
 
     std_p = torch.exp(0.5 * logvar_p)
     std_q = torch.exp(0.5 * logvar_q)
 
     return {
+        "latent_distribution": "gaussian",
         "Prior": (mu_p.cpu().numpy(), std_p.cpu().numpy(), "blue"),
         "Posterior": (mu_q.cpu().numpy(), std_q.cpu().numpy(), "red"),
     }
 
 
 def visualize_z_statistics(dists_data: Dict, save_dir: Path, ep_name: str):
+    latent_distribution = str(dists_data.get("latent_distribution", "gaussian")).lower()
+    if latent_distribution == "categorical":
+        visualize_z_statistics_categorical(dists_data, save_dir, ep_name)
+        return
+
+    visualize_z_statistics_gaussian(dists_data, save_dir, ep_name)
+
+
+def visualize_z_statistics_gaussian(dists_data: Dict, save_dir: Path, ep_name: str):
     if not dists_data:
         return
 
@@ -494,6 +539,80 @@ def visualize_z_statistics(dists_data: Dict, save_dir: Path, ep_name: str):
     print(f"Saved: {save_path}")
 
 
+def visualize_z_statistics_categorical(dists_data: Dict, save_dir: Path, ep_name: str):
+    if not dists_data:
+        return
+
+    prior_probs, prior_entropy, _ = dists_data["Prior"]
+    post_probs, post_entropy, _ = dists_data["Posterior"]
+
+    time_steps, num_variables, num_categories = prior_probs.shape
+    fig_height = max(2.6 * num_variables, 7.0)
+    fig, axes = plt.subplots(num_variables, 2, figsize=(16, fig_height), sharex=True)
+    if num_variables == 1:
+        axes = axes.reshape(1, 2)
+
+    plt.subplots_adjust(top=0.95, bottom=0.07, left=0.08, right=0.95, hspace=0.35, wspace=0.15)
+    fig.suptitle(f"Categorical Z Probabilities: {ep_name}", fontsize=15)
+
+    for var_idx in range(num_variables):
+        ax_prior = axes[var_idx, 0]
+        ax_post = axes[var_idx, 1]
+
+        im_prior = ax_prior.imshow(
+            prior_probs[:, var_idx, :].T,
+            aspect="auto",
+            origin="lower",
+            interpolation="nearest",
+            vmin=0.0,
+            vmax=1.0,
+            cmap="viridis",
+        )
+        ax_prior.set_ylabel(f"Var {var_idx} cat", fontsize=10)
+        if var_idx == 0:
+            ax_prior.set_title("Prior", fontsize=12)
+
+        ax_post.imshow(
+            post_probs[:, var_idx, :].T,
+            aspect="auto",
+            origin="lower",
+            interpolation="nearest",
+            vmin=0.0,
+            vmax=1.0,
+            cmap="viridis",
+        )
+        if var_idx == 0:
+            ax_post.set_title("Posterior", fontsize=12)
+
+    axes[-1, 0].set_xlabel("Time Index", fontsize=11)
+    axes[-1, 1].set_xlabel("Time Index", fontsize=11)
+
+    cbar = fig.colorbar(im_prior, ax=axes, fraction=0.015, pad=0.01)
+    cbar.set_label("Probability", fontsize=10)
+
+    entropy_path = save_dir / f"{ep_name}_z_entropy.png"
+    save_path = save_dir / f"{ep_name}_z_distr.png"
+    plt.savefig(save_path, dpi=150)
+    plt.close()
+
+    fig_e, ax_e = plt.subplots(1, 1, figsize=(12, 4))
+    x = np.arange(time_steps)
+    ax_e.plot(x, prior_entropy.mean(axis=1), label="Prior entropy", color="blue", alpha=0.8)
+    ax_e.plot(x, post_entropy.mean(axis=1), label="Posterior entropy", color="red", alpha=0.8)
+    ax_e.set_xlabel("Time Index", fontsize=11)
+    ax_e.set_ylabel("Mean entropy across variables", fontsize=11)
+    ax_e.set_ylim(0.0, np.log(float(max(2, num_categories))) * 1.05)
+    ax_e.grid(True, linestyle="--", alpha=0.35)
+    ax_e.legend(loc="upper right")
+    fig_e.suptitle(f"Categorical Z Entropy: {ep_name}", fontsize=13)
+    fig_e.tight_layout(rect=[0, 0, 1, 0.95])
+    fig_e.savefig(entropy_path, dpi=150)
+    plt.close(fig_e)
+
+    print(f"Saved: {save_path}")
+    print(f"Saved: {entropy_path}")
+
+
 def _gaussian_pdf(x: np.ndarray, mu: float, std: float) -> np.ndarray:
     std = max(float(std), 1e-6)
     z = (x - float(mu)) / std
@@ -502,6 +621,40 @@ def _gaussian_pdf(x: np.ndarray, mu: float, std: float) -> np.ndarray:
 
 
 def visualize_distributions_video(
+    dists_data: Dict,
+    save_path: Path,
+    ep_name: str,
+    fps: int = 15,
+    dpi: int = 80,
+    frame_stride: int = 1,
+    x_points: int = 80,
+    x_std_mult: float = 4.0,
+):
+    latent_distribution = str(dists_data.get("latent_distribution", "gaussian")).lower()
+    if latent_distribution == "categorical":
+        visualize_distributions_video_categorical(
+            dists_data,
+            save_path,
+            ep_name,
+            fps=fps,
+            dpi=dpi,
+            frame_stride=frame_stride,
+        )
+        return
+
+    visualize_distributions_video_gaussian(
+        dists_data,
+        save_path,
+        ep_name,
+        fps=fps,
+        dpi=dpi,
+        frame_stride=frame_stride,
+        x_points=x_points,
+        x_std_mult=x_std_mult,
+    )
+
+
+def visualize_distributions_video_gaussian(
     dists_data: Dict,
     save_path: Path,
     ep_name: str,
@@ -596,6 +749,69 @@ def visualize_distributions_video(
     print(f"Saved: {save_path}")
 
 
+def visualize_distributions_video_categorical(
+    dists_data: Dict,
+    save_path: Path,
+    ep_name: str,
+    fps: int = 15,
+    dpi: int = 80,
+    frame_stride: int = 1,
+):
+    if not dists_data:
+        return
+
+    prior_probs, _, _ = dists_data["Prior"]
+    post_probs, _, _ = dists_data["Posterior"]
+
+    time_steps, num_variables, num_categories = prior_probs.shape
+    ncols = int(np.ceil(np.sqrt(num_variables)))
+    nrows = int(np.ceil(num_variables / ncols))
+
+    fig, axes = plt.subplots(nrows, ncols, figsize=(ncols * 3.0, nrows * 2.8))
+    axes = np.asarray(axes).reshape(-1)
+    plt.subplots_adjust(left=0.05, right=0.97, bottom=0.06, top=0.90, hspace=0.45, wspace=0.35)
+
+    x_idx = np.arange(num_categories)
+    prior_bars = {}
+    post_bars = {}
+    for var_idx in range(len(axes)):
+        ax = axes[var_idx]
+        if var_idx >= num_variables:
+            ax.axis("off")
+            continue
+
+        ax.set_title(f"Var {var_idx}", fontsize=9)
+        ax.set_ylim(0.0, 1.0)
+        ax.set_xlim(-0.5, num_categories - 0.5)
+        ax.set_xticks(x_idx[:: max(1, num_categories // 8)])
+        ax.set_ylabel("P(cat)", fontsize=8)
+        bars_prior = ax.bar(x_idx - 0.2, np.zeros_like(x_idx, dtype=np.float32), width=0.4, color="blue", alpha=0.55)
+        bars_post = ax.bar(x_idx + 0.2, np.zeros_like(x_idx, dtype=np.float32), width=0.4, color="red", alpha=0.75)
+        if var_idx == 0:
+            ax.legend([bars_prior[0], bars_post[0]], ["Prior", "Posterior"], fontsize=8, loc="upper right")
+        prior_bars[var_idx] = bars_prior
+        post_bars[var_idx] = bars_post
+
+    frame_indices = np.arange(0, time_steps, max(1, int(frame_stride)), dtype=np.int64)
+    if frame_indices[-1] != (time_steps - 1):
+        frame_indices = np.concatenate([frame_indices, np.asarray([time_steps - 1], dtype=np.int64)])
+
+    writer = animation.FFMpegWriter(fps=int(fps), metadata={"artist": "factr"}, bitrate=1800)
+    with writer.saving(fig, str(save_path), dpi=int(dpi)):
+        for t in tqdm(frame_indices, desc=f"Rendering {ep_name}"):
+            fig.suptitle(f"Categorical Z Dist: {ep_name} (t={t}/{time_steps})", fontsize=14)
+            for var_idx in range(num_variables):
+                current_prior = prior_probs[t, var_idx, :]
+                current_post = post_probs[t, var_idx, :]
+                for cat_idx in range(num_categories):
+                    prior_bars[var_idx][cat_idx].set_height(float(current_prior[cat_idx]))
+                    post_bars[var_idx][cat_idx].set_height(float(current_post[cat_idx]))
+            writer.grab_frame()
+
+    plt.close(fig)
+    print(f"Saved: {save_path}")
+
+
 def discover_episode_files(data_root: Path, requested: Optional[List[str]]) -> List[Path]:
     if requested is not None and len(requested) > 0:
         files = []
@@ -654,7 +870,7 @@ def main():
         raise FileNotFoundError(f"data_root not found: {data_root}")
 
     model_name = run_dir.parent.name
-    save_dir = Path(SAVE_DIR_OVERRIDE)  / str(model_name)
+    save_dir = Path(SAVE_DIR_OVERRIDE) / str(model_name)
     save_dir.mkdir(parents=True, exist_ok=True)
 
     with open(rollout_cfg_path, "r") as f:
