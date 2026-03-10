@@ -16,6 +16,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from factr.goal_inference import (  # noqa: E402
+    build_display_goal_posterior_over_time,
     build_episode_goal_probability_figure,
     build_goal_likelihood_figure,
 )
@@ -66,7 +67,13 @@ def main():
         print(f"Goal probability check | max|sum(p)-1|={goal_payload['max_sum_error']:.3e} mean|sum(p)-1|={goal_payload['mean_sum_error']:.3e}")
     else:
         loglik_t = np.asarray(payload["log_likelihood_per_timestep"], dtype=np.float32)
-        posterior_t = np.asarray(payload["goal_posterior_over_time"], dtype=np.float32)
+        obs_dim = int(payload.get("obs_dim", payload.get("predict_obs_dim", payload.get("obs_target_dim", 21))))
+        posterior_t = build_display_goal_posterior_over_time(
+            log_likelihood_over_time=loglik_t,
+            obs_dim=obs_dim,
+            temperature=5.0,
+            include_uniform_prior=True,
+        )
         true_goal = payload.get("true_goal_label", None)
         pred_goal = payload.get("pred_goal_label", None)
 

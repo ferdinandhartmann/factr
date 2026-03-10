@@ -24,6 +24,43 @@ import torch
 import torch.nn.functional as F
 
 
+def build_episode_goal_probabilities(log_likelihood_per_timestep, goal_classes, obs_dim, temperature=5.0):
+    """Build per-episode goal probabilities with a uniform start and softened per-step evidence."""
+    log_likelihood_per_timestep = np.asarray(log_likelihood_per_timestep, dtype=np.float32)
+    if log_likelihood_per_timestep.ndim != 3:
+        raise ValueError(
+            "Expected log_likelihood_per_timestep shape (T, G, H), "
+            f"got {tuple(log_likelihood_per_timestep.shape)}."
+        )
+    if log_likelihood_per_timestep.shape[1] != int(goal_classes):
+        raise ValueError(
+            f"Expected goal axis size {int(goal_classes)}, got {int(log_likelihood_per_timestep.shape[1])}."
+        )
+
+    episode_steps = int(log_likelihood_per_timestep.shape[0])
+    probs = np.zeros((episode_steps, int(goal_classes)), dtype=np.float32)
+    uniform = np.full((int(goal_classes),), 1.0 / float(goal_classes), dtype=np.float32)
+    if episode_steps == 0:
+        return probs
+
+    probs[0] = uniform
+    if episode_steps == 1:
+        return probs
+
+    # Use the immediate 1-step-ahead evidence to avoid double-counting overlapping
+    # prediction windows, but accumulate that evidence over the episode so the
+    # posterior can move away from the uniform prior when the model is informative.
+    step_logits = np.asarray(log_likelihood_per_timestep[:, :, 0], dtype=np.float32)
+    denom = max(1.0, float(obs_dim) * float(temperature))
+    step_logits = step_logits / denom
+    cumulative_logits = np.cumsum(step_logits, axis=0)
+    cumulative_logits = cumulative_logits - np.max(cumulative_logits, axis=-1, keepdims=True)
+    exp_logits = np.exp(cumulative_logits)
+    step_probs = exp_logits / np.clip(np.sum(exp_logits, axis=-1, keepdims=True), 1e-8, None)
+    probs[1:] = step_probs[:-1]
+    return probs
+
+
 def gaussian_2d_kernel(kernel_size: int, sigma: float, device=None, dtype=None) -> torch.Tensor:
     """
     Create a 2D Gaussian kernel for convolution.

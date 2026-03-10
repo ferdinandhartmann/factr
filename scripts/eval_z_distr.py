@@ -51,26 +51,26 @@ except Exception:
 # ---------------------------------------------------------------------------
 # User Config (edit these variables, then run this script directly)
 # ---------------------------------------------------------------------------
-RUN_DIR = Path.home() / "activeinference" / "factr" / "checkpoints" / "aiact_categ_ctxprior_projz8_c8_2" / "rollout"
+RUN_DIR = Path.home() / "activeinference" / "factr" / "checkpoints" / "aiact_categ_ctxprior_projz8_c8_4" / "rollout"
 CHECKPOINT_NAME = "latest_ckpt.ckpt"  # or "ckpt_020000.ckpt"
 
 RAW_EPISODE_DIR = Path("/home/ferdinand/activeinference/factr/process_data/data_to_process/fourgoals_1/data")
 
 USE_EPISODE_LIST = False
-EPISODE_FILE_NAME = "ep_23_stiff.pkl"
+EPISODE_FILE_NAME = "ep_29_stiff.pkl"
 EPISODE_LIST = [
-    # "ep_03_soft",
-    "ep_09_stiff",
+    "ep_03_medium",
     "ep_09_soft",
+    "ep_09_medium",
     "ep_10_soft",
     "ep_14_medium",
     "ep_19_medium",
-    "ep_23_stiff",
+    "ep_23_medium",
+    "ep_29_stiff",
     "ep_29_medium",
-    "ep_29_soft",
     "ep_33_medium",
-    # "ep_39_soft",
-    # "ep_40_soft",
+    "ep_39_stiff",
+    "ep_40_soft",
 ]
 
 GPU_ID = 0
@@ -79,7 +79,7 @@ SAVE_STATIC_PLOTS = True
 SAVE_VIDEO = True
 VIDEO_FPS = 30  # playback speed
 VIDEO_DPI = 55
-VIDEO_FRAME_STRIDE = 4  # use every Nth frame for video
+VIDEO_FRAME_STRIDE = 2  # use every Nth frame for video
 VIDEO_X_POINTS = 80  # number of x points in distribution plots
 VIDEO_X_STD_MULT = 4.0  # x range for distribution plots will be [mu - x_std_mult*std, mu + x_std_mult*std]
 

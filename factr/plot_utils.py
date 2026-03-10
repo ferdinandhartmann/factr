@@ -283,7 +283,7 @@ def build_pose_comparison_figure(
 
     handles, labels = axes[0].get_legend_handles_labels()
     if handles:
-        fig.legend(handles, labels, loc="upper center", ncol=3, bbox_to_anchor=(0.5, 0.92))
+        fig.legend(handles, labels, loc="upper center", ncol=3, bbox_to_anchor=(0.5, 0.925), frameon=False)
 
     if has_orientation and ax_rpy is not None and ax_geo is not None:
         rpy_true = compute_pose_rpy(true_valid[:, :9])
@@ -628,8 +628,8 @@ def build_pose_fan_figure(
                     x_vals,
                     pred_action_chunks[t, s_idx, h_idx, dim],
                     color=c_t,
-                    linewidth=0.8,
-                    alpha=0.7,
+                    linewidth=0.9,
+                    alpha=0.9,
                     label="prior_samples" if (anchor_pos == 0 and s_idx == 0 and dim == 0) else None,
                 )
 
@@ -742,8 +742,8 @@ def build_pose_fan_figure(
                             x_vals,
                             pred_chunk_rpy_plot[:, angle_idx],
                             color=c_t,
-                            linewidth=0.7,
-                            alpha=0.2,
+                            linewidth=0.9,
+                            alpha=0.8,
                             linestyle="-",
                             label="rpy prior samples" if (anchor_pos == 0 and s_idx == 0 and angle_idx == 0) else None,
                         )
@@ -753,8 +753,8 @@ def build_pose_fan_figure(
                                 x_vals,
                                 true_chunk_rpy_plot[:, angle_idx],
                                 color=gt_colors[angle_idx],
-                                linewidth=0.6,
-                                alpha=0.7,
+                                linewidth=0.9,
+                                alpha=0.8,
                                 linestyle="--",
                                 label=None,
                             )
@@ -810,8 +810,8 @@ def build_pose_fan_figure(
                     x_vals,
                     geod_deg,
                     color=c_t,
-                    linewidth=0.8,
-                    alpha=0.7,
+                    linewidth=1.0,
+                    alpha=0.9,
                     linestyle="-",
                     label="geodesic prior samples" if (anchor_pos == 0 and s_idx == 0) else None,
                 )
@@ -835,8 +835,8 @@ def build_pose_fan_figure(
             title = f"Sampled Prior Trajectories vs Ground Truth | stiffness={stiff_str}{step_str}"
         else:
             title = f"Sampled Prior Fan + Measured Pose (full episode, stride={max(1, int(prediction_stride))})"
-    fig.suptitle(title, fontsize=12, y=0.98)
-    fig.tight_layout(rect=[0.02, 0.03, 0.98, 0.9 if not has_orientation else 0.93])
+    fig.suptitle(title, fontsize=12, y=0.955)
+    fig.tight_layout(rect=[0.02, 0.03, 0.98, 0.905 if not has_orientation else 0.935])
     return fig
 
 
@@ -907,10 +907,10 @@ def build_obs_prediction_figure(
                 color="#377EB8",
                 linewidth=0.9,
                 alpha=0.7,
-                linestyle="--",
+                linestyle="-",
                 label="pred sample" if dim == 0 else None,
             )
-        ax.fill_between(time_axis, lower, upper, color="#FB9A99", alpha=0.25, label="mean +- std" if dim == 0 else None)
+        ax.fill_between(time_axis, lower, upper, color="#FB9A99", alpha=0.5, label="mean +- std" if dim == 0 else None)
         ax.set_title(dim_names[dim])
         ax.grid(alpha=0.25)
 
@@ -919,7 +919,7 @@ def build_obs_prediction_figure(
 
     handles, labels = axes[0].get_legend_handles_labels()
     if handles:
-        fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.98), ncol=4, frameon=False)
+        fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.945), ncol=4, frameon=False)
 
     if has_orientation and ax_rpy is not None and ax_geo is not None:
         rpy_true = compute_pose_rpy(true_arr[:, :9])
@@ -940,7 +940,7 @@ def build_obs_prediction_figure(
                     rpy_true_plot[:, angle_idx],
                     color=gt_colors[angle_idx],
                     linewidth=1.3,
-                    linestyle="-",
+                    linestyle="--",
                     label=f"{angle_name} gt",
                 )
                 ax_rpy.plot(
@@ -949,7 +949,7 @@ def build_obs_prediction_figure(
                     color=pred_colors[angle_idx],
                     linewidth=1.2,
                     alpha=0.9,
-                    linestyle=":",
+                    linestyle="-",
                     label=f"{angle_name} pred",
                 )
         unit = get_rpy_plot_unit(cfg=rpy_config)
@@ -987,8 +987,8 @@ def build_obs_prediction_figure(
             ax_geo.grid(alpha=0.25)
             ax_geo.legend(loc="upper right", ncol=1, frameon=False, fontsize=8)
 
-    fig.suptitle(title, fontsize=12)
-    fig.tight_layout(rect=[0.02, 0.03, 0.98, 0.95 if not has_orientation else 0.93])
+    fig.suptitle(title, fontsize=12, y=0.965)
+    fig.tight_layout(rect=[0.02, 0.03, 0.98, 0.955 if not has_orientation else 0.935])
     return fig
 
 

@@ -11,6 +11,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import yaml
+from factr.goal_inference import build_episode_goal_probability_figure
+from factr.obs_pred_plot_utils import build_obs_prediction_plot, build_tracking_error_plot, collapse_obs_prediction_chunks
+from factr.task_obs_pred import _build_eval_obs_fan_figure
 from hydra.utils import instantiate
 from omegaconf import OmegaConf
 
@@ -21,30 +24,30 @@ PROJECT_ROOT = SCRIPT_DIR.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from factr.goal_inference import build_episode_goal_probability_figure  # noqa: E402
-from factr.plot_utils import RPYPlotConfig, build_obs_prediction_figure, build_tracking_error_figure
-
 # ---------------------------------------------------------------------------
 # User Config (edit these variables, then run this script directly)
 # ---------------------------------------------------------------------------
-RUN_DIR = Path.home() / "activeinference" / "factr" / "checkpoints" / "aiact_categ_ctxprior_projz8_c8_2" / "rollout"
+RUN_DIR = Path.home() / "activeinference" / "factr" / "checkpoints" / "obs_pred_1_256_2_nnl002" / "rollout"
 CHECKPOINT_NAME = "latest_ckpt.ckpt"
 
 # Raw episode source
 RAW_EPISODE_DIR = Path.home() / "activeinference" / "factr" / "process_data" / "data_to_process" / "fourgoals_1" / "data"
-EPISODE_FILE_NAME = "ep_23_stiff.pkl"
+EPISODE_FILE_NAME = "ep_29_stiff.pkl"
 EPISODE_INDEX = 0  # index in sorted *.pkl files
-USE_EPISODE_LIST = False
+USE_EPISODE_LIST = True
 EPISODE_LIST = [
-    "ep_09_stiff",
+    "ep_03_medium",
     "ep_09_soft",
+    "ep_09_medium",
     "ep_10_soft",
     "ep_14_medium",
     "ep_19_medium",
-    "ep_23_stiff",
+    "ep_23_medium",
+    "ep_29_stiff",
     "ep_29_medium",
-    "ep_29_soft",
     "ep_33_medium",
+    "ep_39_stiff",
+    "ep_40_soft",
 ]
 LIST_EPISODES_ONLY = False
 
@@ -53,7 +56,7 @@ ROLLOUT_CONFIG_OVERRIDE = Path.home() / "activeinference" / "factr" / "process_d
 
 NUM_SAMPLES = 20  # Monte-Carlo samples from predicted Gaussian for eval-only sample MSE
 NORMALIZATION_MODE = "apply"  # one of: auto, apply, skip
-PREDICTION_STRIDE = 1
+PREDICTION_STRIDE = 10
 MAX_PLOT_DIMS = 9
 GOAL_EPISODE_POST_TEMP = 5.0
 RPY_SUBTRACT_PI = True  # If True, subtract pi from one selected RPY axis for plotting.
@@ -651,108 +654,10 @@ def _replace_prefix_and_inverse(part_norm: np.ndarray, reference_full_norm: np.n
     return denorm[..., :part_dim]
 
 
-def _build_obs_prediction_figure(
-    true_obs: np.ndarray,
-    pred_mean: np.ndarray,
-    pred_std: np.ndarray,
-    pred_sample: np.ndarray,
-    time_index: np.ndarray,
-    max_dims: int,
-):
-    rpy_cfg = RPYPlotConfig(
-        subtract_pi=bool(RPY_SUBTRACT_PI),
-        subtract_pi_axis=int(RPY_SUBTRACT_PI_AXIS),
-        unit=str(RPY_PLOT_UNIT),
-    )
-    return build_obs_prediction_figure(
-        true_obs=true_obs,
-        pred_mean=pred_mean,
-        pred_std=pred_std,
-        max_dims=int(max_dims),
-        time_index=time_index,
-        pred_sample=pred_sample,
-        title="Observation prediction on raw episode",
-        rpy_config=rpy_cfg,
-    )
-
-
-def _collapse_chunk_predictions(
-    true_chunks: np.ndarray,
-    pred_mean_chunks: np.ndarray,
-    pred_std_chunks: np.ndarray,
-    pred_sample_chunks: np.ndarray,
-    valid_mask: np.ndarray,
-    anchor_steps: np.ndarray,
-    stride: int,
-):
-    selected = np.arange(0, true_chunks.shape[0], max(1, int(stride)), dtype=np.int64)
-    if selected[-1] != (true_chunks.shape[0] - 1):
-        selected = np.concatenate([selected, np.asarray([true_chunks.shape[0] - 1], dtype=np.int64)])
-
-    obs_dim = int(true_chunks.shape[-1])
-    max_time = int(anchor_steps[-1] + true_chunks.shape[1] - 1)
-    if max_time < 0:
-        return None
-
-    sum_true = np.zeros((max_time + 1, obs_dim), dtype=np.float32)
-    sum_pred_mean = np.zeros((max_time + 1, obs_dim), dtype=np.float32)
-    sum_pred_std = np.zeros((max_time + 1, obs_dim), dtype=np.float32)
-    sum_pred_sample = np.zeros((max_time + 1, obs_dim), dtype=np.float32)
-    counts = np.zeros((max_time + 1,), dtype=np.float32)
-
-    for sample_idx in selected:
-        base_t = int(anchor_steps[sample_idx])
-        for h_idx in range(true_chunks.shape[1]):
-            if valid_mask[sample_idx, h_idx] <= 0:
-                continue
-            t_abs = base_t + h_idx
-            sum_true[t_abs] += true_chunks[sample_idx, h_idx]
-            sum_pred_mean[t_abs] += pred_mean_chunks[sample_idx, h_idx]
-            sum_pred_std[t_abs] += pred_std_chunks[sample_idx, h_idx]
-            sum_pred_sample[t_abs] += pred_sample_chunks[sample_idx, h_idx]
-            counts[t_abs] += 1.0
-
-    valid_time = counts > 0
-    if not np.any(valid_time):
-        return None
-    denom = np.clip(counts[valid_time][:, None], 1e-6, None)
-    return {
-        "time_index": np.where(valid_time)[0],
-        "true": sum_true[valid_time] / denom,
-        "pred_mean": sum_pred_mean[valid_time] / denom,
-        "pred_std": sum_pred_std[valid_time] / denom,
-        "pred_sample": sum_pred_sample[valid_time] / denom,
-    }
-
-
-def _build_tracking_error_figure(tracking_error: np.ndarray, per_dim_mse: np.ndarray):
-    return build_tracking_error_figure(tracking_error=tracking_error, per_dim_mse=per_dim_mse)
-
-
-def _build_episode_goal_probabilities(log_likelihood_per_timestep: np.ndarray, goal_classes: int, obs_dim: int) -> np.ndarray:
-    """Build per-episode goal probabilities with a uniform start and softened per-step evidence."""
-    if log_likelihood_per_timestep.ndim != 3:
-        raise ValueError(f"Expected log_likelihood_per_timestep shape (T, G, H), got {tuple(log_likelihood_per_timestep.shape)}.")
-    if log_likelihood_per_timestep.shape[1] != int(goal_classes):
-        raise ValueError(f"Expected goal axis size {int(goal_classes)}, got {int(log_likelihood_per_timestep.shape[1])}.")
-    episode_steps = int(log_likelihood_per_timestep.shape[0])
-    probs = np.zeros((episode_steps, int(goal_classes)), dtype=np.float32)
-    uniform = np.full((int(goal_classes),), 1.0 / float(goal_classes), dtype=np.float32)
-    if episode_steps == 0:
-        return probs
-    probs[0] = uniform
-    if episode_steps == 1:
-        return probs
-
-    # Use 1-step-ahead likelihood (h=0), averaged by obs dimension and softened by temperature.
-    step_logits = np.asarray(log_likelihood_per_timestep[:, :, 0], dtype=np.float32)
-    denom = max(1.0, float(obs_dim) * float(GOAL_EPISODE_POST_TEMP))
-    step_logits = step_logits / denom
-    step_logits = step_logits - np.max(step_logits, axis=-1, keepdims=True)
-    exp_logits = np.exp(step_logits)
-    step_probs = exp_logits / np.clip(np.sum(exp_logits, axis=-1, keepdims=True), 1e-8, None)
-    probs[1:] = step_probs[:-1]
-    return probs
+def _build_inference_indices(num_steps: int, stride: int) -> np.ndarray:
+    if int(num_steps) <= 0:
+        return np.zeros((0,), dtype=np.int64)
+    return np.arange(0, int(num_steps), max(1, int(stride)), dtype=np.int64)
 
 
 def _summarize_metrics(
@@ -1035,33 +940,80 @@ def main():
             f"tracking_l2_denorm={metrics['tracking_l2_mean_denorm']:.5f}"
         )
 
-        collapsed = _collapse_chunk_predictions(
-            true_chunks=target_denorm,
-            pred_mean_chunks=pred_mean_denorm,
-            pred_std_chunks=pred_std_denorm,
-            pred_sample_chunks=pred_sample_denorm,
-            valid_mask=target_mask,
-            anchor_steps=steps_arr,
-            stride=int(PREDICTION_STRIDE),
-        )
+        unique_stiffness = sorted(np.unique(stiffness_arr).astype(np.int64).tolist())
+        if len(unique_stiffness) == 1:
+            stiffness_title = str(int(unique_stiffness[0]))
+        else:
+            counts = {int(label): int(np.sum(stiffness_arr == int(label))) for label in unique_stiffness}
+            counts_str = ",".join([f"{k}:{v}" for k, v in counts.items()])
+            stiffness_title = f"mixed({counts_str})"
 
-        fig_obs = None
-        if collapsed is not None:
-            fig_obs = _build_obs_prediction_figure(
-                true_obs=collapsed["true"],
-                pred_mean=collapsed["pred_mean"],
-                pred_std=collapsed["pred_std"],
-                pred_sample=collapsed["pred_sample"],
-                time_index=collapsed["time_index"],
-                max_dims=int(MAX_PLOT_DIMS),
+        inference_indices = _build_inference_indices(num_steps=target_denorm.shape[0], stride=int(PREDICTION_STRIDE))
+        full_horizon_valid = np.sum(target_mask > 0.0, axis=1) >= int(pred_horizon)
+        if inference_indices.size > 0:
+            inference_indices = inference_indices[full_horizon_valid[inference_indices]]
+        if inference_indices.size == 0 and target_denorm.shape[0] > 0:
+            inference_indices = np.asarray([0], dtype=np.int64)
+
+        target_plot = target_denorm[inference_indices] if inference_indices.size > 0 else np.zeros((0,), dtype=np.float32)
+        pred_mean_plot = pred_mean_denorm[inference_indices] if inference_indices.size > 0 else np.zeros((0,), dtype=np.float32)
+        pred_std_plot = pred_std_denorm[inference_indices] if inference_indices.size > 0 else np.zeros((0,), dtype=np.float32)
+        pred_sample_plot = pred_sample_denorm[inference_indices] if inference_indices.size > 0 else np.zeros((0,), dtype=np.float32)
+        mask_plot = target_mask[inference_indices] if inference_indices.size > 0 else np.zeros((0,), dtype=np.float32)
+        source_plot = steps_arr[inference_indices] if inference_indices.size > 0 else np.zeros((0,), dtype=np.int64)
+
+        if inference_indices.size > 0:
+            for stale_obs_path in out_dir.glob(f"{episode_file.stem}_obs_prediction_step*.png"):
+                stale_obs_path.unlink(missing_ok=True)
+            stale_summary_path = out_dir / f"{episode_file.stem}_obs_prediction_summary.png"
+            stale_summary_path.unlink(missing_ok=True)
+
+            # Training-style inference fan plot: stride anchors with full horizon and RPY/geodesic panels.
+            obs_plot_max_steps = int(np.max(source_plot) + int(pred_horizon) + 1)
+            fig_obs_fan = _build_eval_obs_fan_figure(
+                true_obs_chunks=target_plot,
+                pred_obs_chunks=pred_mean_plot,
+                mask_chunks=mask_plot,
+                source_time_index=source_plot,
+                max_steps=obs_plot_max_steps,
+                stiffness_label=stiffness_title,
+                global_step=None,
             )
-        if fig_obs is not None:
-            obs_path = out_dir / f"{episode_file.stem}_obs_prediction.png"
-            fig_obs.savefig(obs_path, dpi=300, bbox_inches="tight")
-            print(f"Saved: {obs_path}")
-            plt.close(fig_obs)
+            if fig_obs_fan is not None:
+                obs_path = out_dir / f"{episode_file.stem}_obs_prediction.png"
+                fig_obs_fan.savefig(obs_path, dpi=300, bbox_inches="tight")
+                print(f"Saved: {obs_path}")
+                plt.close(fig_obs_fan)
 
-        collapsed_track = _collapse_chunk_predictions(
+            collapsed = collapse_obs_prediction_chunks(
+                true_chunks=target_plot,
+                pred_mean_chunks=pred_mean_plot,
+                pred_std_chunks=pred_std_plot,
+                pred_sample_chunks=pred_sample_plot,
+                valid_mask=mask_plot,
+                anchor_steps=source_plot,
+                stride=1,
+            )
+            if collapsed is not None:
+                fig_obs_summary = build_obs_prediction_plot(
+                    true_obs=collapsed["true"],
+                    pred_mean=collapsed["pred_mean"],
+                    pred_std=collapsed["pred_std"],
+                    pred_sample=collapsed["pred_sample"],
+                    time_index=collapsed["time_index"],
+                    max_dims=int(collapsed["true"].shape[1]),
+                    title=f"Observation Prediction (collapsed) | stiffness={stiffness_title}",
+                    rpy_subtract_pi=bool(RPY_SUBTRACT_PI),
+                    rpy_subtract_pi_axis=int(RPY_SUBTRACT_PI_AXIS),
+                    rpy_plot_unit=str(RPY_PLOT_UNIT),
+                )
+                if fig_obs_summary is not None:
+                    obs_summary_path = out_dir / f"{episode_file.stem}_obs_prediction_summary.png"
+                    fig_obs_summary.savefig(obs_summary_path, dpi=300, bbox_inches="tight")
+                    print(f"Saved: {obs_summary_path}")
+                    plt.close(fig_obs_summary)
+
+        collapsed_track = collapse_obs_prediction_chunks(
             true_chunks=tracking_err_denorm,
             pred_mean_chunks=tracking_err_denorm,
             pred_std_chunks=np.zeros_like(tracking_err_denorm),
@@ -1072,7 +1024,7 @@ def main():
         )
         fig_track = None
         if collapsed_track is not None:
-            fig_track = _build_tracking_error_figure(
+            fig_track = build_tracking_error_plot(
                 tracking_error=collapsed_track["true"],
                 per_dim_mse=per_dim_mse_denorm,
             )
@@ -1082,20 +1034,25 @@ def main():
             print(f"Saved: {track_path}")
             plt.close(fig_track)
 
+        for stale_goal_step_path in out_dir.glob(f"{episode_file.stem}_goal_likelihoods_step*.png"):
+            stale_goal_step_path.unlink(missing_ok=True)
+        for stale_goal_step_json_path in out_dir.glob(f"{episode_file.stem}_goal_likelihoods_step*.json"):
+            stale_goal_step_json_path.unlink(missing_ok=True)
+
+        episode_goal_probs = None
+        pred_goal_labels_episode = None
+        true_goal_labels_episode = None
         if goal_artifacts is not None and goal_artifacts["goal_posterior"].shape[0] > 0:
-            episode_goal_probs = _build_episode_goal_probabilities(
-                log_likelihood_per_timestep=goal_artifacts["log_likelihood_per_timestep"],
-                goal_classes=goal_classes,
-                obs_dim=obs_target_dim,
-            )
+            episode_goal_probs = np.asarray(goal_artifacts["goal_posterior"], dtype=np.float32)
             pred_goal_labels_episode = np.argmax(episode_goal_probs, axis=-1).astype(np.int64) + 1
             true_goal_labels_episode = goal_artifacts["true_goal_idx"] + 1
+
             fig_goal_episode, goal_episode_payload = build_episode_goal_probability_figure(
                 goal_probabilities=episode_goal_probs,
                 true_goal_labels=true_goal_labels_episode,
                 pred_goal_labels=pred_goal_labels_episode,
                 time_index=steps_arr,
-                title_prefix=f"Goal Posterior over Episode ({episode_file.stem})",
+                title_prefix=f"Goal Posterior over Episode ({episode_file.stem}, exact eval posterior)",
             )
             goal_episode_fig_path = out_dir / f"{episode_file.stem}_goal_probability_episode.png"
             fig_goal_episode.savefig(goal_episode_fig_path, dpi=300, bbox_inches="tight")

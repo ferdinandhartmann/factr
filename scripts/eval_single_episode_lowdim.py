@@ -11,6 +11,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import yaml
+from factr.plot_utils import RPYPlotConfig, build_pose_comparison_figure, build_pose_fan_figure
+from factr.plot_utils import rot6d_to_matrix as _shared_rot6d_to_matrix
 from hydra.utils import instantiate
 from omegaconf import OmegaConf
 
@@ -21,9 +23,6 @@ PROJECT_ROOT = SCRIPT_DIR.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from factr.plot_utils import RPYPlotConfig, build_pose_comparison_figure, build_pose_fan_figure
-from factr.plot_utils import rot6d_to_matrix as _shared_rot6d_to_matrix
-
 # ---------------------------------------------------------------------------
 # User Config (edit these variables, then run this script directly)
 # ---------------------------------------------------------------------------
@@ -32,23 +31,24 @@ CHECKPOINT_NAME = "latest_ckpt.ckpt"
 
 # Raw episode source
 RAW_EPISODE_DIR = Path.home() / "activeinference" / "factr" / "process_data" / "data_to_process" / "fourgoals_1" / "data"
-EPISODE_FILE_NAME = "ep_29_medium.pkl"
+EPISODE_FILE_NAME = "ep_29_stiff.pkl"
 EPISODE_INDEX = 0  # index in sorted *.pkl files
 USE_EPISODE_LIST = False
 EPISODE_LIST = [
-    # "ep_03_soft",
-    "ep_09_stiff",
+    "ep_03_medium",
     "ep_09_soft",
-    # "ep_10_soft",
+    "ep_09_medium",
+    "ep_10_soft",
     "ep_14_medium",
-    # "ep_19_medium",
-    # "ep_23_stiff",
-    # "ep_29_medium",
-    # "ep_29_soft",
-    # "ep_33_medium",
-    # "ep_39_soft",
-    # "ep_40_soft",
+    "ep_19_medium",
+    "ep_23_medium",
+    "ep_29_stiff",
+    "ep_29_medium",
+    "ep_33_medium",
+    "ep_39_stiff",
+    "ep_40_soft",
 ]
+
 LIST_EPISODES_ONLY = False
 
 BUFFER_PATH_OVERRIDE = Path.home() / "activeinference" / "factr" / "process_data" / "processed_data" / "fourgoals_1_act" / "buf_test.pkl"
@@ -614,10 +614,7 @@ def _build_fan_figure_with_measured(
         measured_pose=measured_pose,
         background_actions=background_actions,
         max_plot_steps=None,
-        title=(
-            f"Sampled {_action_source_title(action_source)} Fan + Measured Pose "
-            f"(full episode, stride={max(1, int(prediction_stride))})"
-        ),
+        title=(f"Sampled {_action_source_title(action_source)} Fan + Measured Pose (full episode, stride={max(1, int(prediction_stride))})"),
         plot_ground_truth_h0=True,
         plot_ground_truth_reconstructed=False,
         rpy_config=rpy_cfg,
@@ -825,19 +822,11 @@ def _summarize_metrics(
     with torch.no_grad():
         output = model({}, obs_t, ac_flat, mask_flat, class_labels=labels_t)
         if action_source == "prior":
-            pred_det = model.get_actions_prior(
-                {}, obs_t, class_labels=labels_t, sample=False, num_samples=1
-            )
-            pred_samples = model.get_actions_prior(
-                {}, obs_t, class_labels=labels_t, sample=True, num_samples=num_samples
-            )
+            pred_det = model.get_actions_prior({}, obs_t, class_labels=labels_t, sample=False, num_samples=1)
+            pred_samples = model.get_actions_prior({}, obs_t, class_labels=labels_t, sample=True, num_samples=num_samples)
         else:
-            pred_det = model.get_actions_pos(
-                {}, obs_t, actions_t, class_labels=labels_t, sample=False, num_samples=1
-            )
-            pred_samples = model.get_actions_pos(
-                {}, obs_t, actions_t, class_labels=labels_t, sample=True, num_samples=num_samples
-            )
+            pred_det = model.get_actions_pos({}, obs_t, actions_t, class_labels=labels_t, sample=False, num_samples=1)
+            pred_samples = model.get_actions_pos({}, obs_t, actions_t, class_labels=labels_t, sample=True, num_samples=num_samples)
 
         if pred_det.ndim == 4:
             pred_det = pred_det[:, 0]

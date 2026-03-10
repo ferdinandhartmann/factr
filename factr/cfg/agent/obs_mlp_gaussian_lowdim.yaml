@@ -8,7 +8,10 @@ pose_action_dim: ${pose_action_dim}
 stiffness_classes: ${stiffness_classes}
 goal_classes: ${goal_classes}
 
-hidden_dim: 384
-num_layers: 3
+hidden_dim: 256 # 384
+num_layers: 2
 dropout: 0.1
 min_var: 0.0001
+nll_loss_weight: 0.001  # multiplier on the probabilistic part of the loss, lower weight usually helps mean_mse, Small NLL term keeps the variance head away from the floor.
+
+# loss = mean_mse + nll_loss_weight × nll_per_elem

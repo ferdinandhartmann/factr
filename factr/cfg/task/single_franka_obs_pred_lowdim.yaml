@@ -3,6 +3,7 @@ obs_dim: ${obs_target_dim}
 pose_action_dim: ${pose_action_dim}
 pred_horizon: ${pred_horizon}
 eval_plot_max_steps: 400
+eval_plot_prediction_stride: 10
 eval_plot_dims: 9
 
 train_buffer:

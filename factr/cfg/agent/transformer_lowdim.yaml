@@ -28,15 +28,15 @@ fixed_prior: false            # false -> learn p(z|context) instead of keeping a
 # each variable with `categorical_num_categories` categories.
 categorical_num_variables: 8
 categorical_num_categories: 8
-categorical_temperature: 0.67 # Lower than 1.0 to make sampled categories sharper without making training brittle.
+categorical_temperature: 0.8 # Lower than 1.0 to make sampled categories sharper without making training brittle.
 categorical_straight_through: true # forward pass uses hard one-hot samples, but gradients flow through a soft version (straight-through estimator). false means fully soft samples (more smooth/stable, less discrete).
 
 # Light KL floor to reduce "KL -> 0 + z ignored" collapse.
 # With d_z=32, free_bits=0.05 corresponds to a KL floor of 1.6.
-beta: 0.005 # 10 # 0.001 # 1           # KL weight in total_loss = recon + beta * KL. 
+beta: 0.008 # 0.005 # 10 # 0.001 # 1           # KL weight in total_loss = recon + beta * KL. 
                     # Higher beta ⇒ stronger pressure for prior ≈ posterior (latent carries less extra “action-only” info)
                     # Lower beta ⇒ easier for posterior to use z to fit actions well, but the prior may lag behind (bigger prior-vs-posterior gap).
-kl_balance_alpha: 0.85  # KL-balance alpha in [0,1]. 0.5 keeps legacy behavior; increase (>0.5) to reduce posterior KL influence and increase prior KL influence.
+kl_balance_alpha: 0.65  # KL-balance alpha in [0,1]. 0.5 keeps legacy behavior; increase (>0.5) to reduce posterior KL influence and increase prior KL influence.
 free_bits: null       # Disable the KL clamp so the model sees the real KL instead of a constant floor.
 
 # Controls which context tokens the prior p(z|context) gets to look at.

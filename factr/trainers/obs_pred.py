@@ -30,8 +30,10 @@ class GaussianObsPredictionTrainer(BaseTrainer):
         pred_var_mean = output["var"].mean()
 
         if self.is_train:
-            self.log("sample_mse", global_step, loss.item())
+            self.log("loss", global_step, loss.item())
+            self.log("sample_mse", global_step, output["sample_mse"].item())
             self.log("mean_mse", global_step, output["mean_mse"].item())
+            self.log("nll_per_elem", global_step, output["nll_per_elem"].item())
             self.log("tracking_error_l2", global_step, tracking_error_l2.item())
             self.log("pred_var_mean", global_step, pred_var_mean.item())
             self.log("lr", global_step, self.lr)

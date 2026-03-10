@@ -7,6 +7,14 @@ eval_plot_max_steps: 400
 eval_plot_prediction_stride: 25
 eval_plot_num_samples: 10
 
+# For Sweeping
+eval_diversity_num_samples: 10
+eval_diversity_max_batches: 2
+sweep_target_min_diversity: 0.02
+sweep_target_min_kl: 0.5
+sweep_diversity_penalty: 2.0
+sweep_kl_penalty: 0.05
+
 train_buffer:
   _target_: factr.replay_buffer.RobobufReplayBufferLowdim
   buffer_path: ${buffer_path}

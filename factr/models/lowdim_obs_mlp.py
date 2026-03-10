@@ -20,6 +20,7 @@ class LowdimGaussianObsMLP(nn.Module):
         num_layers=3,
         dropout=0.1,
         min_var=1e-4,
+        nll_loss_weight=1e-2,
     ):
         super().__init__()
         self.obs_window = int(obs_window)
@@ -32,11 +33,14 @@ class LowdimGaussianObsMLP(nn.Module):
         self.hidden_dim = int(hidden_dim)
         self.num_layers = int(num_layers)
         self.min_var = float(min_var)
+        self.nll_loss_weight = float(nll_loss_weight)
 
         if not (2 <= self.num_layers <= 4):
             raise ValueError(f"num_layers must be in [2, 4], got {self.num_layers}.")
         if self.pred_horizon < 1:
             raise ValueError(f"pred_horizon must be >= 1, got {self.pred_horizon}.")
+        if self.nll_loss_weight < 0:
+            raise ValueError(f"nll_loss_weight must be >= 0, got {self.nll_loss_weight}.")
         if self.predict_obs_dim < self.pose_action_dim:
             raise ValueError(
                 f"predict_obs_dim={self.predict_obs_dim} must be >= pose_action_dim={self.pose_action_dim}."
@@ -370,14 +374,21 @@ class LowdimGaussianObsMLP(nn.Module):
             mask_expanded = mask[..., None]
             normalizer = torch.clamp(mask_expanded.sum() * mean.shape[-1], min=1.0)
 
-            # Requested objective: MSE between sampled observation and ground truth.
+            # Keep the deterministic fit sharp, but add a small Gaussian NLL term so
+            # the variance head cannot win by collapsing all the way to the floor.
             sample_sq = (sample - target_obs) ** 2
             mean_sq = (mean - target_obs) ** 2
             sample_mse = (sample_sq * mask_expanded).sum() / normalizer
             mean_mse = (mean_sq * mask_expanded).sum() / normalizer
-            result["loss"] = sample_mse
+            dist = Normal(loc=mean, scale=std.clamp_min(1e-8))
+            nll_per_dim = -dist.log_prob(target_obs)
+            nll_per_elem = (nll_per_dim * mask_expanded).sum() / normalizer
+            loss = mean_mse + self.nll_loss_weight * nll_per_elem
+
+            result["loss"] = loss
             result["sample_mse"] = sample_mse
             result["mean_mse"] = mean_mse
+            result["nll_per_elem"] = nll_per_elem
             result["target_mask"] = mask
         return result
 

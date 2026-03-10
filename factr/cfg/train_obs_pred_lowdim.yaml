@@ -14,38 +14,41 @@ hydra:
 buffer_path: /home/ferdinand/activeinference/factr/process_data/processed_data/fourgoals_1_act/buf_train.pkl
 test_buffer_path: /home/ferdinand/activeinference/factr/process_data/processed_data/fourgoals_1_act/buf_test.pkl
 
-exp_base_name: obs_pred_b128
+exp_base_name: obs_pred_1_256_2_nnl002
 suffix: _
 exp_name: ${exp_base_name}
 
 batch_size: 128
 num_workers: 8
-lr: 0.0003
-max_iterations: 8000
+lr: 0.0002
+max_iterations: 10000
 schedule_freq: 1
 devices: 1
 seed: 42
 resume: false
 
-raw_obs_dim: 27
 obs_window: 8
-obs_input_dim: 21
-obs_target_dim: 21
 pred_horizon: 30
-pose_action_dim: 9
+
 action_index_offset: 0
 target_index_offset: 1
+
+raw_obs_dim: 27
+obs_input_dim: 21
+obs_target_dim: 21
+pose_action_dim: 9
+
 stiffness_classes: 3
 goal_classes: 4
 
 train_log_freq: 50
 eval_freq: 200
-eval_freq_plot: 2000 # Must be multiple of eval_freq
+eval_freq_plot: 2500 # Must be multiple of eval_freq
 save_freq: 2000
 
 wandb:
   name: ${exp_name}
-  project: aiact_obspred
+  project: aiact_obspred_1
   group: obs_pred
   debug: False
   entity: None

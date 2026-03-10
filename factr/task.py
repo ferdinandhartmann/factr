@@ -228,6 +228,34 @@ def _stack_plot_candidates(candidates, device):
     }
 
 
+def _compute_sample_diversity(sampled_actions: torch.Tensor, mask: torch.Tensor) -> float:
+    """Average pairwise L2 distance across sampled action chunks.
+
+    Args:
+        sampled_actions: Tensor of shape (B, S, T, D)
+        mask: Tensor of shape (B, T, D)
+    """
+    if sampled_actions.ndim != 4 or mask.ndim != 3:
+        return float("nan")
+
+    _, num_samples, _, _ = sampled_actions.shape
+    if num_samples < 2:
+        return 0.0
+
+    diffs = sampled_actions.unsqueeze(2) - sampled_actions.unsqueeze(1)
+    sq = diffs.pow(2)
+    mask_expanded = mask.unsqueeze(1).unsqueeze(1)
+    denom = mask_expanded.sum(dim=(3, 4)).clamp(min=1.0)
+    rms = torch.sqrt((sq * mask_expanded).sum(dim=(3, 4)) / denom)
+
+    tri_i, tri_j = torch.triu_indices(num_samples, num_samples, offset=1, device=sampled_actions.device)
+    if tri_i.numel() == 0:
+        return 0.0
+
+    pairwise_vals = rms[:, tri_i, tri_j]
+    return float(pairwise_vals.mean().item())
+
+
 class DefaultTask:
     def __init__(
         self,
@@ -243,12 +271,24 @@ class DefaultTask:
         eval_plot_max_steps: int = 3000,
         eval_plot_prediction_stride: int = 15,
         eval_plot_num_samples: int = 10,
+        eval_diversity_num_samples: int = 10,
+        eval_diversity_max_batches: int = 2,
+        sweep_target_min_diversity: float = 0.02,
+        sweep_target_min_kl: float = 0.5,
+        sweep_diversity_penalty: float = 2.0,
+        sweep_kl_penalty: float = 0.05,
     ):
         self.n_cams, self.obs_dim, self.ac_dim = n_cams, obs_dim, ac_dim
         self.train_loader = _build_data_loader(train_buffer, batch_size, num_workers, is_train=True)
         self.eval_plot_max_steps = int(eval_plot_max_steps)
         self.eval_plot_prediction_stride = max(1, int(eval_plot_prediction_stride))
         self.eval_plot_num_samples = max(1, int(eval_plot_num_samples))
+        self.eval_diversity_num_samples = max(2, int(eval_diversity_num_samples))
+        self.eval_diversity_max_batches = max(1, int(eval_diversity_max_batches))
+        self.sweep_target_min_diversity = max(0.0, float(sweep_target_min_diversity))
+        self.sweep_target_min_kl = max(0.0, float(sweep_target_min_kl))
+        self.sweep_diversity_penalty = max(0.0, float(sweep_diversity_penalty))
+        self.sweep_kl_penalty = max(0.0, float(sweep_kl_penalty))
         self.stiffness_classes = int(
             getattr(train_buffer, "stiffness_classes", getattr(test_buffer, "stiffness_classes", 3))
         )
@@ -326,6 +366,8 @@ class BCTask(DefaultTask):
         prior_entropy_vals = []
         posterior_entropy_vals = []
         action_l2, action_lsig = [], []
+        sample_diversity_vals = []
+        diversity_batches_seen = 0
         l2_per_joint_all = []
         chunk_mse_all = []
         accuracy_list = []
@@ -388,6 +430,19 @@ class BCTask(DefaultTask):
                 lsig = (lsig.float() * mask).sum((1, 2)) / mask_den
                 action_lsig.append(lsig.mean().item())
 
+                if diversity_batches_seen < self.eval_diversity_max_batches:
+                    sampled_eval_actions = self._sample_actions_for_plot(
+                        model=model,
+                        imgs=imgs,
+                        obs=obs,
+                        labels=labels,
+                        num_samples=self.eval_diversity_num_samples,
+                    )
+                    sample_diversity = _compute_sample_diversity(sampled_eval_actions, mask)
+                    if np.isfinite(sample_diversity):
+                        sample_diversity_vals.append(sample_diversity)
+                    diversity_batches_seen += 1
+
                 if generate_plots and first_plot_sample is None:
                     first_plot_sample = {
                         "true": actions[0].detach().cpu().numpy(),
@@ -440,10 +495,25 @@ class BCTask(DefaultTask):
         mean_posterior_std = np.mean(posterior_std_mean_vals) if posterior_std_mean_vals else float("nan")
         mean_prior_entropy = np.mean(prior_entropy_vals) if prior_entropy_vals else float("nan")
         mean_posterior_entropy = np.mean(posterior_entropy_vals) if posterior_entropy_vals else float("nan")
+        mean_sample_diversity = np.mean(sample_diversity_vals) if sample_diversity_vals else float("nan")
         ac_l2 = np.mean(action_l2)
         ac_lsig = np.mean(action_lsig)
         l2_per_joint_mean = np.mean(np.stack(l2_per_joint_all, axis=0), axis=0)
         chunk_mse_mean = np.mean(np.stack(chunk_mse_all, axis=0), axis=0) if chunk_mse_all else None
+
+        # For Sweeping 
+        diversity_gap = (
+            max(0.0, self.sweep_target_min_diversity - float(mean_sample_diversity))
+            if np.isfinite(mean_sample_diversity)
+            else float(self.sweep_target_min_diversity)
+        )
+        kl_gap = (
+            max(0.0, self.sweep_target_min_kl - float(mean_posterior_kl))
+            if np.isfinite(mean_posterior_kl)
+            else float(self.sweep_target_min_kl)
+        )
+        base_prior_l1 = float(mean_prior_l1) if np.isfinite(mean_prior_l1) else 1e3
+        sweep_score = base_prior_l1 + self.sweep_diversity_penalty * diversity_gap + self.sweep_kl_penalty * kl_gap
 
         if generate_plots:
             selected_all_candidates = _select_episode_plot_candidates(
@@ -468,6 +538,7 @@ class BCTask(DefaultTask):
             f"KL: {mean_posterior_kl:.4f}\tAction L2: {ac_l2:.3f}\tLSign: {ac_lsig:.4f}\t"
             f"prior_std: {mean_prior_std:.4f}\tpost_std: {mean_posterior_std:.4f}\t"
             f"prior_H: {mean_prior_entropy:.4f}\tpost_H: {mean_posterior_entropy:.4f}\t"
+            f"sample_div: {mean_sample_diversity:.4f}\tsweep_score: {sweep_score:.4f}\t"
             f"plot_steps: {len(selected_all_candidates)}\tplot_stride: {self.eval_plot_prediction_stride}\t"
             f"plot_samples: {self.eval_plot_num_samples}\tplot_label_counts: {plot_label_counts_str}"
         )
@@ -490,6 +561,8 @@ class BCTask(DefaultTask):
                 "eval/posterior_std_mean": mean_posterior_std,
                 "eval/prior_entropy": mean_prior_entropy,
                 "eval/posterior_entropy": mean_posterior_entropy,
+                "eval/sample_diversity": mean_sample_diversity,
+                "eval/sweep_score": sweep_score,
             }
 
             if accuracy_list:
