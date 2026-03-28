@@ -136,3 +136,109 @@ For low-dim observation prediction:
 `train_obs_model.py` → `GaussianObsPredictionTrainer` + `ObsPredictionTask` + `RobobufReplayBufferObsPredLowdim` + `LowdimGaussianObsMLP`
 
 Keeping these two pipelines conceptually separate will save you a lot of confusion when navigating the repository.
+
+---
+
+## 11) Important classes index by priority
+
+If you only have a few hours, this priority list helps.
+
+### Tier 1 (must know for active low-dim BC/CVAE)
+
+1. `factr/models/lowdim_action_transformer.py::LowdimStiffnessCVAEAgent`
+2. `factr/replay_buffer.py::RobobufReplayBufferLowdim`
+3. `factr/task.py::BCTask`
+4. `factr/trainers/bc.py::BehaviorCloning`
+5. `factr/train_bc_policy.py::train_bc`
+
+### Tier 2 (important supporting modules)
+
+1. `factr/cfg/train_bc_lowdim.yaml`
+2. `factr/cfg/agent/transformer_lowdim.yaml`
+3. `factr/cfg/task/single_franka_lowdim.yaml`
+4. `factr/cfg/trainer/adamw_cos_lowdim.yaml`
+5. `factr/task.py` plotting/metrics helper functions
+
+### Tier 3 (obs-pred / analysis path)
+
+1. `factr/models/lowdim_obs_mlp.py::LowdimGaussianObsMLP`
+2. `factr/replay_buffer.py::RobobufReplayBufferObsPredLowdim`
+3. `factr/task_obs_pred.py::ObsPredictionTask`
+4. `factr/trainers/obs_pred.py::GaussianObsPredictionTrainer`
+5. `factr/train_obs_model.py`
+
+---
+
+## 12) Python file responsibilities (more granular)
+
+### Entrypoints
+
+- `train_bc_policy.py`: run lifecycle, checkpoint/eval cadence, logging pipeline.
+- `train_obs_model.py`: equivalent lifecycle for observation prediction.
+
+### Data pipeline
+
+- `replay_buffer.py`: all sequence slicing, episode boundaries, mask creation, class label extraction.
+- `task.py` / `task_obs_pred.py`: dataloader wrappers + validation/evaluation/plot orchestration.
+
+### Model pipeline
+
+- `models/lowdim_action_transformer.py`: context modeling + latent modeling + action decoding.
+- `models/lowdim_obs_mlp.py`: conditional Gaussian prediction + Bayesian-style goal posterior.
+- `models/action_transformer.py`: image/token transformer CVAE baseline path.
+
+### Optimization pipeline
+
+- `trainers/base.py`: optimizer/scheduler/checkpoint utilities.
+- `trainers/bc.py`: action-policy objective call and logging keys.
+- `trainers/obs_pred.py`: obs-pred objective call and logging keys.
+
+### Utilities and plotting
+
+- `plot_utils.py`, `obs_pred_plot_utils.py`: reusable figure builders.
+- `utils.py`, `misc.py`: helper utilities and run-level global state.
+- `transforms.py`: augmentation logic (more relevant for image paths).
+
+---
+
+## 13) Typical experiment workflows (practical recipes)
+
+### Workflow A: Improve low-dim action quality
+
+1. tune `cfg/agent/transformer_lowdim.yaml` (`beta`, `latent_distribution`, depth/width),
+2. confirm replay alignment in `RobobufReplayBufferLowdim`,
+3. watch `eval/prior_l1`, `eval/posterior_kl`, `eval/sample_diversity`,
+4. inspect fan plots by stiffness label from `BCTask.eval`.
+
+### Workflow B: Improve uncertainty/diversity behavior
+
+1. increase sampling diagnostics (`eval_diversity_num_samples`),
+2. tune categorical latent temperature and KL balance,
+3. compare prior entropy vs posterior entropy trends,
+4. verify multi-sample outputs in rollout scripts.
+
+### Workflow C: Improve observation prediction + goal inference
+
+1. tune `lowdim_obs_mlp` hidden depth/width and `nll_loss_weight`,
+2. ensure target mask correctness in obs-pred buffer,
+3. monitor goal log-likelihood margin and posterior entropy,
+4. inspect per-goal probability trajectories in `ObsPredictionTask` plots.
+
+---
+
+## 14) Where model structure is easiest to inspect
+
+For low-dim action policy:
+
+1. inspect yaml constructor args in `cfg/agent/transformer_lowdim.yaml`,
+2. map to submodules in `LowdimStiffnessCVAEAgent.__init__`,
+3. verify flow in `forward`,
+4. inspect inference methods (`get_actions_prior`, `get_actions_pos`) for rollout behavior.
+
+For obs prediction:
+
+1. inspect `cfg/agent/obs_mlp_gaussian_lowdim.yaml`,
+2. map to `LowdimGaussianObsMLP.__init__`,
+3. inspect `forward` and `infer_goals` for objective and posterior math.
+
+This strategy keeps config, model architecture, and runtime behavior tightly connected during debugging.

@@ -260,3 +260,196 @@ If you shift into obs prediction or goal inference, then additionally prioritize
 - obs-pred task/trainer configs.
 
 That split mirrors the actual active workflows in this codebase.
+
+---
+
+## 9) Method-by-method detail: `lowdim_action_transformer.py`
+
+This section is a denser reference for everyday development.
+
+### Helper math functions
+
+- `_kl_diag_gaussians(...)`: diagonal Gaussian KL per sample.
+- `_kl_categorical(...)`: KL for categorical latent variables over `(num_variables, num_categories)` axes.
+- `_reparameterize(...)`: Gaussian reparameterization trick.
+- `_categorical_entropy(...)`: entropy metric for monitoring latent uncertainty.
+
+### `_PosteriorTransformer` internals
+
+- `action_embed`: projects action dim (`ac_dim=9`) to token dim.
+- `action_pos_embed`: learned position embeddings for each chunk step.
+- `post_cls`: learned summary token for posterior extraction.
+- `encoder`: TransformerEncoder over `[post_cls | context_tokens | action_tokens]`.
+- output head:
+  - Gaussian mode: `mu`, `logvar`
+  - categorical mode: flattened logits reshaped to `(B, n_var, n_cat)`.
+
+### `LowdimStiffnessCVAEAgent` internal subsystems
+
+1. **State grouping and tokenization**
+   - `state_slices` maps semantic state sub-vectors.
+   - per-group encoder MLPs convert flattened windows to token vectors.
+2. **Context encoder**
+   - refines `[cls, pose, vel, wrench, track, stiffness]` tokens.
+3. **Prior network**
+   - either fixed distribution or learned from `z_context` summary.
+4. **Posterior network**
+   - `_PosteriorTransformer` reading context + target action chunk.
+5. **Latent bridge**
+   - optional categorical latent projection, then `z_to_token`.
+6. **Action decoder**
+   - learned query embeddings + transformer decoder + linear action head.
+
+### Most important private methods by purpose
+
+- Input validation: `_prepare_obs`, `_normalize_labels`, `_reshape_actions`
+- Context build: `_build_context_tokens`, `_build_z_context`
+- Latent logic: `_prior`, `_compute_kl`, `_sample_train_latent`, `_sample_latent_batch`, `_prepare_decoder_latent`
+- Decode: `_decode_actions`
+- Monitoring: `_latent_metrics`
+
+### Public training/inference interface
+
+- `forward`: returns a rich loss dict used directly by trainer.
+- `get_actions_base`: deterministic base output (often baseline-like behavior).
+- `get_actions_prior`: multi-sample prior predictions for rollout uncertainty/diversity.
+- `get_actions_pos`: posterior-conditioned reconstruction path.
+- `get_uncertainty_entropy`: uncertainty estimate from action sample dispersion.
+
+---
+
+## 10) Method-by-method detail: `agent.py`
+
+Although not the main low-dim active model file, `agent.py` defines the reusable language many models inherit.
+
+### `_BatchNorm1DHelper`
+
+Convenience wrapper allowing batch-norm use on both `(B,D)` and `(B,T,D)` tensors by transposing when needed.
+
+### `BaseAgent` constructor concepts
+
+- camera feature sharing (`share_cam_features`) vs per-camera copies,
+- observation token strategy (`use_obs`) deciding how state enters token stream,
+- optional projection to `token_dim`,
+- feature norm choice (`batch_norm`, `layer_norm`, identity).
+
+### `tokenize_obs`
+
+This method does more than tokenization:
+
+- computes curriculum scale over global steps,
+- optionally applies blur/downsample in pixel or latent spaces,
+- applies image dropout,
+- appends or concatenates observation-derived representation,
+- runs final post-processing block.
+
+If token statistics look wrong in visual pipelines, start debugging here.
+
+### `embed`
+
+Handles camera/time packing rules:
+
+- early-fusion path,
+- per-time-step embedding path,
+- shared vs per-camera encoders,
+- final token concatenation across cameras.
+
+### `MLPAgent`
+
+Adds shared MLP trunk and policy head on top of flattened tokens.
+Useful as a strong baseline when transformer complexity is unnecessary.
+
+---
+
+## 11) Method-by-method detail: `task_obs_pred.py`
+
+`ObsPredictionTask.eval` is long because it is both evaluator and diagnostics engine.
+
+### What happens each eval batch
+
+1. Move tensors to device.
+2. Run model forward for prediction losses.
+3. Compute tracking error (`compute_tracking_error`) and aggregate masked norms.
+4. If supported, run `infer_goals` for goal posterior metrics.
+5. Collect plotting candidates with episode metadata for timeline-consistent figures.
+
+### Metrics families collected
+
+- prediction fit: sample MSE, mean MSE, NLL-per-element,
+- uncertainty stats: predicted variance,
+- control-relevance: tracking error norm,
+- goal inference quality:
+  - accuracy,
+  - true-goal log-likelihood,
+  - normalized log-likelihood per valid element,
+  - margin vs best competing goal,
+  - posterior entropy,
+  - posterior probability normalization error.
+
+### Plotting pipeline highlights
+
+- selects candidates at configurable stride/max-step,
+- builds trajectory fan plots for predicted observations,
+- collapses chunks into timeline summaries with uncertainty bands,
+- optionally builds goal-by-goal comparison figures.
+
+This makes `task_obs_pred.py` a great source when designing experiment diagnostics.
+
+---
+
+## 12) Method-by-method detail: `lowdim_obs_mlp.py`
+
+### Data contract
+
+Inputs:
+
+- `obs_window`: `(B,W,input_obs_dim)`
+- `action_chunk`: `(B,H,pose_action_dim)`
+- class labels: stiffness and goal
+
+Outputs:
+
+- Gaussian params for each horizon step and observation dimension,
+- optional training losses,
+- optional inferred goal posterior.
+
+### Core internal steps
+
+1. normalize labels to robust class indices,
+2. one-hot encode class conditions,
+3. flatten and concatenate all condition vectors,
+4. MLP predicts `[mean, raw_var]` pairs,
+5. softplus variance floor for stable std,
+6. sample via reparameterized Gaussian distribution.
+
+### Training loss detail
+
+Loss mixes:
+
+- deterministic fit (`mean_mse`) for strong point prediction,
+- small weighted NLL to keep variance head calibrated.
+
+This helps avoid pathological “variance floor collapse” while preserving mean accuracy.
+
+### Goal inference detail
+
+`infer_goals` evaluates every goal class, computes goal-conditioned likelihoods, then combines with optional prior to produce posterior distributions.
+It also exposes posterior-over-time, which is particularly valuable for episode-level interpretability.
+
+---
+
+## 13) Extended comparison table (quick decision aid)
+
+| Axis | `LowdimStiffnessCVAEAgent` | `TransformerAgent` (`action_transformer.py`) |
+|---|---|---|
+| Primary modality | low-dim state windows | image/obs token pipeline |
+| Base class | `nn.Module` (standalone) | `BaseAgent` inheritance |
+| Context tokens | explicit semantic state groups + stiffness | generic tokenized context |
+| Latent family | Gaussian + Categorical | Gaussian |
+| z injection | query bias in decoder target | extra memory token in ACT |
+| Hard shape assumptions | explicit (`obs_dim=27`, `ac_dim=9`) | broader tokenized settings |
+| Active workflow fit | highest for current repo path | legacy/alternate path |
+
+### Practical takeaway
+
+If your dataset is already low-dim and semantically structured (pose/velocity/wrench/tracking), the lowdim model minimizes abstraction mismatch and tends to be easier to debug end-to-end.

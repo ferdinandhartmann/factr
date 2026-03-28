@@ -235,3 +235,196 @@ The active low-dim training pipeline is a clear three-layer system:
 - **CVAE model layer** learns conditional chunk prediction with a structured latent variable.
 
 Understanding those boundaries is the shortest path to productive experimentation in FACTR.
+
+---
+
+## 8) Full tensor lifecycle walkthrough (with concrete shapes)
+
+This section is intentionally explicit so you can mentally simulate one minibatch.
+
+Assume low-dim default configuration:
+
+- `batch_size = B`
+- `obs_window = W = 8`
+- `ac_chunk = T = 30`
+- `obs_dim = 27`
+- `ac_dim = 9`
+
+### 8.1 From replay buffer to trainer
+
+`RobobufReplayBufferLowdim.__getitem__` returns:
+
+- `imgs`: `{}` in low-dim path (kept for interface compatibility)
+- `obs_tensor`: `(W, 27)`
+- `action_tensor`: `(T, 9)`
+- `mask_tensor`: `(T, 9)`
+- `label_tensor`: scalar stiffness class
+
+The dataloader collates to:
+
+- `obs`: `(B, W, 27)`
+- `actions`: `(B, T, 9)`
+- `mask`: `(B, T, 9)`
+- `labels`: `(B,)`
+
+### 8.2 Trainer flattening step
+
+Inside `BehaviorCloning.training_step`:
+
+- `ac_flat = actions.reshape(B, T*9)`
+- `mask_flat = mask.reshape(B, T*9)`
+
+These are passed to model forward for API compatibility with other policy types, then reshaped back inside low-dim model.
+
+### 8.3 Lowdim model internal reshape and split
+
+In `LowdimStiffnessCVAEAgent.forward`:
+
+1. `_reshape_actions(ac_flat)` returns `(B, T, 9)`.
+2. `_build_context_tokens(obs, class_labels)`:
+   - split obs into 4 groups and flatten over `W`,
+   - each group encoder outputs `(B, token_dim)`,
+   - stack into 6 tokens `(B, 6, token_dim)` including cls and stiffness,
+   - transformer encoder keeps `(B, 6, token_dim)`.
+
+### 8.4 Prior/posterior parameterization
+
+- `_build_z_context` makes context vector `(B, context_dim)` depending on mode.
+- `_prior` returns either:
+  - Gaussian: `mu/logvar` each `(B, z_dim)`
+  - Categorical: logits `(B, n_var, n_cat)`
+- `posterior(context, target_actions)` returns same family-shaped parameters.
+
+### 8.5 Decoding
+
+- latent sample `z` becomes `(B, d_z)` (after optional categorical projection),
+- action queries are `(B, T, token_dim)`,
+- decoder output is `(B, T, token_dim)`,
+- `action_head` projects to `(B, T, 9)`.
+
+### 8.6 Loss masking
+
+Both L1 and L2 are computed elementwise over `(B, T, 9)` and multiplied by mask.
+Padding timesteps at trajectory tail carry `mask=0`, so they do not contribute.
+
+---
+
+## 9) Config field deep explanation (what each knob really affects)
+
+Below are the fields most people tune first and what they change in practice.
+
+### 9.1 Structural/time knobs
+
+- `obs_window`: how much recent history context tokens summarize.
+- `ac_chunk`: decoding horizon; larger chunk gives longer open-loop prediction but harder optimization.
+
+### 9.2 Latent knobs
+
+- `latent_distribution`: choose Gaussian vs categorical latent family.
+- `d_z`: latent bottleneck width used by decoder.
+- `beta`: reconstruction-vs-latent regularization tradeoff.
+- `free_bits`: optional KL floor; can prevent “KL to zero” but may hide true KL.
+- `kl_balance_alpha`: asymmetric KL gradient balance between prior and posterior terms.
+
+### 9.3 Capacity knobs
+
+- `token_dim`: token width everywhere (encoders/decoder interfaces).
+- `hidden_dim`: feedforward width in transformer/prior MLP paths.
+- `encoder_layers`, `posterior_layers`, `decoder_layers`: depth allocation across context/posterior/decoder subproblems.
+
+### 9.4 Sampling/diagnostics knobs in task
+
+- `eval_diversity_num_samples`: more samples improve diversity estimate reliability.
+- `sweep_target_min_diversity`: lower bound for diversity target in sweep score.
+- `sweep_target_min_kl`: lower bound for KL target in sweep score.
+
+When tuning, start with **one axis at a time** (e.g., `beta` only), otherwise interpretation becomes noisy.
+
+---
+
+## 10) Checkpoint artifacts and what they are for
+
+During training startup, `train_bc_policy.py` creates a rollout folder inside the run dir and stores:
+
+- `agent_config.yaml`: stripped inference-facing agent config,
+- `exp_config.yaml`: full experiment config,
+- optional copied `rollout_config.yaml` from buffer directory.
+
+This is very useful for deployment reproducibility:
+
+- training config provenance,
+- inference config without accidental restore-path dependencies,
+- easier script-level rollout reproducibility.
+
+---
+
+## 11) Detailed debugging playbook (symptom → likely cause)
+
+### Symptom A: KL is almost zero from early training and stays flat
+
+Likely causes:
+
+- `beta` too high for current decoder capacity,
+- prior/posterior too easy to match,
+- decoder bypassing latent signal.
+
+Actions:
+
+- reduce `beta`,
+- check sample diversity in eval,
+- inspect whether prior/posterior entropy are both very high (uninformative latent).
+
+### Symptom B: Prior L1 bad but posterior L1 good
+
+Likely causes:
+
+- posterior learns quickly from target actions,
+- prior underfit to context.
+
+Actions:
+
+- increase prior/context capacity (`hidden_dim`, context mode),
+- evaluate stiffness-label quality,
+- verify train/test distribution mismatch in buffers.
+
+### Symptom C: Action fan plots collapse to nearly one trajectory
+
+Likely causes:
+
+- latent collapse, categorical temperature too low/high mismatch,
+- over-regularized prior.
+
+Actions:
+
+- inspect `eval/sample_diversity`,
+- tune `categorical_temperature`, `beta`, and KL-balance.
+
+### Symptom D: Sudden spikes or NaNs
+
+Likely causes:
+
+- corrupted data sample,
+- invalid label ranges,
+- aggressive learning rate for current depth.
+
+Actions:
+
+- run a batch-level shape/range sanity print,
+- verify masks are non-zero,
+- reduce LR and monitor gradient norm.
+
+---
+
+## 12) Recommended reading order for new contributors
+
+If you are onboarding and want minimum confusion, read in this exact order:
+
+1. `cfg/train_bc_lowdim.yaml`
+2. `cfg/task/single_franka_lowdim.yaml`
+3. `replay_buffer.py` (`RobobufReplayBufferLowdim` only)
+4. `models/lowdim_action_transformer.py` (`__init__`, then `forward`, then inference methods)
+5. `trainers/bc.py`
+6. `task.py` (`BCTask.eval` metrics)
+7. `train_bc_policy.py`
+
+This order follows data first → model second → training orchestration last.
