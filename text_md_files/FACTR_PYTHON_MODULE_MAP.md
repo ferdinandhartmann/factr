@@ -242,3 +242,51 @@ For obs prediction:
 3. inspect `forward` and `infer_goals` for objective and posterior math.
 
 This strategy keeps config, model architecture, and runtime behavior tightly connected during debugging.
+
+---
+
+## 15) Quick symbol reference appendix
+
+This appendix adds direct symbol references so you can jump from docs to code faster.
+
+### BC/CVAE low-dim runtime symbols
+
+- `factr/train_bc_policy.py::train_bc`
+- `factr/trainers/bc.py::BehaviorCloning.training_step`
+- `factr/task.py::BCTask.eval`
+- `factr/replay_buffer.py::RobobufReplayBufferLowdim.__getitem__`
+- `factr/models/lowdim_action_transformer.py::LowdimStiffnessCVAEAgent.forward`
+
+### Low-dim CVAE inference symbols
+
+- `factr/models/lowdim_action_transformer.py::LowdimStiffnessCVAEAgent.get_actions_base`
+- `factr/models/lowdim_action_transformer.py::LowdimStiffnessCVAEAgent.get_actions_prior`
+- `factr/models/lowdim_action_transformer.py::LowdimStiffnessCVAEAgent.get_actions_pos`
+- `factr/models/lowdim_action_transformer.py::LowdimStiffnessCVAEAgent.get_uncertainty_entropy`
+
+### Obs-pred + goal inference symbols
+
+- `factr/models/lowdim_obs_mlp.py::LowdimGaussianObsMLP.forward`
+- `factr/models/lowdim_obs_mlp.py::LowdimGaussianObsMLP.infer_goals`
+- `factr/models/lowdim_obs_mlp.py::LowdimGaussianObsMLP.compute_goal_posterior`
+- `factr/task_obs_pred.py::ObsPredictionTask.eval`
+- `factr/replay_buffer.py::RobobufReplayBufferObsPredLowdim.__getitem__`
+
+### Legacy comparison symbols
+
+- `factr/models/action_transformer.py::TransformerAgent.forward`
+- `factr/models/action_transformer.py::TransformerAgent.get_actions_prior`
+- `factr/models/action_transformer.py::PriorNet.forward`
+- `factr/models/action_transformer.py::PosteriorNet.forward`
+
+---
+
+## 16) “Read this with that” cross-reference guide
+
+- Read `cfg/agent/transformer_lowdim.yaml` **with** `LowdimStiffnessCVAEAgent.__init__`.
+- Read `cfg/task/single_franka_lowdim.yaml` **with** `RobobufReplayBufferLowdim.__init__` and `BCTask.__init__`.
+- Read `BehaviorCloning.training_step` **with** `LowdimStiffnessCVAEAgent.forward` (train contract).
+- Read `BCTask.eval` **with** `get_actions_prior` (eval sampling contract).
+- Read `obs_mlp_gaussian_lowdim.yaml` **with** `LowdimGaussianObsMLP.__init__` and `ObsPredictionTask.eval`.
+
+These paired reads reduce context switching and make the codebase easier to navigate during experiments.

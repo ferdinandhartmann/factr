@@ -428,3 +428,80 @@ If you are onboarding and want minimum confusion, read in this exact order:
 7. `train_bc_policy.py`
 
 This order follows data first → model second → training orchestration last.
+
+---
+
+## 13) Direct code-reference index (jump table)
+
+Use these symbol references to jump directly into the implementation while reading this doc.
+
+### Training orchestration
+
+- `factr/train_bc_policy.py::train_bc`
+- `factr/train_bc_policy.py::torch_fix_seed`
+- `factr/train_bc_policy.py::_grad_l2_norm`
+
+### Training step contract
+
+- `factr/trainers/bc.py::BehaviorCloning.training_step`
+- `factr/trainers/base.py::BaseTrainer.log`
+- `factr/trainers/base.py::BaseTrainer.consume_wandb_payload`
+
+### Data construction and episode alignment
+
+- `factr/replay_buffer.py::RobobufReplayBufferLowdim.__init__`
+- `factr/replay_buffer.py::RobobufReplayBufferLowdim._build_episodes`
+- `factr/replay_buffer.py::RobobufReplayBufferLowdim._append_episode_samples`
+- `factr/replay_buffer.py::RobobufReplayBufferLowdim.__getitem__`
+- `factr/replay_buffer.py::RobobufReplayBufferLowdim.get_sample_metadata`
+
+### Eval pipeline
+
+- `factr/task.py::BCTask.eval`
+- `factr/task.py::BCTask._predict_actions`
+- `factr/task.py::BCTask._sample_actions_for_plot`
+- `factr/task.py::_compute_sample_diversity`
+- `factr/task.py::_select_episode_plot_candidates`
+
+### Low-dim CVAE model internals
+
+- `factr/models/lowdim_action_transformer.py::LowdimStiffnessCVAEAgent.__init__`
+- `factr/models/lowdim_action_transformer.py::LowdimStiffnessCVAEAgent.forward`
+- `factr/models/lowdim_action_transformer.py::LowdimStiffnessCVAEAgent._build_context_tokens`
+- `factr/models/lowdim_action_transformer.py::LowdimStiffnessCVAEAgent._build_z_context`
+- `factr/models/lowdim_action_transformer.py::LowdimStiffnessCVAEAgent._prior`
+- `factr/models/lowdim_action_transformer.py::LowdimStiffnessCVAEAgent._compute_kl`
+- `factr/models/lowdim_action_transformer.py::LowdimStiffnessCVAEAgent._decode_actions`
+- `factr/models/lowdim_action_transformer.py::LowdimStiffnessCVAEAgent.get_actions_prior`
+- `factr/models/lowdim_action_transformer.py::LowdimStiffnessCVAEAgent.get_actions_pos`
+- `factr/models/lowdim_action_transformer.py::_PosteriorTransformer.forward`
+
+### Config wiring references
+
+- `factr/cfg/train_bc_lowdim.yaml`
+- `factr/cfg/agent/transformer_lowdim.yaml`
+- `factr/cfg/task/single_franka_lowdim.yaml`
+- `factr/cfg/trainer/adamw_cos_lowdim.yaml`
+
+---
+
+## 14) Trace-by-trace code reading recipe (with exact function order)
+
+When you want to explain one gradient step from source code, follow this exact function chain:
+
+1. `train_bc_policy.py::train_bc`
+2. `BehaviorCloning.training_step`
+3. `LowdimStiffnessCVAEAgent.forward`
+4. `LowdimStiffnessCVAEAgent._build_context_tokens`
+5. `LowdimStiffnessCVAEAgent._prior`
+6. `_PosteriorTransformer.forward`
+7. `LowdimStiffnessCVAEAgent._decode_actions`
+8. `LowdimStiffnessCVAEAgent._compute_kl`
+9. return to `BehaviorCloning.training_step` for logging
+10. back to `train_bc_policy.py::train_bc` for optimizer/scheduler/eval/checkpoint
+
+For eval-time prior sampling path, replace steps 3-8 with:
+
+- `BCTask._predict_actions` → `LowdimStiffnessCVAEAgent.get_actions_prior` → `LowdimStiffnessCVAEAgent._sample_latent_batch` → `LowdimStiffnessCVAEAgent._decode_actions`.
+
+This gives you a precise path for walkthroughs, code reviews, and debugging sessions.

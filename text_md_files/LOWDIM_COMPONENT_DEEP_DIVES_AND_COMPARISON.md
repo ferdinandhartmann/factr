@@ -453,3 +453,92 @@ It also exposes posterior-over-time, which is particularly valuable for episode-
 ### Practical takeaway
 
 If your dataset is already low-dim and semantically structured (pose/velocity/wrench/tracking), the lowdim model minimizes abstraction mismatch and tends to be easier to debug end-to-end.
+
+---
+
+## 14) Additional code-reference map (requested)
+
+Below is a compact reference map you can use while reading source side-by-side.
+
+### `factr/models/lowdim_action_transformer.py`
+
+- `_PosteriorTransformer.__init__` / `_PosteriorTransformer.forward`
+- `LowdimStiffnessCVAEAgent.__init__`
+- `LowdimStiffnessCVAEAgent._prepare_obs`
+- `LowdimStiffnessCVAEAgent._build_context_tokens`
+- `LowdimStiffnessCVAEAgent._build_z_context`
+- `LowdimStiffnessCVAEAgent._prior`
+- `LowdimStiffnessCVAEAgent._compute_kl`
+- `LowdimStiffnessCVAEAgent._sample_train_latent`
+- `LowdimStiffnessCVAEAgent._sample_latent_batch`
+- `LowdimStiffnessCVAEAgent._prepare_decoder_latent`
+- `LowdimStiffnessCVAEAgent._decode_actions`
+- `LowdimStiffnessCVAEAgent.forward`
+- `LowdimStiffnessCVAEAgent.get_actions_base`
+- `LowdimStiffnessCVAEAgent.get_actions_prior`
+- `LowdimStiffnessCVAEAgent.get_actions_pos`
+- `LowdimStiffnessCVAEAgent.get_uncertainty_entropy`
+
+### `factr/agent.py`
+
+- `BaseAgent.__init__`
+- `BaseAgent.tokenize_obs`
+- `BaseAgent.embed`
+- `MLPAgent.__init__`
+- `MLPAgent._mlp_forward`
+- `MLPAgent.forward`
+- `MLPAgent.get_actions`
+
+### `factr/task_obs_pred.py`
+
+- `ObsPredictionTask.__init__`
+- `ObsPredictionTask.eval`
+- `_build_eval_obs_fan_figure`
+- `_stack_obs_plot_candidates`
+- `_select_episode_plot_candidates`
+- `_select_goal_examples_candidates`
+- `_build_goal_examples_by_label_figure`
+
+### `factr/models/lowdim_obs_mlp.py`
+
+- `LowdimGaussianObsMLP.__init__`
+- `LowdimGaussianObsMLP._build_features`
+- `LowdimGaussianObsMLP._predict_distribution`
+- `LowdimGaussianObsMLP.forward`
+- `LowdimGaussianObsMLP.gaussian_log_likelihood`
+- `LowdimGaussianObsMLP.compute_goal_posterior`
+- `LowdimGaussianObsMLP.compute_goal_posterior_over_time`
+- `LowdimGaussianObsMLP.infer_goals`
+- `LowdimGaussianObsMLP.compute_tracking_error`
+
+### Comparison target references (`factr/models/action_transformer.py`)
+
+- `_ACT.forward`
+- `PriorNet.forward`
+- `PosteriorNet.forward`
+- `TransformerAgent.__init__`
+- `TransformerAgent.forward`
+- `TransformerAgent.get_actions_prior`
+- `TransformerAgent.get_actions_pos`
+- `TransformerAgent.get_uncertainty_entropy`
+
+---
+
+## 15) “If you change X, read Y” reference pairs
+
+- If you change **obs grouping or state semantics** in lowdim action policy:
+  - read `LowdimStiffnessCVAEAgent.state_slices`, `_build_context_tokens`, `_build_z_context`.
+
+- If you change **latent regularization behavior**:
+  - read `_compute_kl`, `_apply_free_bits`, `_latent_metrics`, and eval metrics inside `BCTask.eval`.
+
+- If you change **sampling behavior / uncertainty**:
+  - read `_sample_latent_batch`, `get_actions_prior`, `get_uncertainty_entropy`, and task diversity metric `_compute_sample_diversity`.
+
+- If you change **obs prediction loss**:
+  - read `LowdimGaussianObsMLP.forward`, `gaussian_log_likelihood`, and `ObsPredictionTask.eval` metric aggregation.
+
+- If you change **goal inference math**:
+  - read `infer_goals`, `compute_goal_posterior`, `compute_goal_posterior_over_time`, and goal plotting helpers in `task_obs_pred.py`.
+
+This section is intended as a practical bridge between architecture ideas and the exact code locations where those ideas are implemented.
