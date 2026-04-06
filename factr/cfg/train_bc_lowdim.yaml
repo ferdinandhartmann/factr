@@ -29,6 +29,7 @@ resume: false
 
 ac_chunk: 30
 obs_window: 8
+stiffness_classes: 3
 train_transform: none
 test_transform: none
 

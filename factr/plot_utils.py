@@ -484,7 +484,6 @@ def build_pose_fan_figure(
     stiffness_label: Optional[int] = None,
     global_step: Optional[int] = None,
     title: Optional[str] = None,
-    plot_ground_truth_h0: bool = True,
     plot_ground_truth_reconstructed: bool = False,
     rpy_config: RPYPlotConfig = DEFAULT_RPY_PLOT_CONFIG,
 ):
@@ -578,16 +577,6 @@ def build_pose_fan_figure(
                     alpha=0.2,
                 )
 
-        if plot_ground_truth_h0:
-            ax.plot(
-                source_time_index[:anchor_steps],
-                true_action_chunks[:anchor_steps, 0, dim],
-                color="black",
-                linewidth=1.0,
-                label="ground_truth" if dim == 0 else None,
-                zorder=11,
-            )
-
         if plot_ground_truth_reconstructed and len(true_times) > 0:
             vals = np.asarray([true_by_time[t][dim] for t in true_times], dtype=np.float32)
             ax.plot(
@@ -595,7 +584,7 @@ def build_pose_fan_figure(
                 vals,
                 color="black",
                 linewidth=1.0,
-                label="ground_truth" if dim == 0 and not plot_ground_truth_h0 else None,
+                label="ground_truth" if dim == 0 else None,
                 zorder=10,
             )
 

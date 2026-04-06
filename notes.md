@@ -34,7 +34,25 @@ include = '\.pyi?$'
 
 extend-exclude = '/(\.git|\.hg|\.mypy_cache|\.tox|\.venv|build|dist)/'
 
-
+####################
+modified:   factr/cfg/agent/transformer_lowdim.yaml
+modified:   factr/cfg/task/single_franka_lowdim.yaml
+modified:   factr/cfg/train_bc_lowdim.yaml
+modified:   factr/cfg/train_obs_pred_lowdim.yaml
+modified:   factr/models/lowdim_action_transformer.py
+modified:   factr/plot_utils.py
+modified:   factr/replay_buffer.py
+modified:   factr/task.py
+modified:   factr/task_obs_pred.py
+modified:   notes.md
+modified:   process_data/all_in_one_plot.py
+modified:   process_data/cfg/default.yaml
+modified:   process_data/check_buffer_pkl_print.py
+modified:   process_data/check_buffer_plot.py
+modified:   process_data/process_data.py
+modified:   process_data/rename.py
+modified:   scripts/eval_single_episode_lowdim.py
+modified:   scripts/eval_z_distr.py
 
 
 

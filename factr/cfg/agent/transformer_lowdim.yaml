@@ -7,7 +7,7 @@ ac_dim: ${task.ac_dim}
 ac_chunk: ${ac_chunk}
 obs_window: ${obs_window}
 
-stiffness_classes: 3
+stiffness_classes: ${stiffness_classes}
 
 # --- Model size knobs ---
 # token_dim: embedding width of every transformer token

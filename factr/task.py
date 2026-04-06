@@ -15,6 +15,8 @@ from factr.plot_utils import (
     RPYPlotConfig,
     build_pose_comparison_figure,
     build_pose_fan_figure,
+)
+from factr.plot_utils import (
     make_pose_dim_names as _shared_make_pose_dim_names,
 )
 from factr.replay_buffer import IterableWrapper
@@ -123,7 +125,6 @@ def _build_eval_trajectory_fan_figure(
         max_plot_steps=int(max_steps),
         stiffness_label=stiffness_label,
         global_step=global_step,
-        plot_ground_truth_h0=False,
         plot_ground_truth_reconstructed=True,
         rpy_config=rpy_cfg,
     )
@@ -277,6 +278,7 @@ class DefaultTask:
         sweep_target_min_kl: float = 0.5,
         sweep_diversity_penalty: float = 2.0,
         sweep_kl_penalty: float = 0.05,
+        stiffness_classes: int = 3,
     ):
         self.n_cams, self.obs_dim, self.ac_dim = n_cams, obs_dim, ac_dim
         self.train_loader = _build_data_loader(train_buffer, batch_size, num_workers, is_train=True)
@@ -289,9 +291,7 @@ class DefaultTask:
         self.sweep_target_min_kl = max(0.0, float(sweep_target_min_kl))
         self.sweep_diversity_penalty = max(0.0, float(sweep_diversity_penalty))
         self.sweep_kl_penalty = max(0.0, float(sweep_kl_penalty))
-        self.stiffness_classes = int(
-            getattr(train_buffer, "stiffness_classes", getattr(test_buffer, "stiffness_classes", 3))
-        )
+        self.stiffness_classes = max(1, int(stiffness_classes))
 
         self.weights_history = []
         self.weights_steps = []
@@ -498,10 +498,8 @@ class BCTask(DefaultTask):
         mean_sample_diversity = np.mean(sample_diversity_vals) if sample_diversity_vals else float("nan")
         ac_l2 = np.mean(action_l2)
         ac_lsig = np.mean(action_lsig)
-        l2_per_joint_mean = np.mean(np.stack(l2_per_joint_all, axis=0), axis=0)
-        chunk_mse_mean = np.mean(np.stack(chunk_mse_all, axis=0), axis=0) if chunk_mse_all else None
 
-        # For Sweeping 
+        # For Sweeping
         diversity_gap = (
             max(0.0, self.sweep_target_min_diversity - float(mean_sample_diversity))
             if np.isfinite(mean_sample_diversity)
@@ -617,52 +615,51 @@ class BCTask(DefaultTask):
                     #     plt.close(fig_fan_all)
 
                 if generate_plots:
+                    plot_candidates = plot_candidates or []
                     available_labels = sorted({int(item["stiffness_label"]) for item in plot_candidates})
-                else:
-                    available_labels = []
 
-                for stiffness_label in range(1, self.stiffness_classes + 1):
-                    label_candidates = [
-                        item for item in plot_candidates if int(item["stiffness_label"]) == int(stiffness_label)
-                    ]
-                    selected_stiff_candidates = _select_episode_plot_candidates(
-                        label_candidates,
-                        max_steps=self.eval_plot_max_steps,
-                    )
-                    if len(selected_stiff_candidates) == 0:
-                        fig_missing = _build_missing_stiffness_figure(
-                            stiffness_label=stiffness_label,
-                            available_labels=available_labels,
+                    for stiffness_label in range(1, self.stiffness_classes + 1):
+                        label_candidates = [
+                            item for item in plot_candidates if int(item["stiffness_label"]) == int(stiffness_label)
+                        ]
+                        selected_stiff_candidates = _select_episode_plot_candidates(
+                            label_candidates,
+                            max_steps=self.eval_plot_max_steps,
                         )
-                        if fig_missing is not None:
+                        if len(selected_stiff_candidates) == 0:
+                            fig_missing = _build_missing_stiffness_figure(
+                                stiffness_label=stiffness_label,
+                                available_labels=available_labels,
+                            )
+                            if fig_missing is not None:
+                                wandb.log(
+                                    {f"eval/prior_fan_stiffness_{int(stiffness_label)}": wandb.Image(fig_missing)},
+                                    step=global_step,
+                                )
+                                plt.close(fig_missing)
+                            continue
+
+                        stiff_bundle = _stack_plot_candidates(selected_stiff_candidates, device=trainer.device_id)
+                        sampled_actions_stiff = self._sample_actions_for_plot(
+                            model=model,
+                            imgs=stiff_bundle["imgs"],
+                            obs=stiff_bundle["obs"],
+                            labels=stiff_bundle["labels"],
+                            num_samples=self.eval_plot_num_samples,
+                        )
+                        sampled_actions_stiff = sampled_actions_stiff.detach().cpu().numpy()
+                        fig_stiff = _build_eval_trajectory_fan_figure(
+                            true_action_chunks=stiff_bundle["actions"].detach().cpu().numpy(),
+                            pred_action_chunks=sampled_actions_stiff,
+                            mask_chunks=stiff_bundle["mask"].detach().cpu().numpy(),
+                            max_steps=self.eval_plot_max_steps,
+                            stiffness_label=int(stiffness_label),
+                            source_time_index=stiff_bundle["time_index"],
+                            global_step=global_step,
+                        )
+                        if fig_stiff is not None:
                             wandb.log(
-                                {f"eval/prior_fan_stiffness_{int(stiffness_label)}": wandb.Image(fig_missing)},
+                                {f"eval/prior_fan_stiffness_{int(stiffness_label)}": wandb.Image(fig_stiff)},
                                 step=global_step,
                             )
-                            plt.close(fig_missing)
-                        continue
-
-                    stiff_bundle = _stack_plot_candidates(selected_stiff_candidates, device=trainer.device_id)
-                    sampled_actions_stiff = self._sample_actions_for_plot(
-                        model=model,
-                        imgs=stiff_bundle["imgs"],
-                        obs=stiff_bundle["obs"],
-                        labels=stiff_bundle["labels"],
-                        num_samples=self.eval_plot_num_samples,
-                    )
-                    sampled_actions_stiff = sampled_actions_stiff.detach().cpu().numpy()
-                    fig_stiff = _build_eval_trajectory_fan_figure(
-                        true_action_chunks=stiff_bundle["actions"].detach().cpu().numpy(),
-                        pred_action_chunks=sampled_actions_stiff,
-                        mask_chunks=stiff_bundle["mask"].detach().cpu().numpy(),
-                        max_steps=self.eval_plot_max_steps,
-                        stiffness_label=int(stiffness_label),
-                        source_time_index=stiff_bundle["time_index"],
-                        global_step=global_step,
-                    )
-                    if fig_stiff is not None:
-                        wandb.log(
-                            {f"eval/prior_fan_stiffness_{int(stiffness_label)}": wandb.Image(fig_stiff)},
-                            step=global_step,
-                        )
-                        plt.close(fig_stiff)
+                            plt.close(fig_stiff)

@@ -3,6 +3,7 @@ obs_dim: 27
 ac_dim: 9
 cam_indexes: []
 n_cams: ${len:${task.cam_indexes}}
+stiffness_classes: ${stiffness_classes}
 eval_plot_max_steps: 400
 eval_plot_prediction_stride: 25
 eval_plot_num_samples: 10
@@ -27,7 +28,7 @@ train_buffer:
   pose_action_dim: ${task.ac_dim}
   action_index_offset: 0
   include_goals: False
-  stiffness_classes: 3
+  stiffness_classes: ${task.stiffness_classes}
   shuffle: True
 
 test_buffer:
@@ -42,5 +43,5 @@ test_buffer:
   pose_action_dim: ${task.ac_dim}
   action_index_offset: 0
   include_goals: False
-  stiffness_classes: 3
+  stiffness_classes: ${task.stiffness_classes}
   shuffle: False

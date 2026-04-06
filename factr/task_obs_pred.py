@@ -61,7 +61,6 @@ def _build_eval_obs_fan_figure(
         max_plot_steps=int(max_steps),
         stiffness_label=stiffness_label,
         global_step=global_step,
-        plot_ground_truth_h0=False,
         plot_ground_truth_reconstructed=True,
         rpy_config=rpy_cfg,
     )

@@ -517,12 +517,11 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         return None, None, prior_entropy, posterior_entropy
 
     def _decode_actions(self, context_tokens, z):
-        z_query_bias = self.z_to_token(z).unsqueeze(1)
+        z_token = self.z_to_token(z).unsqueeze(1)
+        # Inject z as a dedicated memory token so each action step can attend to it via cross-attention.
+        memory = torch.cat([z_token, context_tokens], dim=1)
         target_queries = self.action_queries.weight.unsqueeze(0).expand(context_tokens.shape[0], -1, -1)
-        target_queries = (
-            target_queries + z_query_bias
-        )  ### Here z is added as a bias to the action queries, allowing the latent variable to influence the decoding of actions based on the context tokens.
-        decoded = self.decoder(tgt=target_queries, memory=context_tokens)
+        decoded = self.decoder(tgt=target_queries, memory=memory)
         return self.action_head(decoded)
 
     def _reshape_actions(self, action_tensor):
@@ -563,7 +562,7 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         return {
             "total_loss": total_loss,
             "l1_loss": recon,
-            "l2_loss": recon_l2,
+            # "l2_loss": recon_l2,
             "kl": kl,
             "prior_std_mean": prior_std_mean,
             "posterior_std_mean": posterior_std_mean,
