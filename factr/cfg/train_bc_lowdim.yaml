@@ -11,10 +11,10 @@ hydra:
     env_set:
       CUDA_VISIBLE_DEVICES: "1"
 
-buffer_path: /home/ferdinand/activeinference/factr/process_data/processed_data/fourgoals_2_stiff/buf_train.pkl
-test_buffer_path: /home/ferdinand/activeinference/factr/process_data/processed_data/fourgoals_2_stiff/buf_test.pkl
+buffer_path: /home/ferdinand/activeinference/factr/process_data/processed_data/fourgoals_2_stiff2/buf_train.pkl
+test_buffer_path: /home/ferdinand/activeinference/factr/process_data/processed_data/fourgoals_2_stiff2/buf_test.pkl
 
-exp_base_name: aiact_categ_n_3
+exp_base_name: aiact_categ_n_4_stiff_b005
 suffix: _
 exp_name: ${exp_base_name}
 

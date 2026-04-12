@@ -805,10 +805,12 @@ def main(cfg: DictConfig):
         # 'camera_topics': rgb_obs_topics,
     }
     if stiffness_label_topic:
+        # number of classes = number of thresholds + 1; if no thresholds -> single class
+        classes = list(range(1, len(stiffness_norm_thresholds) + 2))
         obs_config["stiffness_label"] = {
             "topic": stiffness_label_topic,
             "key": stiffness_label_key,
-            "classes": [1, 2, 3],
+            "classes": classes,
             "norm_thresholds": stiffness_norm_thresholds,
         }
     processing_config = {

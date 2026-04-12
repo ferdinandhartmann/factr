@@ -26,49 +26,45 @@ if str(PROJECT_ROOT) not in sys.path:
 # ---------------------------------------------------------------------------
 # User Config (edit these variables, then run this script directly)
 # ---------------------------------------------------------------------------
-RUN_NAME = "aiact_categ_n_2"
+RUN_NAME = "aiact_categ_n_4_stiff"
+BUFFER_BASE_NAME = "fourgoals_2_stiff2"
 RUN_DIR = Path.home() / "activeinference" / "factr" / "checkpoints" / RUN_NAME / "rollout"
 CHECKPOINT_NAME = "latest_ckpt.ckpt"
 
 # Raw episode source
 RAW_EPISODE_DIR = Path.home() / "activeinference" / "factr" / "process_data" / "data_to_process" / "fourgoals_2_stiff" / "data"
-EPISODE_FILE_NAME = "ep_34_stiff.pkl"
+EPISODE_FILE_NAME = "ep_50_stiff.pkl"
 EPISODE_INDEX = 0  # index in sorted *.pkl files
 USE_EPISODE_LIST = False
 EPISODE_LIST = [
-    "ep_03_soft",
-    "ep_13_stiff",
-    "ep_13_soft",
-    "ep_15_stiff",
+    "ep_06_stiff",
     "ep_20_stiff",
-    "ep_28_soft",
-    "ep_34_stiff",
-    "ep_42_stiff",
-    "ep_43_stiff",
-    "ep_49_soft",
-    "ep_57_soft",
-    "ep_58_stiff",
+    "ep_21_stiff",
+    "ep_25_stiff",
+    "ep_29_stiff",
+    "ep_50_stiff",
 ]
 
 LIST_EPISODES_ONLY = False
 
-BUFFER_PATH_OVERRIDE = Path.home() / "activeinference" / "factr" / "process_data" / "processed_data" / "fourgoals_2_stiff" / "buf_test.pkl"
-ROLLOUT_CONFIG_OVERRIDE = Path.home() / "activeinference" / "factr" / "process_data" / "processed_data" / "fourgoals_2_stiff" / "rollout_config.yaml"
+BUFFER_PATH_OVERRIDE = Path.home() / "activeinference" / "factr" / "process_data" / "processed_data" / BUFFER_BASE_NAME / "buf_test.pkl"
+ROLLOUT_CONFIG_OVERRIDE = Path.home() / "activeinference" / "factr" / "process_data" / "processed_data" / BUFFER_BASE_NAME / "rollout_config.yaml"
 
-NUM_SAMPLES = 20
+NUM_SAMPLES = 30
 ACTION_SOURCE = "prior"  # one of: prior, posterior
 NORMALIZATION_MODE = "apply"  # one of: auto, apply, skip
-PREDICTION_STRIDE = 50  # stride for fan plot + 3d plot
-SAMPLE_ANCHOR_STEP = -1  # -1 means middle step
+PREDICTION_STRIDE = 25  # stride for fan plot + 3d plot
 VIEW_ELEV = 24
 VIEW_AZIM = -60
 SHOW_PLOT = False  # shows also 3d plot
 ENABLE_TRAIN_BACKGROUND = True
-TRAIN_BACKGROUND_MAX_TRAJ = 200
-TRAIN_BACKGROUND_ONLY_MEDIUM = True
+TRAIN_BACKGROUND_ONLY_MEDIUM = False
 RPY_SUBTRACT_PI = True  # If True, subtract pi from one selected RPY axis for plotting.
 RPY_SUBTRACT_PI_AXIS = 0  # 0=roll, 1=pitch, 2=yaw
 RPY_PLOT_UNIT = "deg"  # "rad" or "deg"
+PLOT_GEODESIC_SUBPLOT = False
+
+GPU_ID = 2
 
 GLOBAL_AXIS_LIMITS = {
     "x": (0.2, 0.6),
@@ -82,7 +78,6 @@ GOAL_FRAMES = [
     # {"name": "goal 2", "pose": [0.656, -0.155, -0.023, 0.996, -0.054, 0.065, -0.057, -0.997, 0.045]},
     # {"name": "goal 3", "pose": [0.51, 0.269, -0.028, -0.015, 1.0, -0.027, 1.0, 0.015, 0.013]},
     # {"name": "goal 4", "pose": [0.466, 0.361, 0.48, 0.998, 0.056, 0.032, 0.034, -0.034, -0.999]},
-    
     # fourgoals_2
     {"name": "goal 1", "pose": [0.341, 0.240, 0.606, 0.999, -0.007, 0.013, -0.007, -1.000, -0.010]},  # 33
     {"name": "goal 2", "pose": [0.524, 0.226, 0.381, 1.000, 0.013, 0.025, 0.013, -1.000, 0.004]},  # 27
@@ -279,8 +274,9 @@ def _sync_data_slowest(raw_data, topics: List[str]):
 
 
 def _stiffness_vec_to_class(stiffness_vec, thresholds: Optional[List[float]]) -> int:
+    # Honor rollout-config behavior: empty thresholds means single-class label 1.
     if not thresholds:
-        thresholds = [200.0, 1000.0]
+        return 1
 
     norm = float(np.linalg.norm(np.asarray(stiffness_vec, dtype=np.float32)))
     if not np.isfinite(norm):
@@ -314,8 +310,6 @@ def _load_raw_episode_to_arrays(episode_file: Path, rollout_cfg) -> Dict:
     stiffness_topic = stiffness_info.get("topic", None)
     stiffness_key = stiffness_info.get("key", "stiffness")
     stiffness_thresholds = stiffness_info.get("norm_thresholds")
-    if not stiffness_thresholds:
-        stiffness_thresholds = [200.0, 1000.0]
 
     topics_for_sync = list(state_topics) + [action_topic]
     if stiffness_topic:
@@ -599,6 +593,7 @@ def _build_pose_figure_with_measured(true_actions, pred_actions, measured_pose, 
         mask=mask,
         title=title,
         measured_values=measured_pose,
+        plot_geodesic_subplot=bool(PLOT_GEODESIC_SUBPLOT),
         rpy_config=rpy_cfg,
     )
 
@@ -627,8 +622,12 @@ def _build_fan_figure_with_measured(
         measured_pose=measured_pose,
         background_actions=background_actions,
         max_plot_steps=None,
-        title=(f"Sampled {_action_source_title(action_source)} Fan + Measured Pose (full episode, stride={max(1, int(prediction_stride))})"),
-        plot_ground_truth_reconstructed=False,
+        title=(
+            f"Sampled {_action_source_title(action_source)} Fan + Measured Pose + Ground-Truth Command Pose "
+            f"(full episode, stride={max(1, int(prediction_stride))})"
+        ),
+        plot_ground_truth_reconstructed=True,
+        plot_geodesic_subplot=bool(PLOT_GEODESIC_SUBPLOT),
         rpy_config=rpy_cfg,
     )
 
@@ -766,7 +765,7 @@ def _build_3d_pose_figure(
     anchor_colors = plt.cm.rainbow(np.linspace(0.0, 1.0, max(1, len(anchor_idx))))
     for anchor_pos, t_idx in enumerate(anchor_idx):
         c_t = anchor_colors[anchor_pos]
-        _draw_frame_dimmed(ax, gt_pose_first[t_idx], axis_len=axis_len * 1.2, alpha=0.9, lw=1.2, dim=0.5)
+        _draw_frame_dimmed(ax, gt_pose_first[t_idx], axis_len=axis_len * 0.8, alpha=0.8, lw=1.0, dim=0.5)
         for s_idx in range(num_samples):
             traj = sampled_pose_chunks[t_idx, s_idx, :, :3]
             ax.plot(
@@ -778,8 +777,8 @@ def _build_3d_pose_figure(
                 alpha=0.9,
                 label=f"{action_source}_samples" if (anchor_pos == 0 and s_idx == 0) else None,
             )
-            _draw_frame(ax, sampled_pose_chunks[t_idx, s_idx, 0], axis_len=axis_len * 0.7, alpha=0.8, lw=0.6)
-            _draw_frame(ax, sampled_pose_chunks[t_idx, s_idx, -1], axis_len=axis_len * 0.7, alpha=0.8, lw=0.6)
+            _draw_frame(ax, sampled_pose_chunks[t_idx, s_idx, 0], axis_len=axis_len * 0.3, alpha=0.6, lw=0.6)
+            _draw_frame(ax, sampled_pose_chunks[t_idx, s_idx, -1], axis_len=axis_len * 0.3, alpha=0.6, lw=0.6)
 
     x_min, x_max = GLOBAL_AXIS_LIMITS["x"]
     y_min, y_max = GLOBAL_AXIS_LIMITS["y"]
@@ -930,8 +929,6 @@ def main():
         train_buf_path = _resolve_train_buffer_path(rollout_cfg, buffer_path)
         if train_buf_path.exists():
             train_background = _load_train_buffer_actions(train_buf_path)
-            if TRAIN_BACKGROUND_MAX_TRAJ > 0:
-                train_background = train_background[: int(TRAIN_BACKGROUND_MAX_TRAJ)]
             if action_stats is not None:
                 train_background = [_apply_grouped_transform(traj, action_stats, inverse=True) for traj in train_background]
             print(f"Loaded train background trajectories: {len(train_background)} | {train_buf_path}")
@@ -964,7 +961,17 @@ def main():
         obs_norm, obs_applied = _ensure_normalized(obs_arr, state_stats, NORMALIZATION_MODE, "state")
         actions_norm, action_applied = _ensure_normalized(actions_arr, action_stats, NORMALIZATION_MODE, "action")
 
-        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        # Select device based on GPU_ID and CUDA availability
+        if torch.cuda.is_available() and GPU_ID is not None:
+            device = torch.device(f"cuda:{int(GPU_ID)}")
+            try:
+                torch.cuda.set_device(int(GPU_ID))
+            except Exception:
+                pass
+        elif torch.cuda.is_available():
+            device = torch.device("cuda:0")
+        else:
+            device = torch.device("cpu")
         model = _load_model(cfg, ckpt_path, device)
 
         metrics, pred_det_norm, pred_samples_norm = _summarize_metrics(
@@ -1014,18 +1021,18 @@ def main():
             f"post_H={metrics['posterior_entropy']:.4f}"
         )
 
-        fig_pose = _build_pose_figure_with_measured(
-            true_actions=true_first,
-            pred_actions=pred_first,
-            measured_pose=measured_first,
-            mask=mask_first,
-            title=f"Episode {episode_file.name} | Ground Truth vs {action_source_title} Prediction vs Measured Pose",
-        )
-        if fig_pose is not None:
-            pose_path = out_dir / f"{episode_file.stem}_pred_firststeps.png"
-            fig_pose.savefig(pose_path, dpi=300, bbox_inches="tight")
-            print(f"Saved: {pose_path}")
-            plt.close(fig_pose)
+        # First Steps Figure
+        # fig_pose = _build_pose_figure_with_measured(
+        #     true_actions=true_first,
+        #     pred_actions=pred_first,
+        #     measured_pose=measured_first,
+        #     mask=mask_first,
+        #     title=f"Episode {episode_file.name} | Ground Truth vs {action_source_title} Prediction vs Measured Pose",
+        # )
+        # pose_path = out_dir / f"{episode_file.stem}_pred_firststeps.png"
+        # fig_pose.savefig(pose_path, dpi=300, bbox_inches="tight")
+        # print(f"Saved: {pose_path}")
+        # plt.close(fig_pose)
 
         fig_fan = _build_fan_figure_with_measured(
             true_action_chunks=actions_denorm[:, :, :pose_dim],
@@ -1039,14 +1046,10 @@ def main():
             if (ENABLE_TRAIN_BACKGROUND and train_background) and (not TRAIN_BACKGROUND_ONLY_MEDIUM or "medium" in episode_name)
             else None,
         )
-        if fig_fan is not None:
-            fan_path = out_dir / f"{episode_file.stem}_predictions.png"
-            fig_fan.savefig(fan_path, dpi=300, bbox_inches="tight")
-            print(f"Saved: {fan_path}")
+        fan_path = out_dir / f"{episode_file.stem}_predictions.png"
+        fig_fan.savefig(fan_path, dpi=300, bbox_inches="tight")
+        print(f"Saved: {fan_path}")
 
-        sample_anchor_step = int(SAMPLE_ANCHOR_STEP)
-        if sample_anchor_step < 0:
-            sample_anchor_step = len(steps_arr) // 2
         if pose_dim >= 9:
             fig_3d = _build_3d_pose_figure(
                 measured_pose_first=measured_first,

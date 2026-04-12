@@ -51,31 +51,26 @@ except Exception:
 # ---------------------------------------------------------------------------
 # User Config (edit these variables, then run this script directly)
 # ---------------------------------------------------------------------------
-RUN_NAME = "aiact_categ_n_2"
+RUN_NAME = "aiact_categ_n_4_stiff"
 RUN_DIR = Path.home() / "activeinference" / "factr" / "checkpoints" / RUN_NAME / "rollout"
 CHECKPOINT_NAME = "latest_ckpt.ckpt"  # or "ckpt_020000.ckpt"
 
 RAW_EPISODE_DIR = Path("/home/ferdinand/activeinference/factr/process_data/data_to_process/fourgoals_2_stiff/data")
 
 USE_EPISODE_LIST = False
-EPISODE_FILE_NAME = "ep_34_stiff.pkl"
+EPISODE_FILE_NAME = "ep_50_stiff.pkl"
 EPISODE_LIST = [
-    "ep_03_soft",
-    "ep_13_stiff",
-    "ep_13_soft",
-    "ep_15_stiff",
+    "ep_06_stiff",
     "ep_20_stiff",
-    "ep_28_soft",
-    "ep_34_stiff",
-    "ep_42_stiff",
-    "ep_43_stiff",
-    "ep_49_soft",
-    "ep_57_soft",
-    "ep_58_stiff",
+    "ep_21_stiff",
+    "ep_25_stiff",
+    "ep_29_stiff",
+    "ep_50_stiff",
 ]
 
-GPU_ID = 0
-SAVE_DIR_OVERRIDE = Path.home() / "activeinference/factr/plots" / "eval_z"
+GPU_ID = 2
+# If None, outputs are saved under: <checkpoints>/<RUN_NAME>/eval_z
+SAVE_DIR_OVERRIDE = None
 SAVE_STATIC_PLOTS = True
 SAVE_VIDEO = True
 VIDEO_FPS = 30  # playback speed
@@ -229,14 +224,29 @@ def _extract_stiffness_vector(msg, key: str) -> np.ndarray:
     return np.asarray(msg, dtype=np.float32).reshape(-1)
 
 
-def _stiffness_vec_to_class(stiffness_vec: np.ndarray, thresholds: List[float]) -> int:
+def _stiffness_vec_to_class(
+    stiffness_vec: np.ndarray,
+    thresholds: Optional[List[float]],
+    num_classes: Optional[int] = None,
+) -> int:
     norm = float(np.linalg.norm(stiffness_vec))
     if not np.isfinite(norm):
         return 1
-    for class_id, threshold in enumerate(sorted(float(v) for v in thresholds), start=1):
+
+    if num_classes is None:
+        num_classes = max(1, len(thresholds) + 1) if thresholds is not None else 1
+    num_classes = max(1, int(num_classes))
+    if num_classes == 1:
+        return 1
+
+    thresholds_sorted = [] if thresholds is None else sorted(float(v) for v in thresholds)
+    # Keep mapping consistent with configured class count: N classes -> use at most N-1 thresholds.
+    thresholds_sorted = thresholds_sorted[: max(0, num_classes - 1)]
+
+    for class_id, threshold in enumerate(thresholds_sorted, start=1):
         if norm < threshold:
             return class_id
-    return len(thresholds) + 1
+    return min(num_classes, len(thresholds_sorted) + 1)
 
 
 def _sync_topics_by_slowest(entries: Dict, timestamps: Dict, topics: List[str]) -> Dict[str, List]:
@@ -282,10 +292,18 @@ def load_episode_arrays(episode_path: Path, rollout_cfg: Dict) -> Tuple[np.ndarr
     action_topic = action_topics[0]
     action_dim = int(action_cfg[action_topic])
 
-    stiffness_cfg = obs_cfg.get("stiffness_label", {})
+    stiffness_cfg = obs_cfg.get("stiffness_label") or {}
     stiffness_topic = stiffness_cfg.get("topic", None)
     stiffness_key = stiffness_cfg.get("key", "stiffness")
-    stiffness_thresholds = stiffness_cfg.get("norm_thresholds", [200.0, 1000.0])
+    stiffness_thresholds = stiffness_cfg.get("norm_thresholds")
+    stiffness_classes_cfg = stiffness_cfg.get("classes")
+
+    if isinstance(stiffness_classes_cfg, (list, tuple)) and len(stiffness_classes_cfg) > 0:
+        stiffness_num_classes = len(stiffness_classes_cfg)
+    elif stiffness_thresholds is not None:
+        stiffness_num_classes = max(1, len(stiffness_thresholds) + 1)
+    else:
+        stiffness_num_classes = 1
 
     topics = list(state_topics) + [action_topic]
     if stiffness_topic is not None:
@@ -326,7 +344,7 @@ def load_episode_arrays(episode_path: Path, rollout_cfg: Dict) -> Tuple[np.ndarr
         class_ids = []
         for msg in synced[stiffness_topic]:
             vec = _extract_stiffness_vector(msg, stiffness_key)
-            class_ids.append(_stiffness_vec_to_class(vec, stiffness_thresholds))
+            class_ids.append(_stiffness_vec_to_class(vec, stiffness_thresholds, num_classes=stiffness_num_classes))
         classes = np.asarray(class_ids, dtype=np.int64)
 
     count = min(len(states), len(actions))
@@ -344,14 +362,18 @@ def load_episode_arrays(episode_path: Path, rollout_cfg: Dict) -> Tuple[np.ndarr
 
 
 def apply_grouped_norm(x: np.ndarray, grouped_cfg: Optional[Dict]) -> np.ndarray:
-    if grouped_cfg is None:
+    if grouped_cfg is None or not isinstance(grouped_cfg, dict):
         return x
 
     out = x.copy()
     eps = 1e-6
-    groups = grouped_cfg.get("groups", [])
+    groups = grouped_cfg.get("groups") or []
+    if not isinstance(groups, (list, tuple)):
+        return out
 
     for group in groups:
+        if not isinstance(group, dict):
+            continue
         indices = group.get("indices", None)
         norm_type = group.get("type", "identity")
         if indices is None or len(indices) != 2:
@@ -871,7 +893,10 @@ def main():
         raise FileNotFoundError(f"data_root not found: {data_root}")
 
     model_name = run_dir.parent.name
-    save_dir = Path(SAVE_DIR_OVERRIDE) / str(model_name)
+    if SAVE_DIR_OVERRIDE is None:
+        save_dir = run_dir.parent / "eval_z"
+    else:
+        save_dir = Path(SAVE_DIR_OVERRIDE) / str(model_name)
     save_dir.mkdir(parents=True, exist_ok=True)
 
     with open(rollout_cfg_path, "r") as f:

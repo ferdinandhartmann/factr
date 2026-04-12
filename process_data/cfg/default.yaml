@@ -1,6 +1,6 @@
 
-input_path: /home/ferdinand/activeinference/factr/process_data/data_to_process/fourgoals_1/data
-output_path: /home/ferdinand/activeinference/factr/process_data/processed_data/fourgoals_1_act
+input_path: /home/ferdinand/activeinference/factr/process_data/data_to_process/fourgoals_2_stiff/data
+output_path: /home/ferdinand/activeinference/factr/process_data/processed_data/fourgoals_2_stiff2
 
 downsample: False
 data_frequency: 50.0
@@ -36,7 +36,7 @@ action_config:
 # class=1 (low), class=2 (medium), class=3 (high)
 stiffness_label_topic: /cartesian_impedance_gains
 stiffness_label_key: stiffness
-stiffness_norm_thresholds: [200.0, 1000.0]
+stiffness_norm_thresholds: [] # If empty, only 1 class
 
 goal_topic: 
   - /goal

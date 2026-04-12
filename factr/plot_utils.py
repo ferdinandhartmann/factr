@@ -1,3 +1,4 @@
+import warnings
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -202,6 +203,7 @@ def build_pose_comparison_figure(
     true_label: str = "ground truth",
     pred_label: str = "prediction",
     measured_label: str = "measured_pose",
+    plot_geodesic_subplot: bool = True,
     rpy_config: RPYPlotConfig = DEFAULT_RPY_PLOT_CONFIG,
 ):
     valid_rows = _valid_rows_from_mask(mask)
@@ -238,8 +240,11 @@ def build_pose_comparison_figure(
     has_orientation = pose_dim >= 9
 
     if has_orientation:
-        fig = plt.figure(figsize=(5 * n_cols, 2.8 * n_rows + 5.2))
-        gs = fig.add_gridspec(n_rows + 2, n_cols, height_ratios=[1.0] * n_rows + [1.15, 0.95], hspace=0.35)
+        extra_rows = 2 if plot_geodesic_subplot else 1
+        extra_heights = [1.15, 0.95] if plot_geodesic_subplot else [1.15]
+        fig_height = 2.8 * n_rows + (5.2 if plot_geodesic_subplot else 4.2)
+        fig = plt.figure(figsize=(5 * n_cols, fig_height))
+        gs = fig.add_gridspec(n_rows + extra_rows, n_cols, height_ratios=[1.0] * n_rows + extra_heights, hspace=0.35)
         axes = []
         for row in range(n_rows):
             for col in range(n_cols):
@@ -247,7 +252,11 @@ def build_pose_comparison_figure(
                 axes.append(fig.add_subplot(gs[row, col], sharex=shared))
         axes = np.asarray(axes, dtype=object)
         ax_rpy = fig.add_subplot(gs[n_rows, :], sharex=axes[0] if len(axes) > 0 else None)
-        ax_geo = fig.add_subplot(gs[n_rows + 1, :], sharex=axes[0] if len(axes) > 0 else None)
+        ax_geo = (
+            fig.add_subplot(gs[n_rows + 1, :], sharex=axes[0] if len(axes) > 0 else None)
+            if plot_geodesic_subplot
+            else None
+        )
     else:
         fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 2.8 * n_rows), sharex=True)
         axes = np.asarray(axes).reshape(-1)
@@ -285,7 +294,7 @@ def build_pose_comparison_figure(
     if handles:
         fig.legend(handles, labels, loc="upper center", ncol=3, bbox_to_anchor=(0.5, 0.925), frameon=False)
 
-    if has_orientation and ax_rpy is not None and ax_geo is not None:
+    if has_orientation and ax_rpy is not None:
         rpy_true = compute_pose_rpy(true_valid[:, :9])
         rpy_pred = compute_pose_rpy(pred_valid[:, :9])
         shift_value = get_pi_shift_from_axis_start(rpy_true, cfg=rpy_config)
@@ -353,39 +362,44 @@ def build_pose_comparison_figure(
         ax_rpy.grid(alpha=0.25)
         ax_rpy.legend(loc="upper right", ncol=3, frameon=False, fontsize=8)
 
-        geod_rad = compute_pose_geodesic_distance(true_valid[:, :9], pred_valid[:, :9])
-        if geod_rad.shape[0] == len(time_index):
-            ax_geo.plot(
-                time_index,
-                np.rad2deg(geod_rad),
-                color="#1F78B4",
-                linewidth=1.4,
-                alpha=0.9,
-                linestyle="-",
-                label="prediction geodesic (deg)",
-            )
-
-        if measured_valid is not None and measured_valid.shape[1] >= 9:
-            geod_measured_rad = compute_pose_geodesic_distance(true_valid[:, :9], measured_valid[:, :9])
-            if geod_measured_rad.shape[0] == len(time_index):
+        if ax_geo is not None:
+            geod_rad = compute_pose_geodesic_distance(true_valid[:, :9], pred_valid[:, :9])
+            if geod_rad.shape[0] == len(time_index):
                 ax_geo.plot(
                     time_index,
-                    np.rad2deg(geod_measured_rad),
-                    color="#6A3D9A",
-                    linewidth=1.0,
-                    alpha=0.85,
-                    linestyle="--",
-                    label="measured geodesic (deg)",
+                    np.rad2deg(geod_rad),
+                    color="#1F78B4",
+                    linewidth=1.4,
+                    alpha=0.9,
+                    linestyle="-",
+                    label="prediction geodesic (deg)",
                 )
 
-        ax_geo.set_title("Geodesic Distance (rotation error)")
-        ax_geo.set_xlabel("step")
-        ax_geo.set_ylabel("deg")
-        ax_geo.grid(alpha=0.25)
-        ax_geo.legend(loc="upper right", ncol=1, frameon=False, fontsize=8)
+            if measured_valid is not None and measured_valid.shape[1] >= 9:
+                geod_measured_rad = compute_pose_geodesic_distance(true_valid[:, :9], measured_valid[:, :9])
+                if geod_measured_rad.shape[0] == len(time_index):
+                    ax_geo.plot(
+                        time_index,
+                        np.rad2deg(geod_measured_rad),
+                        color="#6A3D9A",
+                        linewidth=1.0,
+                        alpha=0.85,
+                        linestyle="--",
+                        label="measured geodesic (deg)",
+                    )
+
+            ax_geo.set_title("Geodesic Distance (rotation error)")
+            ax_geo.set_xlabel("step")
+            ax_geo.set_ylabel("deg")
+            ax_geo.grid(alpha=0.25)
+            ax_geo.legend(loc="upper right", ncol=1, frameon=False, fontsize=8)
 
     fig.suptitle(title, fontsize=12, y=0.98)
-    fig.tight_layout(rect=[0.02, 0.03, 0.98, 0.95 if not has_orientation else 0.93])
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore", message="This figure includes Axes that are not compatible with tight_layout.*"
+        )
+        fig.tight_layout(rect=[0.02, 0.03, 0.98, 0.95 if not has_orientation else 0.93])
     return fig
 
 
@@ -485,6 +499,7 @@ def build_pose_fan_figure(
     global_step: Optional[int] = None,
     title: Optional[str] = None,
     plot_ground_truth_reconstructed: bool = False,
+    plot_geodesic_subplot: bool = True,
     rpy_config: RPYPlotConfig = DEFAULT_RPY_PLOT_CONFIG,
 ):
     anchor_steps = int(
@@ -526,8 +541,11 @@ def build_pose_fan_figure(
     has_orientation = pose_dim >= 9
 
     if has_orientation:
-        fig = plt.figure(figsize=(6 * n_cols, 3 * n_rows + 5.0))
-        gs = fig.add_gridspec(n_rows + 2, n_cols, height_ratios=[1.0] * n_rows + [1.05, 0.95], hspace=0.32)
+        extra_rows = 2 if plot_geodesic_subplot else 1
+        extra_heights = [1.05, 0.95] if plot_geodesic_subplot else [1.05]
+        fig_height = 3 * n_rows + (5.0 if plot_geodesic_subplot else 4.0)
+        fig = plt.figure(figsize=(6 * n_cols, fig_height))
+        gs = fig.add_gridspec(n_rows + extra_rows, n_cols, height_ratios=[1.0] * n_rows + extra_heights, hspace=0.32)
         axes = []
         for row in range(n_rows):
             for col in range(n_cols):
@@ -535,7 +553,11 @@ def build_pose_fan_figure(
                 axes.append(fig.add_subplot(gs[row, col], sharex=shared))
         axes = np.asarray(axes, dtype=object)
         ax_rpy = fig.add_subplot(gs[n_rows, :], sharex=axes[0] if len(axes) > 0 else None)
-        ax_geo = fig.add_subplot(gs[n_rows + 1, :], sharex=axes[0] if len(axes) > 0 else None)
+        ax_geo = (
+            fig.add_subplot(gs[n_rows + 1, :], sharex=axes[0] if len(axes) > 0 else None)
+            if plot_geodesic_subplot
+            else None
+        )
     else:
         fig, axes = plt.subplots(n_rows, n_cols, figsize=(6 * n_cols, 3 * n_rows), sharex=True)
         axes = np.asarray(axes).reshape(-1)
@@ -554,8 +576,6 @@ def build_pose_fan_figure(
             x_max=x_max,
         )
         true_times = sorted(true_by_time.keys())
-    else:
-        true_times = []
 
     for dim in range(pose_dim):
         ax = axes[dim]
@@ -584,8 +604,8 @@ def build_pose_fan_figure(
                 vals,
                 color="black",
                 linewidth=1.0,
-                label="ground_truth" if dim == 0 else None,
-                zorder=10,
+                label="gt commanded pose" if dim == 0 else None,
+                # zorder=10,
             )
 
         if measured_pose_arr is not None:
@@ -596,7 +616,7 @@ def build_pose_fan_figure(
                 linestyle="--",
                 linewidth=1.0,
                 alpha=0.6,
-                label="measured_pose" if dim == 0 else None,
+                label="measured pose" if dim == 0 else None,
             )
 
         for anchor_pos, t in enumerate(anchor_idx):
@@ -629,7 +649,7 @@ def build_pose_fan_figure(
     for ax in axes[pose_dim:]:
         ax.axis("off")
 
-    if has_orientation and ax_rpy is not None and ax_geo is not None:
+    if has_orientation and ax_rpy is not None:
         true_pose_first = true_action_chunks[:anchor_steps, 0, :9]
         true_rpy_anchor = compute_pose_rpy(true_pose_first)
         (
@@ -765,53 +785,54 @@ def build_pose_fan_figure(
         ax_rpy.grid(alpha=0.25)
         ax_rpy.legend(loc="upper right", ncol=4, frameon=False, fontsize=8)
 
-        if measured_pose_arr is not None and measured_pose_arr.shape[1] >= 9:
-            geod_meas_rad = compute_pose_geodesic_distance(true_pose_first, measured_pose_arr[:anchor_steps, :9])
-            if geod_meas_rad.shape[0] == anchor_steps:
-                ax_geo.plot(
-                    source_time_index[:anchor_steps],
-                    np.rad2deg(geod_meas_rad),
-                    color="#1f78b4",
-                    linewidth=1.0,
-                    linestyle="--",
-                    alpha=0.85,
-                    label="measured geodesic (h=0)",
-                )
+        if ax_geo is not None:
+            if measured_pose_arr is not None and measured_pose_arr.shape[1] >= 9:
+                geod_meas_rad = compute_pose_geodesic_distance(true_pose_first, measured_pose_arr[:anchor_steps, :9])
+                if geod_meas_rad.shape[0] == anchor_steps:
+                    ax_geo.plot(
+                        source_time_index[:anchor_steps],
+                        np.rad2deg(geod_meas_rad),
+                        color="#1f78b4",
+                        linewidth=1.0,
+                        linestyle="--",
+                        alpha=0.85,
+                        label="measured geodesic (h=0)",
+                    )
 
-        for anchor_pos, t in enumerate(anchor_idx):
-            valid_h = mask_chunks[t, :, 0] > 0
-            if not np.any(valid_h):
-                continue
-            horizon_idx = np.where(valid_h)[0]
-            base_t = int(source_time_index[t])
-            x_vals = base_t + horizon_idx
-            within = np.logical_and(x_vals >= x_min, x_vals <= x_max)
-            if not np.any(within):
-                continue
-            x_vals = x_vals[within]
-            h_idx = horizon_idx[within]
-            true_chunk_pose = true_action_chunks[t, h_idx, :9]
-            c_t = anchor_colors[anchor_pos]
-            for s_idx in range(n_samples):
-                pred_chunk_pose = pred_action_chunks[t, s_idx, h_idx, :9]
-                geod_deg = np.rad2deg(compute_pose_geodesic_distance(true_chunk_pose, pred_chunk_pose))
-                ax_geo.plot(
-                    x_vals,
-                    geod_deg,
-                    color=c_t,
-                    linewidth=1.0,
-                    alpha=0.9,
-                    linestyle="-",
-                    label="geodesic prior samples" if (anchor_pos == 0 and s_idx == 0) else None,
-                )
+            for anchor_pos, t in enumerate(anchor_idx):
+                valid_h = mask_chunks[t, :, 0] > 0
+                if not np.any(valid_h):
+                    continue
+                horizon_idx = np.where(valid_h)[0]
+                base_t = int(source_time_index[t])
+                x_vals = base_t + horizon_idx
+                within = np.logical_and(x_vals >= x_min, x_vals <= x_max)
+                if not np.any(within):
+                    continue
+                x_vals = x_vals[within]
+                h_idx = horizon_idx[within]
+                true_chunk_pose = true_action_chunks[t, h_idx, :9]
+                c_t = anchor_colors[anchor_pos]
+                for s_idx in range(n_samples):
+                    pred_chunk_pose = pred_action_chunks[t, s_idx, h_idx, :9]
+                    geod_deg = np.rad2deg(compute_pose_geodesic_distance(true_chunk_pose, pred_chunk_pose))
+                    ax_geo.plot(
+                        x_vals,
+                        geod_deg,
+                        color=c_t,
+                        linewidth=1.0,
+                        alpha=0.9,
+                        linestyle="-",
+                        label="geodesic prior samples" if (anchor_pos == 0 and s_idx == 0) else None,
+                    )
 
-        ax_geo.axhline(0.0, color="black", linewidth=0.8, linestyle=":", alpha=0.9, label="zero error")
-        ax_geo.set_title("Geodesic Distance Fan (rotation error)")
-        ax_geo.set_xlabel("step")
-        ax_geo.set_ylabel("deg")
-        ax_geo.set_xlim(x_min, x_max)
-        ax_geo.grid(alpha=0.25)
-        ax_geo.legend(loc="upper right", ncol=2, frameon=False, fontsize=8)
+            ax_geo.axhline(0.0, color="black", linewidth=0.8, linestyle=":", alpha=0.9, label="zero error")
+            ax_geo.set_title("Geodesic Distance Fan (rotation error)")
+            ax_geo.set_xlabel("step")
+            ax_geo.set_ylabel("deg")
+            ax_geo.set_xlim(x_min, x_max)
+            ax_geo.grid(alpha=0.25)
+            ax_geo.legend(loc="upper right", ncol=2, frameon=False, fontsize=8)
 
     handles, labels = axes[0].get_legend_handles_labels()
     if handles:
@@ -825,7 +846,11 @@ def build_pose_fan_figure(
         else:
             title = f"Sampled Prior Fan + Measured Pose (full episode, stride={max(1, int(prediction_stride))})"
     fig.suptitle(title, fontsize=12, y=0.955)
-    fig.tight_layout(rect=[0.02, 0.03, 0.98, 0.905 if not has_orientation else 0.935])
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore", message="This figure includes Axes that are not compatible with tight_layout.*"
+        )
+        fig.tight_layout(rect=[0.02, 0.03, 0.98, 0.905 if not has_orientation else 0.935])
     return fig
 
 
