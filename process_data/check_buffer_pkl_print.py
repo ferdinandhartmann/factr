@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 # Update these
-PKL_PATH = Path("/home/ferdinand/activeinference/factr/process_data/processed_data/fourgoals_1_norm2/buf.pkl")
+PKL_PATH = Path("/home/ferdinand/activeinference/factr/process_data/processed_data/fourgoals_2_stiff/buf_train.pkl")
 TRAJ_INDEX = 0
 STEP_INDEX = 0
 SHOW_ALL = True

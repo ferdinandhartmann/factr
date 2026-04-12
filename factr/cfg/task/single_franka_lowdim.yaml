@@ -5,7 +5,7 @@ cam_indexes: []
 n_cams: ${len:${task.cam_indexes}}
 stiffness_classes: ${stiffness_classes}
 eval_plot_max_steps: 400
-eval_plot_prediction_stride: 25
+eval_plot_prediction_stride: 20
 eval_plot_num_samples: 10
 
 # For Sweeping
@@ -26,7 +26,7 @@ train_buffer:
   obs_window: ${obs_window}
   obs_dim: ${task.obs_dim}
   pose_action_dim: ${task.ac_dim}
-  action_index_offset: 0
+  action_index_offset: 0 # if = 0: Model sees the observation at time t and should predict the action at time t.
   include_goals: False
   stiffness_classes: ${task.stiffness_classes}
   shuffle: True

@@ -51,26 +51,27 @@ except Exception:
 # ---------------------------------------------------------------------------
 # User Config (edit these variables, then run this script directly)
 # ---------------------------------------------------------------------------
-RUN_DIR = Path.home() / "activeinference" / "factr" / "checkpoints" / "aiact_categ_ctxprior_projz8_c8_4" / "rollout"
+RUN_NAME = "aiact_categ_n_2"
+RUN_DIR = Path.home() / "activeinference" / "factr" / "checkpoints" / RUN_NAME / "rollout"
 CHECKPOINT_NAME = "latest_ckpt.ckpt"  # or "ckpt_020000.ckpt"
 
-RAW_EPISODE_DIR = Path("/home/ferdinand/activeinference/factr/process_data/data_to_process/fourgoals_1/data")
+RAW_EPISODE_DIR = Path("/home/ferdinand/activeinference/factr/process_data/data_to_process/fourgoals_2_stiff/data")
 
 USE_EPISODE_LIST = False
-EPISODE_FILE_NAME = "ep_29_stiff.pkl"
+EPISODE_FILE_NAME = "ep_34_stiff.pkl"
 EPISODE_LIST = [
-    "ep_03_medium",
-    "ep_09_soft",
-    "ep_09_medium",
-    "ep_10_soft",
-    "ep_14_medium",
-    "ep_19_medium",
-    "ep_23_medium",
-    "ep_29_stiff",
-    "ep_29_medium",
-    "ep_33_medium",
-    "ep_39_stiff",
-    "ep_40_soft",
+    "ep_03_soft",
+    "ep_13_stiff",
+    "ep_13_soft",
+    "ep_15_stiff",
+    "ep_20_stiff",
+    "ep_28_soft",
+    "ep_34_stiff",
+    "ep_42_stiff",
+    "ep_43_stiff",
+    "ep_49_soft",
+    "ep_57_soft",
+    "ep_58_stiff",
 ]
 
 GPU_ID = 0

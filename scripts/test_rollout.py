@@ -10,6 +10,8 @@ import warnings
 import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 import yaml
+from tqdm import tqdm
+
 from test_rollout_utils import (
     calculate_franka_fk,
     get_all_joint_cmds_np,
@@ -18,7 +20,6 @@ from test_rollout_utils import (
     load_episode_from_buffer,
     preprocess_image,
 )
-from tqdm import tqdm
 
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -46,9 +47,7 @@ episode_names = [
 
 downsample = False  # from 50Hz to 25Hz
 vs_all_plot = True  # whether to load all joint commands from dataset for visualization
-use_buffer = (
-    False  # !!!!!!!!! somehow different results, i dont know why. load from buffer.pkl instead of raw PKL files
-)
+use_buffer = False  # !!!!!!!!! somehow different results, i dont know why. load from buffer.pkl instead of raw PKL files
 remove_joints = []  # zero-indexed joints to remove
 interactive_3d_plot = False
 endeffector_plot = False
@@ -114,9 +113,7 @@ print(f"✅ Loaded normalization stats from {ROLLOUT_CFG_PATH}")
 
 if vs_all_plot:
     print("Loading all joint commands from dataset for visualization...")
-    joint_cmds_all, joint_cmds_all_norm = get_all_joint_cmds_np(
-        RAW_DATA_PATH_TRAIN, action_mean, action_std, downsample=downsample
-    )
+    joint_cmds_all, joint_cmds_all_norm = get_all_joint_cmds_np(RAW_DATA_PATH_TRAIN, action_mean, action_std, downsample=downsample)
     print("✅ Loaded and normalized all joint commands from dataset folder.")
 
 image_obs = []
@@ -132,13 +129,9 @@ for episode_name in episode_names:
         episode_idx = int(episode_name.split("_")[1])  # ep_40 → 40
         try:
             image_obs, torque_obs, true_actions = load_episode_from_buffer(BUF_PATH, episode_idx)
-            print(
-                f"Size from buffer - Images: {image_obs.shape}, Torque: {torque_obs.shape}, Actions: {true_actions.shape}"
-            )
+            print(f"Size from buffer - Images: {image_obs.shape}, Torque: {torque_obs.shape}, Actions: {true_actions.shape}")
         except Exception as e:
-            print(
-                f"ℹ️ Info: Could not load episode {episode_name} from buffer. Error: {e}, loading from raw PKL instead."
-            )
+            print(f"ℹ️ Info: Could not load episode {episode_name} from buffer. Error: {e}, loading from raw PKL instead.")
             RAW_DATA_PATH = RAW_DATA_PATH_EVAL / f"{episode_name}.pkl"
             image_obs, torque_obs, true_actions = load_and_extract_raw_data(
                 RAW_DATA_PATH,
@@ -534,13 +527,7 @@ for episode_name in episode_names:
         #     color=f"C{layer_idx}",
         # )
         linestyle = "-" if layer_idx == 0 else "-" if layer_idx == attn_layer_vectors_stacked.shape[1] - 1 else "--"
-        colour = (
-            "blue"
-            if layer_idx == 0
-            else "black"
-            if layer_idx == attn_layer_vectors_stacked.shape[1] - 1
-            else f"C{layer_idx}"
-        )
+        colour = "blue" if layer_idx == 0 else "black" if layer_idx == attn_layer_vectors_stacked.shape[1] - 1 else f"C{layer_idx}"
         alpha = 1.0 if layer_idx == 0 else 1.0 if layer_idx == attn_layer_vectors_stacked.shape[1] - 1 else 0.7
         ax1.plot(
             (attn_layer_vectors_stacked[:, layer_idx, 1] - attn_layer_vectors_stacked[:, layer_idx, 0]),
@@ -616,9 +603,7 @@ for episode_name in episode_names:
     fig.text(0.5, 0.95, f"model: {model_name}", fontsize=11, ha="center", va="top")
     for d in range(dof_dims):
         ax = axes[d]
-        ax.plot(
-            t, true_actions_normalized[:, d], label="Normalized Ground Truth Joint Pos.", linewidth=2.0, color="red"
-        )
+        ax.plot(t, true_actions_normalized[:, d], label="Normalized Ground Truth Joint Pos.", linewidth=2.0, color="red")
         ax.set_ylabel(f"J{d + 1} Pos. norm.")
         ax.set_ylim(-3.0, 3.0)
         for i in range(pred_dims):

@@ -26,33 +26,34 @@ if str(PROJECT_ROOT) not in sys.path:
 # ---------------------------------------------------------------------------
 # User Config (edit these variables, then run this script directly)
 # ---------------------------------------------------------------------------
-RUN_DIR = Path.home() / "activeinference" / "factr" / "checkpoints" / "aiact_categ_ctxprior_projz8_c8_4" / "rollout"
+RUN_NAME = "aiact_categ_n_2"
+RUN_DIR = Path.home() / "activeinference" / "factr" / "checkpoints" / RUN_NAME / "rollout"
 CHECKPOINT_NAME = "latest_ckpt.ckpt"
 
 # Raw episode source
-RAW_EPISODE_DIR = Path.home() / "activeinference" / "factr" / "process_data" / "data_to_process" / "fourgoals_1" / "data"
-EPISODE_FILE_NAME = "ep_29_stiff.pkl"
+RAW_EPISODE_DIR = Path.home() / "activeinference" / "factr" / "process_data" / "data_to_process" / "fourgoals_2_stiff" / "data"
+EPISODE_FILE_NAME = "ep_34_stiff.pkl"
 EPISODE_INDEX = 0  # index in sorted *.pkl files
 USE_EPISODE_LIST = False
 EPISODE_LIST = [
-    "ep_03_medium",
-    "ep_09_soft",
-    "ep_09_medium",
-    "ep_10_soft",
-    "ep_14_medium",
-    "ep_19_medium",
-    "ep_23_medium",
-    "ep_29_stiff",
-    "ep_29_medium",
-    "ep_33_medium",
-    "ep_39_stiff",
-    "ep_40_soft",
+    "ep_03_soft",
+    "ep_13_stiff",
+    "ep_13_soft",
+    "ep_15_stiff",
+    "ep_20_stiff",
+    "ep_28_soft",
+    "ep_34_stiff",
+    "ep_42_stiff",
+    "ep_43_stiff",
+    "ep_49_soft",
+    "ep_57_soft",
+    "ep_58_stiff",
 ]
 
 LIST_EPISODES_ONLY = False
 
-BUFFER_PATH_OVERRIDE = Path.home() / "activeinference" / "factr" / "process_data" / "processed_data" / "fourgoals_1_act" / "buf_test.pkl"
-ROLLOUT_CONFIG_OVERRIDE = Path.home() / "activeinference" / "factr" / "process_data" / "processed_data" / "fourgoals_1_act" / "rollout_config.yaml"
+BUFFER_PATH_OVERRIDE = Path.home() / "activeinference" / "factr" / "process_data" / "processed_data" / "fourgoals_2_stiff" / "buf_test.pkl"
+ROLLOUT_CONFIG_OVERRIDE = Path.home() / "activeinference" / "factr" / "process_data" / "processed_data" / "fourgoals_2_stiff" / "rollout_config.yaml"
 
 NUM_SAMPLES = 20
 ACTION_SOURCE = "prior"  # one of: prior, posterior
@@ -76,10 +77,17 @@ GLOBAL_AXIS_LIMITS = {
 }
 
 GOAL_FRAMES = [
-    {"name": "goal 1", "pose": [0.384, -0.26, 0.181, 0.998, 0.014, 0.065, 0.011, -0.999, 0.05]},
-    {"name": "goal 2", "pose": [0.656, -0.155, -0.023, 0.996, -0.054, 0.065, -0.057, -0.997, 0.045]},
-    {"name": "goal 3", "pose": [0.51, 0.269, -0.028, -0.015, 1.0, -0.027, 1.0, 0.015, 0.013]},
-    {"name": "goal 4", "pose": [0.466, 0.361, 0.48, 0.998, 0.056, 0.032, 0.034, -0.034, -0.999]},
+    # fourgoals_1
+    # {"name": "goal 1", "pose": [0.384, -0.26, 0.181, 0.998, 0.014, 0.065, 0.011, -0.999, 0.05]},
+    # {"name": "goal 2", "pose": [0.656, -0.155, -0.023, 0.996, -0.054, 0.065, -0.057, -0.997, 0.045]},
+    # {"name": "goal 3", "pose": [0.51, 0.269, -0.028, -0.015, 1.0, -0.027, 1.0, 0.015, 0.013]},
+    # {"name": "goal 4", "pose": [0.466, 0.361, 0.48, 0.998, 0.056, 0.032, 0.034, -0.034, -0.999]},
+    
+    # fourgoals_2
+    {"name": "goal 1", "pose": [0.341, 0.240, 0.606, 0.999, -0.007, 0.013, -0.007, -1.000, -0.010]},  # 33
+    {"name": "goal 2", "pose": [0.524, 0.226, 0.381, 1.000, 0.013, 0.025, 0.013, -1.000, 0.004]},  # 27
+    {"name": "goal 3", "pose": [0.591, -0.336, -0.038, 0.907, -0.421, 0.037, -0.421, -0.907, 0.006]},  # 31
+    {"name": "goal 4", "pose": [0.439, -0.239, -0.043, 0.905, -0.425, 0.023, -0.426, -0.904, 0.028]},  # 29
 ]
 
 OUT_DIR_OVERRIDE = None
@@ -270,7 +278,10 @@ def _sync_data_slowest(raw_data, topics: List[str]):
     return synced
 
 
-def _stiffness_vec_to_class(stiffness_vec, thresholds: List[float]) -> int:
+def _stiffness_vec_to_class(stiffness_vec, thresholds: Optional[List[float]]) -> int:
+    if not thresholds:
+        thresholds = [200.0, 1000.0]
+
     norm = float(np.linalg.norm(np.asarray(stiffness_vec, dtype=np.float32)))
     if not np.isfinite(norm):
         return 1
@@ -302,7 +313,9 @@ def _load_raw_episode_to_arrays(episode_file: Path, rollout_cfg) -> Dict:
     stiffness_info = obs_cfg.get("stiffness_label", {})
     stiffness_topic = stiffness_info.get("topic", None)
     stiffness_key = stiffness_info.get("key", "stiffness")
-    stiffness_thresholds = stiffness_info.get("norm_thresholds", [200.0, 1000.0])
+    stiffness_thresholds = stiffness_info.get("norm_thresholds")
+    if not stiffness_thresholds:
+        stiffness_thresholds = [200.0, 1000.0]
 
     topics_for_sync = list(state_topics) + [action_topic]
     if stiffness_topic:
@@ -615,7 +628,6 @@ def _build_fan_figure_with_measured(
         background_actions=background_actions,
         max_plot_steps=None,
         title=(f"Sampled {_action_source_title(action_source)} Fan + Measured Pose (full episode, stride={max(1, int(prediction_stride))})"),
-        plot_ground_truth_h0=True,
         plot_ground_truth_reconstructed=False,
         rpy_config=rpy_cfg,
     )

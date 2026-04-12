@@ -304,7 +304,7 @@ class RobobufReplayBufferLowdim(ReplayBuffer):
         obs_window=8,
         obs_dim=27,
         pose_action_dim=9,
-        action_index_offset=1,
+        action_index_offset=0,
         include_goals=False,
         stiffness_classes=3,
         shuffle=True,

@@ -8,10 +8,10 @@ import hydra
 import pytorch_lightning as pl
 import torch
 import tqdm
-import wandb
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
 
+import wandb
 from factr import misc
 from factr.trainers.base import TRAIN_LOG_FREQ
 

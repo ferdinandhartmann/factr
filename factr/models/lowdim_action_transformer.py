@@ -130,7 +130,6 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         posterior_layers=2,
         nhead=8,
         dropout=0.1,
-        factr_baseline=False,
     ):
         super().__init__()
 
@@ -143,7 +142,6 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         self.free_bits = free_bits
         self.kl_balance_alpha = float(kl_balance_alpha)
         self.z_context_mode = z_context_mode
-        self.factr_baseline = bool(factr_baseline)
         self.latent_distribution = str(latent_distribution).lower()
         self.fixed_prior = bool(fixed_prior)
         self.categorical_num_variables = int(categorical_num_variables)
@@ -189,7 +187,8 @@ class LowdimStiffnessCVAEAgent(nn.Module):
             "tracking": slice(21, 27),
         }
 
-        self.positional_tokens = nn.Parameter(torch.zeros(1, 6, token_dim))
+        # self.positional_tokens = nn.Parameter(torch.zeros(1, 6, token_dim))
+        self.positional_tokens = nn.Parameter(torch.zeros(1, 5, token_dim))
         nn.init.normal_(self.positional_tokens, mean=0.0, std=0.02)
 
         def make_group_encoder(group_dim):
@@ -225,20 +224,20 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         self.context_encoder = nn.TransformerEncoder(encoder_layer, num_layers=encoder_layers)
         self.context_norm = nn.LayerNorm(token_dim)
 
-        if self.z_context_mode == "cls_all_obs":  # used for now
-            context_dim = 5 * token_dim
-            self.pool_proj = None
-        elif self.z_context_mode == "cls_force":
-            context_dim = 2 * token_dim
-            self.pool_proj = None
-        elif self.z_context_mode == "all_tokens":
-            context_dim = 6 * token_dim
-            self.pool_proj = None
-        elif self.z_context_mode == "attn_pool":
-            context_dim = 2 * token_dim
-            self.pool_proj = nn.Linear(token_dim, 1)
-        else:
-            raise ValueError(f"Unknown z_context_mode: {self.z_context_mode}")
+        # if self.z_context_mode == "cls_all_obs":  # used for now
+        context_dim = 5 * token_dim
+        self.pool_proj = None
+        # elif self.z_context_mode == "cls_force":
+        #     context_dim = 2 * token_dim
+        #     self.pool_proj = None
+        # elif self.z_context_mode == "all_tokens":
+        #     context_dim = 6 * token_dim
+        #     self.pool_proj = None
+        # elif self.z_context_mode == "attn_pool":
+        #     context_dim = 2 * token_dim
+        #     self.pool_proj = nn.Linear(token_dim, 1)
+        # else:
+        #     raise ValueError(f"Unknown z_context_mode: {self.z_context_mode}")
 
         if not self.fixed_prior:
             self.prior_backbone = nn.Sequential(
@@ -279,7 +278,7 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         )
 
         if self.latent_distribution == "categorical" and self._latent_sample_dim != self.d_z:
-            self.categorical_latent_proj = nn.Linear(self._latent_sample_dim, self.d_z)
+            self.categorical_latent_proj = nn.Linear(self._latent_sample_dim, self.d_z) # compress the V*K sampled into dz 
         else:
             self.categorical_latent_proj = nn.Identity()
 
@@ -339,12 +338,13 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         vel_token = self.vel_encoder(vel)
         wrench_token = self.wrench_encoder(wrench)
         track_token = self.track_encoder(track)
-        stiffness_token = self.stiffness_embed(labels)
+        # stiffness_token = self.stiffness_embed(labels)
 
         cls_input = torch.cat([pose_token, vel_token, wrench_token, track_token], dim=-1)
         cls_token = self.cls_from_obs(cls_input)
 
-        tokens = torch.stack([cls_token, pose_token, vel_token, wrench_token, track_token, stiffness_token], dim=1)
+        # tokens = torch.stack([cls_token, pose_token, vel_token, wrench_token, track_token, stiffness_token], dim=1)
+        tokens = torch.stack([cls_token, pose_token, vel_token, wrench_token, track_token], dim=1)
         tokens = tokens + self.positional_tokens
         tokens = self.context_encoder(tokens)
         tokens = self.context_norm(tokens)
@@ -365,14 +365,14 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         wrench_token = context_tokens[:, 3]
         track_token = context_tokens[:, 4]
 
-        if self.z_context_mode == "cls_all_obs":  # used for now
-            return torch.cat([cls_token, pose_token, vel_token, wrench_token, track_token], dim=-1)
+        # if self.z_context_mode == "cls_all_obs":  # used for now
+        return torch.cat([cls_token, pose_token, vel_token, wrench_token, track_token], dim=-1)
 
-        if self.z_context_mode == "cls_force":
-            return torch.cat([cls_token, wrench_token], dim=-1)
+        # if self.z_context_mode == "cls_force":
+        #     return torch.cat([cls_token, wrench_token], dim=-1)
 
-        if self.z_context_mode == "all_tokens":
-            return context_tokens.reshape(context_tokens.shape[0], -1)
+        # if self.z_context_mode == "all_tokens":
+        #     return context_tokens.reshape(context_tokens.shape[0], -1)
 
         attn_logits = self.pool_proj(context_tokens).squeeze(-1)
         attn_weights = torch.softmax(attn_logits, dim=1)
@@ -541,7 +541,8 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         z_context = self._build_z_context(context_tokens)
 
         prior_params = self._prior(z_context)
-        posterior_params = self.posterior(context_tokens.detach(), target_actions)
+        # posterior_params = self.posterior(context_tokens.detach(), target_actions)
+        posterior_params = self.posterior(context_tokens, target_actions)
 
         z = self._sample_train_latent(posterior_params)
         z = self._prepare_decoder_latent(z)
@@ -615,7 +616,7 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         target_action = self._reshape_actions(target_action)
         context_tokens = self._build_context_tokens(obs, class_labels=class_labels)
 
-        posterior_params = self.posterior(context_tokens.detach(), target_action)
+        posterior_params = self.posterior(context_tokens, target_action)
         z = self._sample_latent_batch(posterior_params, sample=sample, num_samples=num_samples)
         z = self._prepare_decoder_latent(z)
         batch_size, _, z_dim = z.shape
@@ -625,38 +626,3 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         action_pred = self._decode_actions(context_tokens, z)
         return action_pred.view(batch_size, num_samples, self._ac_chunk, self._ac_dim)
 
-    @torch.no_grad()
-    def get_uncertainty_entropy(
-        self,
-        imgs,
-        obs,
-        class_labels=None,
-        sample=True,
-        num_samples=1,
-        unc_step_mode=False,
-        unc_target_step=0,
-        unc_weighted=False,
-        w_start=0.1,
-        w_end=0.9,
-        **kwargs,
-    ):
-        del kwargs
-        actions = self.get_actions_prior(
-            imgs=imgs,
-            obs=obs,
-            class_labels=class_labels,
-            sample=sample,
-            num_samples=num_samples,
-        )
-        final_action = actions[:, 0]
-
-        target = actions[:, :, unc_target_step : unc_target_step + 1] if unc_step_mode else actions
-        uncertainty = torch.std(target, dim=1, unbiased=True)
-
-        if (not unc_step_mode) and unc_weighted:
-            chunk_len = uncertainty.shape[1]
-            weights = torch.linspace(w_start, w_end, steps=chunk_len, device=uncertainty.device).view(1, -1, 1)
-            weighted_sum = (uncertainty * weights).sum(dim=1)
-            uncertainty = (weighted_sum / weights.sum()).unsqueeze(1)
-
-        return final_action, uncertainty
