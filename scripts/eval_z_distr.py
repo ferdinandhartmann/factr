@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
+import os
 import pickle
 import sys
 import warnings
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -51,18 +53,18 @@ except Exception:
 # ---------------------------------------------------------------------------
 # User Config (edit these variables, then run this script directly)
 # ---------------------------------------------------------------------------
-RUN_NAME = "aiact_categ_n_4_stiff"
+RUN_NAME = "aiact_categ_n_4_stiff_b005"
 RUN_DIR = Path.home() / "activeinference" / "factr" / "checkpoints" / RUN_NAME / "rollout"
 CHECKPOINT_NAME = "latest_ckpt.ckpt"  # or "ckpt_020000.ckpt"
 
 RAW_EPISODE_DIR = Path("/home/ferdinand/activeinference/factr/process_data/data_to_process/fourgoals_2_stiff/data")
 
-USE_EPISODE_LIST = False
-EPISODE_FILE_NAME = "ep_50_stiff.pkl"
+EPISODE_FILE_NAME = "ep_51_stiff.pkl"
+USE_EPISODE_LIST = True
 EPISODE_LIST = [
-    "ep_06_stiff",
-    "ep_20_stiff",
-    "ep_21_stiff",
+    # "ep_06_stiff",
+    # "ep_20_stiff",
+    # "ep_21_stiff",
     "ep_25_stiff",
     "ep_29_stiff",
     "ep_50_stiff",
@@ -74,10 +76,12 @@ SAVE_DIR_OVERRIDE = None
 SAVE_STATIC_PLOTS = True
 SAVE_VIDEO = True
 VIDEO_FPS = 30  # playback speed
-VIDEO_DPI = 55
+VIDEO_DPI = 50
 VIDEO_FRAME_STRIDE = 2  # use every Nth frame for video
 VIDEO_X_POINTS = 80  # number of x points in distribution plots
 VIDEO_X_STD_MULT = 4.0  # x range for distribution plots will be [mu - x_std_mult*std, mu + x_std_mult*std]
+# 0 -> auto: min(num_episodes, max(1, cpu_count - 1)); 1 -> disable parallel rendering
+MAX_PARALLEL_EPISODES = 5
 
 
 def parse_args():
@@ -863,6 +867,39 @@ def discover_single_episode_file(data_root: Path, episode_file_name: str) -> Lis
     return [p]
 
 
+def render_episode_outputs(
+    dists: Dict,
+    save_dir: Path,
+    ep_name: str,
+    save_static_plots: bool,
+    save_video: bool,
+    video_fps: int,
+    video_dpi: int,
+    video_frame_stride: int,
+    video_x_points: int,
+    video_x_std_mult: float,
+) -> Tuple[str, Optional[str]]:
+    try:
+        if save_static_plots:
+            visualize_z_statistics(dists, save_dir, ep_name)
+
+        if save_video:
+            video_path = save_dir / f"{ep_name}_z_distr.mp4"
+            visualize_distributions_video(
+                dists,
+                video_path,
+                ep_name,
+                fps=video_fps,
+                dpi=video_dpi,
+                frame_stride=video_frame_stride,
+                x_points=video_x_points,
+                x_std_mult=video_x_std_mult,
+            )
+        return ep_name, None
+    except Exception as e:
+        return ep_name, str(e)
+
+
 def main():
     run_dir = Path(RUN_DIR)
     checkpoint_name = str(CHECKPOINT_NAME)
@@ -914,6 +951,19 @@ def main():
 
     print(f"Episodes: {len(episode_files)} | obs_window={obs_window} | ac_chunk={ac_chunk}")
 
+    use_parallel = len(episode_files) > 1 and (SAVE_STATIC_PLOTS or SAVE_VIDEO)
+    if MAX_PARALLEL_EPISODES == 0:
+        max_workers = min(len(episode_files), max(1, (os.cpu_count() or 2) - 1))
+    else:
+        max_workers = max(1, int(MAX_PARALLEL_EPISODES))
+    if not use_parallel:
+        max_workers = 1
+
+    if max_workers > 1:
+        print(f"Parallel rendering enabled with workers={max_workers}")
+
+    render_jobs = []
+
     for ep_path in tqdm(episode_files, desc="Episodes"):
         ep_name = ep_path.stem
         print(f"\nProcessing {ep_name}")
@@ -932,24 +982,50 @@ def main():
         #     pickle.dump(dists, f)
         # print(f"Saved: {raw_path}")
 
-        if SAVE_STATIC_PLOTS:
-            visualize_z_statistics(dists, save_dir, ep_name)
+        render_jobs.append((ep_name, dists))
 
-        if SAVE_VIDEO:
-            video_path = save_dir / f"{ep_name}_z_distr.mp4"
-            try:
-                visualize_distributions_video(
-                    dists,
-                    video_path,
-                    ep_name,
-                    fps=VIDEO_FPS,
-                    dpi=VIDEO_DPI,
-                    frame_stride=VIDEO_FRAME_STRIDE,
-                    x_points=VIDEO_X_POINTS,
-                    x_std_mult=VIDEO_X_STD_MULT,
-                )
-            except Exception as e:
-                print(f"Video save failed for {ep_name}: {e}")
+    if len(render_jobs) == 0:
+        return
+
+    if max_workers <= 1:
+        for ep_name, dists in render_jobs:
+            _, err = render_episode_outputs(
+                dists,
+                save_dir,
+                ep_name,
+                SAVE_STATIC_PLOTS,
+                SAVE_VIDEO,
+                VIDEO_FPS,
+                VIDEO_DPI,
+                VIDEO_FRAME_STRIDE,
+                VIDEO_X_POINTS,
+                VIDEO_X_STD_MULT,
+            )
+            if err is not None:
+                print(f"Output save failed for {ep_name}: {err}")
+        return
+
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        futures = [
+            executor.submit(
+                render_episode_outputs,
+                dists,
+                save_dir,
+                ep_name,
+                SAVE_STATIC_PLOTS,
+                SAVE_VIDEO,
+                VIDEO_FPS,
+                VIDEO_DPI,
+                VIDEO_FRAME_STRIDE,
+                VIDEO_X_POINTS,
+                VIDEO_X_STD_MULT,
+            )
+            for ep_name, dists in render_jobs
+        ]
+        for future in tqdm(as_completed(futures), total=len(futures), desc="Rendering outputs"):
+            ep_name, err = future.result()
+            if err is not None:
+                print(f"Output save failed for {ep_name}: {err}")
 
 
 if __name__ == "__main__":

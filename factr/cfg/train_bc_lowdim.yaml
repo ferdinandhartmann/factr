@@ -9,12 +9,12 @@ hydra:
     dir: /home/ferdinand/activeinference/factr/checkpoints/${exp_name}
   job:
     env_set:
-      CUDA_VISIBLE_DEVICES: "1"
+      CUDA_VISIBLE_DEVICES: "2"
 
 buffer_path: /home/ferdinand/activeinference/factr/process_data/processed_data/fourgoals_2_stiff2/buf_train.pkl
 test_buffer_path: /home/ferdinand/activeinference/factr/process_data/processed_data/fourgoals_2_stiff2/buf_test.pkl
 
-exp_base_name: aiact_categ_n_4_stiff_b005
+exp_base_name: aiact_categ_n_4_stiff_b0005_v8k8
 suffix: _
 exp_name: ${exp_base_name}
 

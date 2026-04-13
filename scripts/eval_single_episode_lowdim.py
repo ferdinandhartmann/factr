@@ -26,20 +26,20 @@ if str(PROJECT_ROOT) not in sys.path:
 # ---------------------------------------------------------------------------
 # User Config (edit these variables, then run this script directly)
 # ---------------------------------------------------------------------------
-RUN_NAME = "aiact_categ_n_4_stiff"
+RUN_NAME = "aiact_categ_n_4_stiff_b005"
 BUFFER_BASE_NAME = "fourgoals_2_stiff2"
 RUN_DIR = Path.home() / "activeinference" / "factr" / "checkpoints" / RUN_NAME / "rollout"
 CHECKPOINT_NAME = "latest_ckpt.ckpt"
 
 # Raw episode source
 RAW_EPISODE_DIR = Path.home() / "activeinference" / "factr" / "process_data" / "data_to_process" / "fourgoals_2_stiff" / "data"
-EPISODE_FILE_NAME = "ep_50_stiff.pkl"
+EPISODE_FILE_NAME = "ep_52_stiff.pkl"
 EPISODE_INDEX = 0  # index in sorted *.pkl files
-USE_EPISODE_LIST = False
+USE_EPISODE_LIST = True
 EPISODE_LIST = [
-    "ep_06_stiff",
-    "ep_20_stiff",
-    "ep_21_stiff",
+    # "ep_06_stiff",
+    # "ep_20_stiff",
+    # "ep_21_stiff",
     "ep_25_stiff",
     "ep_29_stiff",
     "ep_50_stiff",
@@ -774,7 +774,7 @@ def _build_3d_pose_figure(
                 traj[:, 2],
                 color=c_t,
                 linewidth=0.9,
-                alpha=0.9,
+                alpha=0.7,
                 label=f"{action_source}_samples" if (anchor_pos == 0 and s_idx == 0) else None,
             )
             _draw_frame(ax, sampled_pose_chunks[t_idx, s_idx, 0], axis_len=axis_len * 0.3, alpha=0.6, lw=0.6)
