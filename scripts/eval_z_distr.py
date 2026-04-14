@@ -53,20 +53,37 @@ except Exception:
 # ---------------------------------------------------------------------------
 # User Config (edit these variables, then run this script directly)
 # ---------------------------------------------------------------------------
-RUN_NAME = "aiact_categ_n_4_stiff_b005"
-DATASET_NAME = "fourgoals_2_stiff2"
+RUN_NAME = "categ_n_b0005_v8k8"
+DATASET_NAME = "fourgoals_2"
 CHECKPOINT_NAME = "latest_ckpt.ckpt"  # or "ckpt_020000.ckpt"
 
 EPISODE_FILE_NAME = "ep_51_stiff.pkl"
 USE_EPISODE_LIST = True
-EPISODE_LIST = [
-    # "ep_06_stiff",
-    # "ep_20_stiff",
-    # "ep_21_stiff",
-    "ep_25_stiff",
-    "ep_29_stiff",
-    "ep_50_stiff",
-]
+EPISODE_LIST = []
+if DATASET_NAME == "fourgoals_2":
+    EPISODE_LIST = [
+        # "ep_03_soft",
+        # "ep_13_stiff",
+        # "ep_13_soft",
+        # "ep_15_stiff",
+        # "ep_20_stiff",
+        "ep_28_soft",
+        "ep_34_stiff",
+        "ep_42_stiff",
+        # "ep_43_stiff",
+        "ep_49_soft",
+        # "ep_57_soft",
+        # "ep_58_stiff",
+    ]
+elif DATASET_NAME == "fourgoals_2_stiff2":
+    EPISODE_LIST = [    
+        # "ep_06_stiff",
+        # "ep_20_stiff",
+        # "ep_21_stiff",
+        "ep_25_stiff",
+        "ep_29_stiff",
+        "ep_50_stiff",
+    ]
 
 RUN_DIR = Path.home() / "activeinference" / "factr" / "checkpoints" / DATASET_NAME / RUN_NAME / "rollout"
 RAW_EPISODE_DIR = Path.home() / "activeinference" / "factr" / "process_data" / "data_to_process" / DATASET_NAME / "data"

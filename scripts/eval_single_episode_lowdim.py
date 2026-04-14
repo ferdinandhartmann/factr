@@ -26,21 +26,38 @@ if str(PROJECT_ROOT) not in sys.path:
 # ---------------------------------------------------------------------------
 # User Config (edit these variables, then run this script directly)
 # ---------------------------------------------------------------------------
-RUN_NAME = "aiact_categ_n_4_stiff_b005"
-DATASET_NAME = "fourgoals_2_stiff2"
+RUN_NAME = "categ_n_b0005_v8k8"
+DATASET_NAME = "fourgoals_2"
 CHECKPOINT_NAME = "latest_ckpt.ckpt"
 
 EPISODE_FILE_NAME = "ep_52_stiff.pkl"
 EPISODE_INDEX = 0  # index in sorted *.pkl files
 USE_EPISODE_LIST = True
-EPISODE_LIST = [
-    # "ep_06_stiff",
-    # "ep_20_stiff",
-    # "ep_21_stiff",
-    "ep_25_stiff",
-    "ep_29_stiff",
-    "ep_50_stiff",
-]
+EPISODE_LIST = []
+if DATASET_NAME == "fourgoals_2":
+    EPISODE_LIST = [
+        # "ep_03_soft",
+        # "ep_13_stiff",
+        # "ep_13_soft",
+        # "ep_15_stiff",
+        # "ep_20_stiff",
+        "ep_28_soft",
+        "ep_34_stiff",
+        "ep_42_stiff",
+        # "ep_43_stiff",
+        "ep_49_soft",
+        # "ep_57_soft",
+        # "ep_58_stiff",
+    ]
+elif DATASET_NAME == "fourgoals_2_stiff2":
+    EPISODE_LIST = [
+        # "ep_06_stiff",
+        # "ep_20_stiff",
+        # "ep_21_stiff",
+        "ep_25_stiff",
+        "ep_29_stiff",
+        "ep_50_stiff",
+    ]
 
 LIST_EPISODES_ONLY = False  # list available episodes and exit, without running evaluation
 
@@ -54,7 +71,7 @@ ROLLOUT_CONFIG_OVERRIDE = Path.home() / "activeinference" / "factr" / "process_d
 NUM_SAMPLES = 30
 ACTION_SOURCE = "prior"  # one of: prior, posterior
 NORMALIZATION_MODE = "apply"  # one of: auto, apply, skip
-PREDICTION_STRIDE = 25  # stride for fan plot + 3d plot
+PREDICTION_STRIDE = 40  # stride for fan plot + 3d plot
 VIEW_ELEV = 24
 VIEW_AZIM = -60
 SHOW_PLOT = False  # shows also 3d plot

@@ -11,7 +11,7 @@ hydra:
     env_set:
       CUDA_VISIBLE_DEVICES: "2"
 
-dataset_name: fourgoals_2
+dataset_name: fourgoals_2_noclip
 # dataset_name: fourgoals_2_stiff2
 stiffness_classes: 2
 

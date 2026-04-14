@@ -242,10 +242,16 @@ def normalize_states_groupwise(all_states_for_norm, state_obs_topics, state_topi
     if pose_clip_value is not None:
         pos_group["clip"] = float(pose_clip_value)
     stats["groups"].append(pos_group)
+    
+    # orientation_mean, orientation_std = _compute_gaussian_stats(all_states_for_norm, ori_slice)
+    # _apply_gaussian(all_states_for_norm, ori_slice, orientation_mean, orientation_std)
     stats["groups"].append(
         {
             "name": "ee_orientation",
             "type": "identity",
+            # "type": "gaussian",
+            # "mean": [float(x) for x in orientation_mean],
+            # "std": [float(x) for x in orientation_std],
             "indices": [ori_slice.start, ori_slice.stop],
         }
     )
@@ -385,10 +391,16 @@ def normalize_actions_groupwise(all_actions_for_norm, cfg):
     if pose_clip_value is not None:
         pos_group["clip"] = float(pose_clip_value)
     stats["groups"].append(pos_group)
+    
+    # orientation_mean, orientation_std = _compute_gaussian_stats(all_actions_for_norm, ori_slice)
+    # _apply_gaussian(all_actions_for_norm, ori_slice, orientation_mean, orientation_std)
     stats["groups"].append(
         {
             "name": "ee_orientation",
             "type": "identity",
+            # "type": "gaussian",
+            # "mean": [float(x) for x in orientation_mean],
+            # "std": [float(x) for x in orientation_std],
             "indices": [ori_slice.start, ori_slice.stop],
         }
     )

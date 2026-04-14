@@ -11,62 +11,6 @@ rsync -avzP --inplace --nocompression otake@192.168.1.172:/home/otake/factr_ws/r
 rsync -avP otake@192.168.1.172:/home/otake/factr_ws/raw_data/{fourgoals_1_stiff,fourgoals_1_medium,fourgoals_1_soft} .
 ```
 
-## Topics in .pkl File
-
-The following topics are included in the `.pkl` file:
-
-- `/joint_impedance_command_controller/joint_trajectory` use for training
-- `/franka/right/obs_franka_state` from follower, published again
-- `/franka/right/obs_franka_torque` from follower, published again
-- `/franka_robot_state_broadcaster/measured_joint_states` from follower 
-- `/franka_robot_state_broadcaster/external_joint_torques` from follower 
-- `/realsense/arm/im`  
-- `/realsense/arm/depth`
-
-
-[tool.black]
-
-line-length = 120
-
-target-version = ['py39']
-
-include = '\.pyi?$'
-
-extend-exclude = '/(\.git|\.hg|\.mypy_cache|\.tox|\.venv|build|dist)/'
-
-####################
-modified:   factr/cfg/agent/transformer_lowdim.yaml
-modified:   factr/cfg/task/single_franka_lowdim.yaml
-modified:   factr/cfg/train_bc_lowdim.yaml
-modified:   factr/cfg/train_obs_pred_lowdim.yaml
-modified:   factr/models/lowdim_action_transformer.py
-modified:   factr/plot_utils.py
-modified:   factr/replay_buffer.py
-modified:   factr/task.py
-modified:   factr/task_obs_pred.py
-modified:   notes.md
-modified:   process_data/all_in_one_plot.py
-modified:   process_data/cfg/default.yaml
-modified:   process_data/check_buffer_pkl_print.py
-modified:   process_data/check_buffer_plot.py
-modified:   process_data/process_data.py
-modified:   process_data/rename.py
-modified:   scripts/eval_single_episode_lowdim.py
-modified:   scripts/eval_z_distr.py
-
-
-
-# 🦾 FACTR Teleoperation Topics Overview
-
-| **Topic** | **Publisher** | **Type** | **Direction** | **Description** |
-|------------|---------------|-----------|----------------|------------------|
-| `/franka/<side>/obs_franka_state` | `FACTRTeleopFrankaZMQ` | `sensor_msgs/JointState` | **Follower → ROS** | Mirror of the follower Franka’s current joint positions (received via ZMQ, re-published into ROS for logging/training). |
-| `/franka/<side>/obs_franka_torque` | `FACTRTeleopFrankaZMQ` | `sensor_msgs/JointState` | **Follower → ROS** | External joint torques of the follower Franka, used for force feedback or contact analysis. |
-| `/factr_teleop/<side>/cmd_franka_pos` | `FACTRTeleopFrankaZMQ` | `sensor_msgs/JointState` | **Leader → Follower** | Commanded joint positions from the leader arm to the follower robot. Represents desired motion. |
-| `/factr_teleop/<side>/cmd_gripper_pos` | `FACTRTeleopFrankaZMQ` | `sensor_msgs/JointState` | **Leader → Follower** | Commanded gripper open/close position from the leader gripper to the follower gripper. |
-| `/gripper/<side>/obs_gripper_torque` | Follower gripper driver | `sensor_msgs/JointState` | **Follower → ROS** | Measured torque (or load) on the follower’s gripper fingers, used for haptic feedback. |
-| `/franka_robot_state_broadcaster/external_joint_torques` | Franka ROS driver | `sensor_msgs/JointState` | **Robot → ROS** | Native Franka topic publishing estimated external torques (used by FACTR for reference or debugging). |
-
 
 ## Check Folder File Sizes
 To check the size of all files in the folder, sorted and displayed in a human-readable format, use the following command:
@@ -91,7 +35,6 @@ To check the disk usage of files and directories in the current folder, sorted b
 ```bash
 du -sh * | sort -h
 ```
-
 
 
 ## Persistent Terminal Session with tmux
@@ -135,6 +78,7 @@ To ensure your terminal session continues running even after disconnecting from 
 
 rsync -avz -e ssh otake@192.168.1.172:~/factr_ws/raw_data/box_lift_3 .
 
+
 ## Delete All JSON Files in the Folder
 
 To delete all `.json` files in the current folder, use the following command:
@@ -149,8 +93,3 @@ rm *.json
 **Caution:** This command is irreversible. Double-check the folder contents before running it.
 
 conda install -c conda-forge roboticstoolbox-python
-
-
-when moving folder and the factr library doesnt work anymore:
-python -m pip uninstall -y factr
-python -m pip install -e .

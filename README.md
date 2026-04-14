@@ -1,3 +1,39 @@
+# Modified FACTR Model, ACT Policy Model for Active Inference, and Observation Prediction Model 
+
+## Environment Setup
+```bash
+conda env create -f env.yaml
+conda activate factr
+```
+
+## When moving folder and the factr library doesnt work anymore:
+```bash
+python -m pip uninstall -y factr
+python -m pip install -e .
+```
+
+### Data Processing
+```bash
+python process_data/process_data.py
+```
+[Config file](process_data/cfg/default.yaml) is used for configuration 
+
+
+## Training
+
+
+```bash
+bash factr/train_bc_policy.py
+```
+The parameters are set in the [config file](cfg/train_bc.yaml)
+
+
+
+</br></br></br></br></br></br></br>
+
+# Original README.md
+
+</br>
 
 <h1> FACTR: Force-Attending Curriculum Training for Contact-Rich Policy Learning </h1>
 

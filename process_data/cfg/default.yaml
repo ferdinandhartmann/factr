@@ -1,6 +1,6 @@
 
-input_path: /home/ferdinand/activeinference/factr/process_data/data_to_process/fourgoals_2_stiff/data
-output_path: /home/ferdinand/activeinference/factr/process_data/processed_data/fourgoals_2_stiff2
+input_path: /home/ferdinand/activeinference/factr/process_data/data_to_process/fourgoals_2/data
+output_path: /home/ferdinand/activeinference/factr/process_data/processed_data/fourgoals_2_noclip_full
 
 downsample: False
 data_frequency: 50.0
@@ -22,10 +22,10 @@ obs_topics:
 # Explicit pose topic for grouped normalization (must be present in `obs_topics`)
 pose_topic: /franka_robot_state_broadcaster/robot_state
  
-pose_clip: 5.0           # set 0 to disable clipping (for observations and actions)
-velocity_clip: 3.0       # set 0 to disable clipping
-tracking_error_clip: 5.0 # set 0 to disable clipping (after Gaussian normalization)
-wrench_clip: 5.0         # set 0 to disable clipping
+pose_clip: 0.0           # set 0 to disable clipping (for observations and actions)
+velocity_clip: 0.0       # set 0 to disable clipping
+tracking_error_clip: 0.0 # set 0 to disable clipping (after Gaussian normalization)
+wrench_clip: 0.0         # set 0 to disable clipping
 
 
 action_config:
@@ -36,7 +36,7 @@ action_config:
 # class=1 (low), class=2 (medium), class=3 (high)
 stiffness_label_topic: /cartesian_impedance_gains
 stiffness_label_key: stiffness
-stiffness_norm_thresholds: [] # If empty, only 1 class
+stiffness_norm_thresholds: [500] # If empty, only 1 class
 
 goal_topic: 
   - /goal
@@ -44,7 +44,7 @@ goal_topic:
 # Optional train/test split at buffer creation time (episode-level random split).
 # When enabled: writes two files in `output_path`, e.g. `buf_train.pkl` and `buf_test.pkl`.
 train_test_split:
-  enabled: true
+  enabled: false
   train_ratio: 0.90
   seed: 45
   train_buffer_name: buf_train
