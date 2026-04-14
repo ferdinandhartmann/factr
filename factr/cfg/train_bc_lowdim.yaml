@@ -6,15 +6,19 @@ defaults:
 
 hydra:
   run:
-    dir: /home/ferdinand/activeinference/factr/checkpoints/${exp_name}
+    dir: /home/ferdinand/activeinference/factr/checkpoints/${dataset_name}/${exp_name}
   job:
     env_set:
       CUDA_VISIBLE_DEVICES: "2"
 
-buffer_path: /home/ferdinand/activeinference/factr/process_data/processed_data/fourgoals_2_stiff2/buf_train.pkl
-test_buffer_path: /home/ferdinand/activeinference/factr/process_data/processed_data/fourgoals_2_stiff2/buf_test.pkl
+dataset_name: fourgoals_2
+# dataset_name: fourgoals_2_stiff2
+stiffness_classes: 2
 
-exp_base_name: aiact_categ_n_4_stiff_b0005_v8k8
+buffer_path: /home/ferdinand/activeinference/factr/process_data/processed_data/${dataset_name}/buf_train.pkl
+test_buffer_path: /home/ferdinand/activeinference/factr/process_data/processed_data/${dataset_name}/buf_test.pkl
+
+exp_base_name: categ_n_b0005_v8k8
 suffix: _
 exp_name: ${exp_base_name}
 
@@ -29,7 +33,6 @@ resume: false
 
 ac_chunk: 30
 obs_window: 12
-stiffness_classes: 1
 
 train_transform: none
 test_transform: none
@@ -41,7 +44,7 @@ eval_freq_plot: 2500  # Must be multiple of eval_freq
 
 wandb:
   name: ${exp_name}
-  project: aiact_2_stiff
+  project: aiact_${dataset_name}
   group: bc
   debug: False
   entity: None

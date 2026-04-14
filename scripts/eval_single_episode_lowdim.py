@@ -27,12 +27,9 @@ if str(PROJECT_ROOT) not in sys.path:
 # User Config (edit these variables, then run this script directly)
 # ---------------------------------------------------------------------------
 RUN_NAME = "aiact_categ_n_4_stiff_b005"
-BUFFER_BASE_NAME = "fourgoals_2_stiff2"
-RUN_DIR = Path.home() / "activeinference" / "factr" / "checkpoints" / RUN_NAME / "rollout"
+DATASET_NAME = "fourgoals_2_stiff2"
 CHECKPOINT_NAME = "latest_ckpt.ckpt"
 
-# Raw episode source
-RAW_EPISODE_DIR = Path.home() / "activeinference" / "factr" / "process_data" / "data_to_process" / "fourgoals_2_stiff" / "data"
 EPISODE_FILE_NAME = "ep_52_stiff.pkl"
 EPISODE_INDEX = 0  # index in sorted *.pkl files
 USE_EPISODE_LIST = True
@@ -45,10 +42,14 @@ EPISODE_LIST = [
     "ep_50_stiff",
 ]
 
-LIST_EPISODES_ONLY = False
+LIST_EPISODES_ONLY = False  # list available episodes and exit, without running evaluation
 
-BUFFER_PATH_OVERRIDE = Path.home() / "activeinference" / "factr" / "process_data" / "processed_data" / BUFFER_BASE_NAME / "buf_test.pkl"
-ROLLOUT_CONFIG_OVERRIDE = Path.home() / "activeinference" / "factr" / "process_data" / "processed_data" / BUFFER_BASE_NAME / "rollout_config.yaml"
+RUN_DIR = Path.home() / "activeinference" / "factr" / "checkpoints" / DATASET_NAME / RUN_NAME / "rollout"
+# Raw episode source
+RAW_EPISODE_DIR = Path.home() / "activeinference" / "factr" / "process_data" / "data_to_process" / DATASET_NAME / "data"
+
+BUFFER_PATH_OVERRIDE = Path.home() / "activeinference" / "factr" / "process_data" / "processed_data" / DATASET_NAME / "buf_test.pkl"
+ROLLOUT_CONFIG_OVERRIDE = Path.home() / "activeinference" / "factr" / "process_data" / "processed_data" / DATASET_NAME / "rollout_config.yaml"
 
 NUM_SAMPLES = 30
 ACTION_SOURCE = "prior"  # one of: prior, posterior

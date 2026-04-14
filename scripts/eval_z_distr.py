@@ -54,10 +54,8 @@ except Exception:
 # User Config (edit these variables, then run this script directly)
 # ---------------------------------------------------------------------------
 RUN_NAME = "aiact_categ_n_4_stiff_b005"
-RUN_DIR = Path.home() / "activeinference" / "factr" / "checkpoints" / RUN_NAME / "rollout"
+DATASET_NAME = "fourgoals_2_stiff2"
 CHECKPOINT_NAME = "latest_ckpt.ckpt"  # or "ckpt_020000.ckpt"
-
-RAW_EPISODE_DIR = Path("/home/ferdinand/activeinference/factr/process_data/data_to_process/fourgoals_2_stiff/data")
 
 EPISODE_FILE_NAME = "ep_51_stiff.pkl"
 USE_EPISODE_LIST = True
@@ -69,6 +67,9 @@ EPISODE_LIST = [
     "ep_29_stiff",
     "ep_50_stiff",
 ]
+
+RUN_DIR = Path.home() / "activeinference" / "factr" / "checkpoints" / DATASET_NAME / RUN_NAME / "rollout"
+RAW_EPISODE_DIR = Path.home() / "activeinference" / "factr" / "process_data" / "data_to_process" / DATASET_NAME / "data"
 
 GPU_ID = 2
 # If None, outputs are saved under: <checkpoints>/<RUN_NAME>/eval_z
