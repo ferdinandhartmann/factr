@@ -1,6 +1,6 @@
 
 input_path: /home/ferdinand/activeinference/factr/process_data/data_to_process/fourgoals_2/data
-output_path: /home/ferdinand/activeinference/factr/process_data/processed_data/fourgoals_2_noclip_full
+output_path: /home/ferdinand/activeinference/factr/process_data/processed_data/fourgoals_2_allgauss_noclip_cmdinput
 
 downsample: False
 data_frequency: 50.0
@@ -15,6 +15,7 @@ obs_topics:
   - /cartesian_impedance_controller/ee_velocity
   - /franka_robot_state_broadcaster/external_wrench_in_stiffness_frame
   - /cartesian_impedance_controller/tracking_error
+  - /cartesian_impedance_controller/pose_command # added to see if predictions are with less jumps
 
 
 # Normalization
@@ -44,7 +45,7 @@ goal_topic:
 # Optional train/test split at buffer creation time (episode-level random split).
 # When enabled: writes two files in `output_path`, e.g. `buf_train.pkl` and `buf_test.pkl`.
 train_test_split:
-  enabled: false
+  enabled: true
   train_ratio: 0.90
   seed: 45
   train_buffer_name: buf_train

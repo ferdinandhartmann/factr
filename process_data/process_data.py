@@ -196,8 +196,9 @@ def normalize_states_groupwise(all_states_for_norm, state_obs_topics, state_topi
     vel_topic = "/cartesian_impedance_controller/ee_velocity"
     track_topic = "/cartesian_impedance_controller/tracking_error"
     wrench_topic = "/franka_robot_state_broadcaster/external_wrench_in_stiffness_frame"
+    cmd_topic = "/cartesian_impedance_controller/pose_command"
 
-    required_topics = [pose_topic, vel_topic, track_topic, wrench_topic]
+    required_topics = [pose_topic, vel_topic, track_topic, wrench_topic, cmd_topic]
     missing_topics = [t for t in required_topics if t is None or t not in topic_slices]
     if missing_topics:
         print(f"⚠️ Missing topics for grouped normalization: {missing_topics}. Falling back to gaussian norm.")
@@ -218,6 +219,10 @@ def normalize_states_groupwise(all_states_for_norm, state_obs_topics, state_topi
     wrench_slice = topic_slices[wrench_topic]
     if (wrench_slice.stop - wrench_slice.start) != 6:
         raise ValueError(f"External wrench topic {wrench_topic} must be 6-dim.")
+
+    cmd_slice = topic_slices[cmd_topic]
+    if (cmd_slice.stop - cmd_slice.start) != 9:
+        raise ValueError(f"Command topic {cmd_topic} must be 9-dim.")
 
     pos_slice = slice(pose_slice.start, pose_slice.start + 3)
     ori_slice = slice(pose_slice.start + 3, pose_slice.start + 9)
@@ -242,19 +247,31 @@ def normalize_states_groupwise(all_states_for_norm, state_obs_topics, state_topi
     if pose_clip_value is not None:
         pos_group["clip"] = float(pose_clip_value)
     stats["groups"].append(pos_group)
-    
-    # orientation_mean, orientation_std = _compute_gaussian_stats(all_states_for_norm, ori_slice)
-    # _apply_gaussian(all_states_for_norm, ori_slice, orientation_mean, orientation_std)
+
+    orientation_mean, orientation_std = _compute_gaussian_stats(all_states_for_norm, ori_slice)
+    _apply_gaussian(all_states_for_norm, ori_slice, orientation_mean, orientation_std)
     stats["groups"].append(
         {
             "name": "ee_orientation",
-            "type": "identity",
-            # "type": "gaussian",
-            # "mean": [float(x) for x in orientation_mean],
-            # "std": [float(x) for x in orientation_std],
+            # "type": "identity", ###
+            "type": "gaussian",
+            "mean": [float(x) for x in orientation_mean],
+            "std": [float(x) for x in orientation_std],
             "indices": [ori_slice.start, ori_slice.stop],
         }
     )
+
+    ### added command to input
+    cmd_mean, cmd_std = _compute_gaussian_stats(all_states_for_norm, cmd_slice)
+    _apply_gaussian(all_states_for_norm, cmd_slice, cmd_mean, cmd_std)
+    cmd_group = {
+        "name": "ee_pose_commanded",
+        "type": "gaussian",
+        "indices": [cmd_slice.start, cmd_slice.stop],
+        "mean": [float(x) for x in cmd_mean],
+        "std": [float(x) for x in cmd_std],
+    }
+    stats["groups"].append(cmd_group)
 
     vel_mean, vel_std = _compute_gaussian_stats(all_states_for_norm, vel_slice)
     _apply_gaussian(all_states_for_norm, vel_slice, vel_mean, vel_std)
@@ -391,16 +408,16 @@ def normalize_actions_groupwise(all_actions_for_norm, cfg):
     if pose_clip_value is not None:
         pos_group["clip"] = float(pose_clip_value)
     stats["groups"].append(pos_group)
-    
-    # orientation_mean, orientation_std = _compute_gaussian_stats(all_actions_for_norm, ori_slice)
-    # _apply_gaussian(all_actions_for_norm, ori_slice, orientation_mean, orientation_std)
+
+    orientation_mean, orientation_std = _compute_gaussian_stats(all_actions_for_norm, ori_slice)
+    _apply_gaussian(all_actions_for_norm, ori_slice, orientation_mean, orientation_std)
     stats["groups"].append(
         {
             "name": "ee_orientation",
-            "type": "identity",
-            # "type": "gaussian",
-            # "mean": [float(x) for x in orientation_mean],
-            # "std": [float(x) for x in orientation_std],
+            # "type": "identity", ###
+            "type": "gaussian",
+            "mean": [float(x) for x in orientation_mean],
+            "std": [float(x) for x in orientation_std],
             "indices": [ori_slice.start, ori_slice.stop],
         }
     )
@@ -508,7 +525,7 @@ def main(cfg: DictConfig):
 
     # initialize topics
     # all_topics = state_obs_topics + rgb_obs_topics + action_topics
-    all_topics = state_obs_topics + action_topics + goal_topics
+    all_topics = list(dict.fromkeys(state_obs_topics + action_topics + goal_topics))
     if stiffness_label_topic and stiffness_label_topic not in all_topics:
         all_topics.append(stiffness_label_topic)
 
@@ -577,7 +594,7 @@ def main(cfg: DictConfig):
     all_episodes = sorted(
         [f for f in data_folder.iterdir() if f.name.startswith("ep_") and f.name.endswith(".pkl")], key=extract_ep_index
     )
-    
+
     print(f"These episodes will be processed in this order: {[str(p.name) for p in all_episodes]}")
 
     trajectories = []

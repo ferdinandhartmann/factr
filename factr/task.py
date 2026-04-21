@@ -401,7 +401,7 @@ class BCTask(DefaultTask):
                     posterior_kl_losses.append(output_dict["kl"].item())
                 if output_dict.get("prior_std_mean") is not None:
                     prior_std_mean_vals.append(output_dict["prior_std_mean"].item())
-                if output_dict.get("posterior_std_mean") is not None:
+                if output_dict.get("posterior_std_mean") is not None and model.latent_distribution != "categorical":
                     posterior_std_mean_vals.append(output_dict["posterior_std_mean"].item())
                 if output_dict.get("prior_entropy") is not None:
                     prior_entropy_vals.append(output_dict["prior_entropy"].item())
@@ -555,7 +555,11 @@ class BCTask(DefaultTask):
                 "eval/posterior_kl": mean_posterior_kl,
                 "eval/prior_l2": ac_l2,
                 "eval/prior_lsig": ac_lsig,
-                "eval/prior_std_mean": mean_prior_std,
+                **(
+                    {"eval/prior_std_mean": mean_prior_std}
+                    if getattr(model, "latent_distribution", None) != "categorical"
+                    else {}
+                ),
                 "eval/posterior_std_mean": mean_posterior_std,
                 "eval/prior_entropy": mean_prior_entropy,
                 "eval/posterior_entropy": mean_posterior_entropy,

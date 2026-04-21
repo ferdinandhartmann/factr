@@ -589,6 +589,6 @@ def plot_buffer(buf_path, output_dir=None, step=1, rollout_config_path=None, den
 
 
 if __name__ == "__main__":
-    buf_path = "/home/ferdinand/activeinference/factr/process_data/processed_data/fourgoals_2_allgauss_noclip_full/buf.pkl"
+    buf_path = "/home/ferdinand/activeinference/factr/process_data/processed_data/fourgoals_2_allgauss_noclip_cmdinput/buf_train.pkl"
 
     plot_buffer(buf_path, denormalize=False)
