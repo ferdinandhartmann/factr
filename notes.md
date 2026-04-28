@@ -11,6 +11,55 @@ rsync -avzP --inplace --nocompression otake@192.168.1.172:/home/otake/factr_ws/r
 rsync -avP otake@192.168.1.172:/home/otake/factr_ws/raw_data/{fourgoals_1_stiff,fourgoals_1_medium,fourgoals_1_soft} .
 ```
 
+### Check Stiffness Labels of train.buf (Available ones and count)
+
+```bash
+python - <<'PY'
+import pickle
+from collections import Counter
+
+file = "/home/ferdinand/activeinference/factr/process_data/processed_data/fourgoals_12_allgauss_noclip_cmdinput/buf_train.pkl"
+
+with open(file, "rb") as f:
+    data = pickle.load(f)
+
+labels = []
+
+for ep in data:
+    for step in ep:
+        obs = step[0]
+        labels.append(obs["stiffness_label"])
+
+counter = Counter(labels)
+
+print("Total labels:", len(labels))
+print("Unique labels:", sorted(counter.keys()))
+print()
+print("Counts:")
+for k, v in sorted(counter.items()):
+    print(f"{k}: {v}")
+PY
+```
+
+Per Edpisode:
+
+```bash
+python - <<'PY'
+import pickle
+from collections import Counter
+
+file = "/home/ferdinand/activeinference/factr/process_data/processed_data/fourgoals_12_allgauss_noclip_cmdinput/buf_train.pkl"
+
+with open(file, "rb") as f:
+    data = pickle.load(f)
+
+for i, ep in enumerate(data):
+    labels = [step[0]["stiffness_label"] for step in ep]
+    c = Counter(labels)
+    print(f"Episode {i:03d}: len={len(ep)}, labels={dict(sorted(c.items()))}")
+PY
+```
+
 
 ## Check Folder File Sizes
 To check the size of all files in the folder, sorted and displayed in a human-readable format, use the following command:

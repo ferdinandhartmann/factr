@@ -1,6 +1,6 @@
 
-input_path: /home/ferdinand/activeinference/factr/process_data/data_to_process/fourgoals_2/data
-output_path: /home/ferdinand/activeinference/factr/process_data/processed_data/fourgoals_2_allgauss_noclip_cmdinput
+input_path: /home/ferdinand/activeinference/factr/process_data/data_to_process/fourgoals_12/data
+output_path: /home/ferdinand/activeinference/factr/process_data/processed_data/fourgoals_12_allgauss_noclip_cmdinput
 
 downsample: False
 data_frequency: 50.0

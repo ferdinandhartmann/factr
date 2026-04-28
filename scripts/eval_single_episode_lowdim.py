@@ -27,14 +27,15 @@ if str(PROJECT_ROOT) not in sys.path:
 # User Config (edit these variables, then run this script directly)
 # ---------------------------------------------------------------------------
 RUN_NAME = "categ_n_b0005_v8k8"
-DATASET_NAME = "fourgoals_2"
+DATASET_NAME = "fourgoals_12"
+BUFFER_SET_NAME = "fourgoals_12_allgauss_noclip_cmdinput"  
 CHECKPOINT_NAME = "latest_ckpt.ckpt"
 
 EPISODE_FILE_NAME = "ep_52_stiff.pkl"
 EPISODE_INDEX = 0  # index in sorted *.pkl files
 USE_EPISODE_LIST = True
 EPISODE_LIST = []
-if DATASET_NAME == "fourgoals_2":
+if BUFFER_SET_NAME == "fourgoals_2":
     EPISODE_LIST = [
         # "ep_03_soft",
         # "ep_13_stiff",
@@ -49,7 +50,7 @@ if DATASET_NAME == "fourgoals_2":
         # "ep_57_soft",
         # "ep_58_stiff",
     ]
-elif DATASET_NAME == "fourgoals_2_stiff2":
+elif BUFFER_SET_NAME == "fourgoals_2_stiff2":
     EPISODE_LIST = [
         # "ep_06_stiff",
         # "ep_20_stiff",
@@ -58,15 +59,57 @@ elif DATASET_NAME == "fourgoals_2_stiff2":
         "ep_29_stiff",
         "ep_50_stiff",
     ]
+elif BUFFER_SET_NAME == "fourgoals_2_allgauss_noclip_cmdinput":
+    EPISODE_LIST = [
+        "ep_03_soft",
+        "ep_13_stiff",
+        "ep_13_soft",
+        "ep_15_stiff",
+        "ep_20_stiff",
+        "ep_28_soft",
+        "ep_34_stiff",
+        "ep_42_stiff",
+        "ep_43_stiff",
+        "ep_49_soft",
+        "ep_57_soft",
+        "ep_58_stiff",
+    ]
+elif BUFFER_SET_NAME == "fourgoals_12_allgauss_noclip_cmdinput":
+    EPISODE_LIST = [
+        # "ep_103_soft",
+        # "ep_109_stiff",
+        # "ep_110_medium",
+        # "ep_112_medium",
+        # "ep_113_medium",
+        "ep_113_stiff",
+        "ep_114_medium",
+        # "ep_115_medium",
+        # "ep_116_medium",
+        # "ep_123_soft",
+        "ep_124_soft",
+        # "ep_128_medium",
+        # "ep_129_soft",
+        # "ep_130_stiff",
+        # "ep_139_stiff",
+        # "ep_218_stiff",
+        "ep_225_soft",
+        # "ep_232_stiff",
+        # "ep_247_stiff",
+        "ep_250_stiff",
+        # "ep_252_stiff",
+        # "ep_253_soft",
+        # "ep_258_stiff",
+        # "ep_260_stiff",
+    ]
 
 LIST_EPISODES_ONLY = False  # list available episodes and exit, without running evaluation
 
-RUN_DIR = Path.home() / "activeinference" / "factr" / "checkpoints" / DATASET_NAME / RUN_NAME / "rollout"
+RUN_DIR = Path.home() / "activeinference" / "factr" / "checkpoints" / BUFFER_SET_NAME / RUN_NAME / "rollout"
 # Raw episode source
 RAW_EPISODE_DIR = Path.home() / "activeinference" / "factr" / "process_data" / "data_to_process" / DATASET_NAME / "data"
 
-BUFFER_PATH_OVERRIDE = Path.home() / "activeinference" / "factr" / "process_data" / "processed_data" / DATASET_NAME / "buf_test.pkl"
-ROLLOUT_CONFIG_OVERRIDE = Path.home() / "activeinference" / "factr" / "process_data" / "processed_data" / DATASET_NAME / "rollout_config.yaml"
+BUFFER_PATH_OVERRIDE = Path.home() / "activeinference" / "factr" / "process_data" / "processed_data" / BUFFER_SET_NAME / "buf_test.pkl"
+ROLLOUT_CONFIG_OVERRIDE = Path.home() / "activeinference" / "factr" / "process_data" / "processed_data" / BUFFER_SET_NAME / "rollout_config.yaml"
 
 NUM_SAMPLES = 30
 ACTION_SOURCE = "prior"  # one of: prior, posterior
@@ -332,6 +375,9 @@ def _load_raw_episode_to_arrays(episode_file: Path, rollout_cfg) -> Dict:
     topics_for_sync = list(state_topics) + [action_topic]
     if stiffness_topic:
         topics_for_sync.append(stiffness_topic)
+    # Deduplicate topics while preserving order. This avoids double-processing
+    # when the action topic is also present in state_topics (e.g. cmd included).
+    topics_for_sync = list(dict.fromkeys(topics_for_sync))
     synced = _sync_data_slowest(raw_data, topics_for_sync)
 
     state_specs = {
@@ -343,6 +389,11 @@ def _load_raw_episode_to_arrays(episode_file: Path, rollout_cfg) -> Dict:
             "fallback": "data",
         },
         "/cartesian_impedance_controller/tracking_error": {"keys": ["tracking_error"], "dim": 6, "fallback": "data"},
+        "/cartesian_impedance_controller/pose_command": {
+            "keys": ["ee_pose_commanded"],
+            "dim": action_dim,
+            "fallback": None,
+        },
     }
     action_specs = {
         "/cartesian_impedance_controller/pose_command": {
