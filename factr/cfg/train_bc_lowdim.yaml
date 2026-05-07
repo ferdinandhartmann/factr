@@ -42,6 +42,13 @@ eval_freq: 500
 eval_freq_plot: 2500  # Must be multiple of eval_freq
 # save_freq: 2500
 
+diversity_enable: true
+diversity_num_samples: 30
+diversity_weight: 0.02
+diversity_weight_position: 1.0
+diversity_weight_orientation: 0.5
+diversity_warmup_steps: 500
+
 wandb:
   name: ${exp_name}
   project: ${dataset_project_prefix}${dataset_name}
