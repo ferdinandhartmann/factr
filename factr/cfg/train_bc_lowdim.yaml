@@ -18,7 +18,7 @@ stiffness_classes: 2
 buffer_path: /home/ferdinand/activeinference/factr/process_data/processed_data/${dataset_name}/buf_train.pkl
 test_buffer_path: /home/ferdinand/activeinference/factr/process_data/processed_data/${dataset_name}/buf_test.pkl
 
-exp_base_name: categ_b001_v8k2
+exp_base_name: categ_b001_v8k2_cattemp15_obs8
 suffix: _
 exp_name: ${exp_base_name}
 
@@ -32,7 +32,7 @@ seed: 42
 resume: false
 
 ac_chunk: 30
-obs_window: 12
+obs_window: 8
 
 train_transform: none
 test_transform: none

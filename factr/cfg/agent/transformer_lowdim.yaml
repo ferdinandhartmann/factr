@@ -25,7 +25,7 @@ fixed_prior: false            # false -> learn p(z|context) instead of keeping a
 
 categorical_num_variables: 8 # increasing variables compared to categories increases diversity
 categorical_num_categories: 2 # increase for finer choises
-categorical_temperature: 1.0 # Sharpness of the categorical distribution. (higher -> softer, lower -> sharper)
+categorical_temperature: 1.5 # Sharpness of the categorical distribution. (higher -> softer, lower -> sharper)
 categorical_straight_through: false # true: forward pass uses hard one-hot samples, but gradients flow through a soft version (straight-through estimator). false means fully soft samples (more smooth/stable, less discrete).
 
 # Light KL floor to reduce "KL -> 0 + z ignored" collapse.

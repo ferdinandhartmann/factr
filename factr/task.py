@@ -265,6 +265,27 @@ def _compute_endpoint_diversity(sampled_actions: torch.Tensor, mask: torch.Tenso
     return float(pairwise_vals.mean().item())
 
 
+def _compute_end_direction_diversity(sampled_actions: torch.Tensor, mask: torch.Tensor) -> float:
+    """Average pairwise L2 distance across sampled end-direction vectors."""
+    _, num_samples, _, _ = sampled_actions.shape
+    if num_samples < 2:
+        return 0.0
+
+    end_directions = sampled_actions[:, :, -1, :] - sampled_actions[:, :, -2, :]
+    end_direction_mask = mask[:, -1, :] * mask[:, -2, :]
+
+    diffs = end_directions.unsqueeze(2) - end_directions.unsqueeze(1)
+    sq = diffs.pow(2)
+
+    mask_expanded = end_direction_mask.unsqueeze(1).unsqueeze(1)
+    denom = mask_expanded.sum(dim=3).clamp(min=1.0)
+    rms = torch.sqrt((sq * mask_expanded).sum(dim=3) / denom)
+
+    tri_i, tri_j = torch.triu_indices(num_samples, num_samples, offset=1, device=sampled_actions.device)
+    pairwise_vals = rms[:, tri_i, tri_j]
+    return float(pairwise_vals.mean().item())
+
+
 def _compute_sample_diversity(sampled_actions: torch.Tensor, mask: torch.Tensor) -> float:
     """Average pairwise L2 distance across sampled action chunks.
 
@@ -435,6 +456,7 @@ class BCTask(DefaultTask):
         action_l2, action_lsig = [], []
         sample_diversity_vals = []
         sample_endpoint_diversity_vals = []
+        sample_end_direction_diversity_vals = []
         l2_per_joint_all = []
         chunk_mse_all = []
         accuracy_list = []
@@ -510,6 +532,19 @@ class BCTask(DefaultTask):
                 sample_endpoint_diversity = _compute_endpoint_diversity(sampled_eval_actions, mask)
                 if np.isfinite(sample_endpoint_diversity):
                     sample_endpoint_diversity_vals.append(sample_endpoint_diversity)
+                sampled_eval_actions_denorm = _apply_grouped_transform(
+                    sampled_eval_actions.detach().cpu().numpy(),
+                    self._eval_plot_action_stats,
+                    inverse=True,
+                )
+                sampled_eval_actions_denorm = torch.as_tensor(
+                    sampled_eval_actions_denorm,
+                    dtype=sampled_eval_actions.dtype,
+                    device=sampled_eval_actions.device,
+                )
+                sample_end_direction_diversity = _compute_end_direction_diversity(sampled_eval_actions_denorm, mask)
+                if np.isfinite(sample_end_direction_diversity):
+                    sample_end_direction_diversity_vals.append(sample_end_direction_diversity)
 
                 if generate_plots and first_plot_sample is None:
                     first_plot_sample = {
@@ -565,6 +600,19 @@ class BCTask(DefaultTask):
         mean_sample_endpoint_diversity = (
             np.mean(sample_endpoint_diversity_vals) if sample_endpoint_diversity_vals else float("nan")
         )
+        mean_sample_end_direction_diversity = (
+            np.mean(sample_end_direction_diversity_vals) if sample_end_direction_diversity_vals else float("nan")
+        )
+        diversity_weights = {
+            "sample": 1.0,
+            "endpoint": 1.0,
+            "end_direction": 1.0,
+        }
+        mean_sample_diversity_combined = (
+            diversity_weights["sample"] * mean_sample_diversity
+            + diversity_weights["endpoint"] * mean_sample_endpoint_diversity
+            + diversity_weights["end_direction"] * mean_sample_end_direction_diversity
+        )
         ac_l2 = np.mean(action_l2)
         ac_lsig = np.mean(action_lsig)
 
@@ -607,6 +655,7 @@ class BCTask(DefaultTask):
             f"prior_H: {mean_prior_entropy:.4f}\tpost_H: {mean_posterior_entropy:.4f}\t"
             f"sample_div: {mean_sample_diversity:.4f}\tsweep_score: {sweep_score:.4f}\t"
             f"sample_endpoint_div: {mean_sample_endpoint_diversity:.4f}\t"
+            f"sample_end_direction_div: {mean_sample_end_direction_diversity:.4f}\t"
             f"plot_steps: {len(selected_all_candidates)}\tplot_stride: {self.eval_plot_prediction_stride}\t"
             f"plot_samples: {self.eval_plot_num_samples}\tplot_label_counts: {plot_label_counts_str}"
         )
@@ -637,6 +686,8 @@ class BCTask(DefaultTask):
                 "eval/posterior_entropy": mean_posterior_entropy,
                 "eval/sample_diversity": mean_sample_diversity,
                 "eval/sample_endpoint_diversity": mean_sample_endpoint_diversity,
+                "eval/sample_end_direction_diversity": mean_sample_end_direction_diversity,
+                "eval/sample_diversity_combined": mean_sample_diversity_combined,
                 # "eval/sweep_score": sweep_score,
             }
 
