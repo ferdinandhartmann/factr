@@ -2,7 +2,7 @@ from typing import Optional
 
 import numpy as np
 
-from factr.plot_utils import RPYPlotConfig, build_obs_prediction_figure, build_tracking_error_figure
+from factr.utils_plot import RPYPlotConfig, build_obs_prediction_figure, build_tracking_error_figure
 
 
 def build_obs_prediction_plot(

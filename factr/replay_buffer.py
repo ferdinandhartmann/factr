@@ -103,6 +103,7 @@ BUF_SHUFFLE_RNG = 3904767649
 class ReplayBuffer(Dataset):
     def __init__(self, buffer_path, transform=None, n_train_demos=200, mode="train", ac_chunk=1):
         assert mode in ("train", "test"), "Mode must be train/test"
+        self.buffer_path = buffer_path
         buffer_data = self._load_buffer(buffer_path)
         assert len(buffer_data) >= n_train_demos, "Not enough demos!"
 
@@ -183,6 +184,7 @@ class RobobufReplayBuffer(ReplayBuffer):
         shuffle=True,
     ):
         assert mode in ("train", "test"), "Mode must be train/test"
+        self.buffer_path = buffer_path
         buf = _cached_load(buffer_path)
 
         n_test_trans = int(len(buf) * n_test_ratio)
@@ -312,6 +314,8 @@ class RobobufReplayBufferLowdim(ReplayBuffer):
         assert mode in ("train", "test"), "Mode must be train/test"
         assert obs_window >= 1, "obs_window must be >= 1"
         assert ac_chunk >= 1, "ac_chunk must be >= 1"
+
+        self.buffer_path = buffer_path
 
         self.obs_window = int(obs_window)
         self.obs_dim = int(obs_dim)
@@ -492,6 +496,8 @@ class RobobufReplayBufferObsPredLowdim(ReplayBuffer):
     ):
         assert mode in ("train", "test"), "Mode must be train/test"
         assert obs_window >= 1, "obs_window must be >= 1"
+
+        self.buffer_path = buffer_path
 
         self.obs_window = int(obs_window)
         self.obs_dim = int(obs_dim)

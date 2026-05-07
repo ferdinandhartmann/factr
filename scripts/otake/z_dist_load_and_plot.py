@@ -7,8 +7,7 @@ import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 import yaml
-
-from factr.plot_utils import (
+from factr.utils_plot import (
     build_z_categorical_distribution_with_frames_figure,
     build_z_gaussian_variance_with_frames_figure,
 )
@@ -68,9 +67,7 @@ def load_and_extract_raw_data(pkl_path: Path):
     return image_obs[:N], torque_obs[:N], actions[:N]
 
 
-def visualize_variance_gains_with_frames(
-    ep_name, entropy_ts, entropy_vals, gains_ts, gains_vals, raw_images, output_dir, Hz=30
-):
+def visualize_variance_gains_with_frames(ep_name, entropy_ts, entropy_vals, gains_ts, gains_vals, raw_images, output_dir, Hz=30):
     """
     Uncertainty(Variance), Gains, and Key Frames を1つの図にプロットする
     """
@@ -206,10 +203,7 @@ def plot_latent_with_frames(z_pkl_path, raw_images, save_dir, latent_distributio
 
     payload_guess = _guess_latent_distribution_from_payload(dists_data)
     if payload_guess is not None and payload_guess != latent_distribution:
-        print(
-            f"⚠️ Plot mode mismatch: YAML says '{latent_distribution}', "
-            f"but PKL looks like '{payload_guess}'. Using PKL mode."
-        )
+        print(f"⚠️ Plot mode mismatch: YAML says '{latent_distribution}', but PKL looks like '{payload_guess}'. Using PKL mode.")
         latent_distribution = payload_guess
 
     if latent_distribution == "categorical":

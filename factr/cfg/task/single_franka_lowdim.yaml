@@ -5,12 +5,10 @@ cam_indexes: []
 n_cams: ${len:${task.cam_indexes}}
 stiffness_classes: ${stiffness_classes}
 eval_plot_max_steps: 400
-eval_plot_prediction_stride: 20
-eval_plot_num_samples: 20
+eval_plot_prediction_stride: 30
+eval_plot_num_samples: 30
 
 # For Sweeping
-eval_diversity_num_samples: 10
-eval_diversity_max_batches: 2
 sweep_target_min_diversity: 0.02
 sweep_target_min_kl: 0.5
 sweep_diversity_penalty: 2.0

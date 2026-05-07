@@ -133,6 +133,99 @@ def _unwrap_euler_series(eulers, max_jump_deg=0.5):
     return unwrapped
 
 
+def _apply_ee_rotation_wrap_correction(
+    euler_series_list,
+    enabled=True,
+    near_2pi_tol_rad=np.deg2rad(60.0),
+    near_zero_tol_rad=np.deg2rad(60.0),
+    near_pi_tol_rad=np.deg2rad(45.0),
+):
+    if not enabled:
+        return euler_series_list
+
+    corrected = []
+    for arr in euler_series_list:
+        if isinstance(arr, np.ndarray):
+            corrected.append(arr.copy())
+        else:
+            corrected.append(arr)
+
+    if not corrected:
+        return corrected
+
+    n_axes = 3
+    for axis in range(n_axes):
+        medians = []
+        for arr in corrected:
+            if not isinstance(arr, np.ndarray) or arr.size == 0:
+                medians.append(np.nan)
+                continue
+            vals = arr[:, axis]
+            valid = vals[np.isfinite(vals)]
+            medians.append(float(np.nanmedian(valid)) if valid.size > 0 else np.nan)
+
+        finite_medians = [m for m in medians if np.isfinite(m)]
+        if not finite_medians:
+            continue
+
+        near_zero_medians = [m for m in finite_medians if abs(m) <= near_zero_tol_rad]
+        target = float(np.nanmedian(np.array(near_zero_medians, dtype=np.float64))) if near_zero_medians else 0.0
+
+        for idx, med in enumerate(medians):
+            if not np.isfinite(med):
+                continue
+            delta = med - target
+            if abs(abs(delta) - 2.0 * np.pi) <= near_2pi_tol_rad:
+                corrected[idx][:, axis] = corrected[idx][:, axis] - np.sign(delta) * 2.0 * np.pi
+
+    # Fallback for single-series plotting: use the other rotation axes as reference.
+    if len(corrected) == 1 and isinstance(corrected[0], np.ndarray) and corrected[0].size > 0:
+        arr = corrected[0]
+        axis_medians = []
+        for axis in range(n_axes):
+            vals = arr[:, axis]
+            valid = vals[np.isfinite(vals)]
+            axis_medians.append(float(np.nanmedian(valid)) if valid.size > 0 else np.nan)
+        for axis, med in enumerate(axis_medians):
+            if not np.isfinite(med):
+                continue
+            other_medians = [m for i, m in enumerate(axis_medians) if i != axis and np.isfinite(m)]
+            if not other_medians:
+                continue
+            if not any(abs(m) <= near_zero_tol_rad for m in other_medians):
+                continue
+            if abs(abs(med) - 2.0 * np.pi) <= near_2pi_tol_rad:
+                arr[:, axis] = arr[:, axis] - np.sign(med) * 2.0 * np.pi
+        corrected[0] = arr
+
+    # Handle the common plotting case where one axis sits near +/-pi
+    # while the other axes are near zero.
+    for idx, arr in enumerate(corrected):
+        if not isinstance(arr, np.ndarray) or arr.size == 0:
+            continue
+        axis_medians = []
+        for axis in range(n_axes):
+            vals = arr[:, axis]
+            valid = vals[np.isfinite(vals)]
+            axis_medians.append(float(np.nanmedian(valid)) if valid.size > 0 else np.nan)
+
+        near_zero_axes = [
+            axis for axis, med in enumerate(axis_medians) if np.isfinite(med) and abs(med) <= near_zero_tol_rad
+        ]
+        near_pi_axes = [
+            axis
+            for axis, med in enumerate(axis_medians)
+            if np.isfinite(med) and abs(abs(med) - np.pi) <= near_pi_tol_rad
+        ]
+        if len(near_pi_axes) == 1 and len(near_zero_axes) >= 1:
+            axis = near_pi_axes[0]
+            med = axis_medians[axis]
+            arr[:, axis] = arr[:, axis] - np.sign(med) * np.pi
+            corrected[idx] = arr
+
+    return corrected
+
+
 def _extract_scalar_from_jointstate(data_list, key, index=0):
     vals = []
     for d in data_list:
@@ -181,7 +274,9 @@ def extract_topic_data(pkl_data, topic_name):
     return data, timestamps
 
 
-def create_image_gif(pkl_data, output_path, topic_name="/realsense/front/im", fps=30, video_downsample_factor=1):
+def create_image_gif(
+    pkl_data, output_path, topic_name="/realsense/front/color/image_raw", fps=30, video_downsample_factor=1
+):
     """Create GIF from image data"""
     print(f"Creating MP4 from topic {topic_name}...")
 
@@ -229,7 +324,7 @@ def create_image_gif(pkl_data, output_path, topic_name="/realsense/front/im", fp
             # if i % 100 == 0:
             #     print(f"  Processed {i+1}/{len(image_data)} frames")
 
-            # if i > 300 and i < 350 and topic_name == '/realsense/front/im':
+            # if i > 300 and i < 350 and topic_name == '/realsense/front/color/image_raw':
             #     # Save individual frame as an image
             #     out_path = output_path.parent / "frames"
             #     out_path.mkdir(parents=True, exist_ok=True)
@@ -280,7 +375,7 @@ def ros_image_to_numpy(img_msg):
     return img
 
 
-def plot_joint_data(pkl_data, output_dir):
+def plot_joint_data(pkl_data, output_dir, fix_ee_rotation_wrap=True):
     """Plot all data recorded from cartesian recording"""
     print("Creating plots...")
 
@@ -298,7 +393,7 @@ def plot_joint_data(pkl_data, output_dir):
         "pose_command": "/cartesian_impedance_controller/pose_command",
         "external_wrench": "/franka_robot_state_broadcaster/external_wrench_in_stiffness_frame",
         "robot_state": "/franka_robot_state_broadcaster/robot_state",
-        "image": "/realsense/front/im",
+        "image": "/realsense/front/color/image_raw",
         # Optional inference topics (if present in pkl)
         "predictions": "/inference/ensembled_predictions",
         "raw_predictions": "/inference/raw_predictions",
@@ -337,8 +432,8 @@ def plot_joint_data(pkl_data, output_dir):
         fig, axes = plt.subplots(7, 1, figsize=(12, 14), sharex=True)
         fig.suptitle("Measured Joint Positions", fontsize=16)
         for i in range(7):
-            axes[i].plot(timestamps, positions[:, i], linewidth=1.5)
-            axes[i].set_ylabel(f"Joint {i + 1} [rad]", fontsize=10)
+            axes[i].plot(timestamps, positions[:, i], linewidth=1.2)
+            axes[i].set_ylabel(f"Joint {i + 1} [rad/s]", fontsize=10)
             axes[i].grid(True, alpha=0.3)
         axes[-1].set_xlabel("Time [s]", fontsize=10)
         plt.tight_layout()
@@ -722,7 +817,7 @@ def plot_joint_data(pkl_data, output_dir):
             gains_available = False
 
         ## FOR VIDEO DATA
-        video_data, video_ts = extract_topic_data(pkl_data, "/realsense/front/im")
+        video_data, video_ts = extract_topic_data(pkl_data, "/realsense/front/color/image_raw")
 
         video_available = video_data is not None and len(video_data) > 0
 
@@ -1057,7 +1152,7 @@ def plot_joint_data(pkl_data, output_dir):
                 )
                 ax_vid.add_artist(ab)
 
-        plt.savefig(out, dpi=300)
+        plt.savefig(out, dpi=150)
         plt.close()
         print(f"  ✅ Saved to {out}")
 
@@ -1245,7 +1340,7 @@ def plot_joint_data(pkl_data, output_dir):
 
         out = output_dir / "attention.png"
         plt.tight_layout()
-        plt.savefig(out, dpi=250)
+        plt.savefig(out, dpi=150)
         plt.close()
         print(f"  ✅ Saved to {out}")
 
@@ -1256,9 +1351,39 @@ def plot_joint_data(pkl_data, output_dir):
         fig, axes = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
         fig.suptitle("End-Effector Pose", fontsize=16)
 
+        ee_pose_ts = None
+        ee_pos = None
+        ee_euler = None
+        cmd_ts = None
+        cmd_pos = None
+        cmd_euler = None
+
         if "robot_state" in data_dict:
             ee_pose_ts = data_dict["robot_state"]["timestamps"]
             ee_pos, ee_euler = _extract_pose_series(data_dict["robot_state"]["data"], "ee_pose")
+
+        if "pose_command" in data_dict:
+            cmd_ts = data_dict["pose_command"]["timestamps"]
+            cmd_pos, cmd_euler = _extract_pose_series(data_dict["pose_command"]["data"], "ee_pose_commanded")
+
+        euler_series = []
+        if ee_euler is not None:
+            euler_series.append(ee_euler)
+        if cmd_euler is not None:
+            euler_series.append(cmd_euler)
+        if euler_series:
+            corrected_eulers = _apply_ee_rotation_wrap_correction(
+                euler_series,
+                enabled=fix_ee_rotation_wrap,
+            )
+            i = 0
+            if ee_euler is not None:
+                ee_euler = corrected_eulers[i]
+                i += 1
+            if cmd_euler is not None:
+                cmd_euler = corrected_eulers[i]
+
+        if ee_pose_ts is not None and ee_pos is not None and ee_euler is not None:
             axes[0].plot(ee_pose_ts, ee_pos[:, 0], label="x (state)", color="tab:blue")
             axes[0].plot(ee_pose_ts, ee_pos[:, 1], label="y (state)", color="tab:orange")
             axes[0].plot(ee_pose_ts, ee_pos[:, 2], label="z (state)", color="tab:green")
@@ -1266,9 +1391,7 @@ def plot_joint_data(pkl_data, output_dir):
             axes[1].plot(ee_pose_ts, ee_euler[:, 1], label="pitch (state)", color="tab:purple")
             axes[1].plot(ee_pose_ts, ee_euler[:, 2], label="yaw (state)", color="tab:brown")
 
-        if "pose_command" in data_dict:
-            cmd_ts = data_dict["pose_command"]["timestamps"]
-            cmd_pos, cmd_euler = _extract_pose_series(data_dict["pose_command"]["data"], "ee_pose_commanded")
+        if cmd_ts is not None and cmd_pos is not None and cmd_euler is not None:
             axes[0].plot(cmd_ts, cmd_pos[:, 0], label="x (cmd)", color="tab:blue", alpha=0.6, linestyle="--")
             axes[0].plot(cmd_ts, cmd_pos[:, 1], label="y (cmd)", color="tab:orange", alpha=0.6, linestyle="--")
             axes[0].plot(cmd_ts, cmd_pos[:, 2], label="z (cmd)", color="tab:green", alpha=0.6, linestyle="--")
@@ -1287,14 +1410,14 @@ def plot_joint_data(pkl_data, output_dir):
 
         out = output_dir / "ee_pose.png"
         plt.tight_layout()
-        plt.savefig(out, dpi=250, bbox_inches="tight")
+        plt.savefig(out, dpi=150, bbox_inches="tight")
         plt.close()
         print(f"  ✅ Saved to {out}")
 
     print("All plots created!")
 
 
-def visualize_data(data_path, output_dir=None):
+def visualize_data(data_path, output_dir=None, fix_ee_rotation_wrap=True):
     """Main function to visualize collected data"""
     data_path = Path(data_path)
 
@@ -1318,8 +1441,14 @@ def visualize_data(data_path, output_dir=None):
 
     pkl_data = load_data(pkl_path)
 
-    plot_joint_data(pkl_data, output_dir)
-    create_image_gif(pkl_data, output_dir / "camera_rgb.mp4", "/realsense/front/im", fps=30, video_downsample_factor=1)
+    plot_joint_data(pkl_data, output_dir, fix_ee_rotation_wrap=fix_ee_rotation_wrap)
+    create_image_gif(
+        pkl_data,
+        output_dir / "camera_rgb_front.mp4",
+        "/realsense/front/color/image_raw",
+        fps=30,
+        video_downsample_factor=3,
+    )
 
 
 if __name__ == "__main__":
@@ -1329,7 +1458,7 @@ if __name__ == "__main__":
     # Choose the newest folder inside the base directory
 
     ########################### Chose your base directory here ###########################
-    base_dir = Path("~/activeinference/factr/process_data/raw_data/fourgoals_2_stiff").expanduser()
+    base_dir = Path("~/activeinference/factr/process_data/raw_data/fourgoals_2").expanduser()
 
     # Sort by folder name (assuming YYYYMMDD format) to get the newest by date, not by mtime
     data_dirs = [d for d in base_dir.glob("*/data") if d.is_dir()]
@@ -1351,7 +1480,8 @@ if __name__ == "__main__":
     # Check if we should process all files or only the newest one
     process_all = False  ################## Set to True to process all files
     overwrite_existing = True  ################## Set to True to overwrite existing visualizations
-    selected_episode = "ep_18_stiff"  ################## e.g., "ep_01" or None to use the latest
+    selected_episode = "ep_42_stiff"  ################## e.g., "ep_01" or None to use the latest
+    fix_ee_rotation_wrap = True  ################## Set to False to disable +/-2pi correction in ee pose plot
 
     if process_all:
         for idx, pkl_path in enumerate(pkl_files, start=0):
@@ -1367,7 +1497,7 @@ if __name__ == "__main__":
             print("=" * 80)
 
             try:
-                visualize_data(pkl_path, output_dir)
+                visualize_data(pkl_path, output_dir, fix_ee_rotation_wrap=fix_ee_rotation_wrap)
             except Exception as e:
                 print(f"❌ Error processing {pkl_path.name}: {e}")
                 continue
@@ -1393,7 +1523,7 @@ if __name__ == "__main__":
             print("=" * 80)
 
             try:
-                visualize_data(target_pkl, output_dir)
+                visualize_data(target_pkl, output_dir, fix_ee_rotation_wrap=fix_ee_rotation_wrap)
             except Exception as e:
                 print(f"❌ Error processing {target_pkl.name}: {e}")
 

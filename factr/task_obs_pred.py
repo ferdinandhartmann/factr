@@ -6,8 +6,8 @@ from torch.utils.data import DataLoader, IterableDataset
 import wandb
 from factr.goal_inference import GOAL_COLORS
 from factr.obs_pred_plot_utils import build_obs_prediction_plot, collapse_obs_prediction_chunks
-from factr.plot_utils import RPYPlotConfig, build_pose_fan_figure
 from factr.replay_buffer import IterableWrapper
+from factr.utils_plot import RPYPlotConfig, build_pose_fan_figure
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt

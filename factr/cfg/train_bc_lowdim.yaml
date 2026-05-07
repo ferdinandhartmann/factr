@@ -6,26 +6,26 @@ defaults:
 
 hydra:
   run:
-    dir: /home/ferdinand/activeinference/factr/checkpoints/${dataset_name}/${exp_name}
+    dir: /home/ferdinand/activeinference/factr/checkpoints/${dataset_project_prefix}${dataset_name}/${exp_name}
   job:
     env_set:
       CUDA_VISIBLE_DEVICES: "2"
 
-dataset_name: fourgoals_12_allgauss_noclip_cmdinput
-# dataset_name: fourgoals_2_stiff2
+dataset_project_prefix: aifact_
+dataset_name: fourgoals_2_allgauss_noclip_cmdinput
 stiffness_classes: 2
 
 buffer_path: /home/ferdinand/activeinference/factr/process_data/processed_data/${dataset_name}/buf_train.pkl
 test_buffer_path: /home/ferdinand/activeinference/factr/process_data/processed_data/${dataset_name}/buf_test.pkl
 
-exp_base_name: categ_n_b0005_v8k8
+exp_base_name: categ_b001_v8k2
 suffix: _
 exp_name: ${exp_base_name}
 
-batch_size: 64
+batch_size: 180
 num_workers: 8
-lr: 0.0003
-max_iterations: 25000
+lr: 0.00035
+max_iterations: 10000
 schedule_freq: 1
 devices: 1
 seed: 42
@@ -37,14 +37,14 @@ obs_window: 12
 train_transform: none
 test_transform: none
 
-train_log_freq: 1000
+train_log_freq: 100
 eval_freq: 500
 eval_freq_plot: 2500  # Must be multiple of eval_freq
-# save_freq: 2000
+# save_freq: 2500
 
 wandb:
   name: ${exp_name}
-  project: aiact_${dataset_name}
+  project: ${dataset_project_prefix}${dataset_name}
   group: bc
   debug: False
   entity: None

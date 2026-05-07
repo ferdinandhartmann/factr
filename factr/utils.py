@@ -18,10 +18,12 @@
 
 
 import math
+import os
 
 import numpy as np
 import torch
 import torch.nn.functional as F
+import yaml
 
 
 def build_episode_goal_probabilities(log_likelihood_per_timestep, goal_classes, obs_dim, temperature=5.0):
@@ -200,3 +202,177 @@ def get_scale(scheduler, start, end, cur_step, max_step, ratio):
         raise ValueError(f"Unknown scheduler type: {scheduler}")
 
     return scale
+
+
+def safe_denominator(arr: np.ndarray) -> np.ndarray:
+    arr = np.asarray(arr, dtype=np.float32)
+    arr[np.abs(arr) < 1e-12] = 1e-12
+    return arr
+
+
+def forward_group_transform(values: np.ndarray, group: dict) -> np.ndarray:
+    gtype = group.get("type", "identity")
+    if gtype in ("identity",):
+        return values
+    if gtype in ("gaussian", "gaussian_clip", "zscore_clip"):
+        mean = np.asarray(group.get("mean", []), dtype=np.float32)
+        std = safe_denominator(group.get("std", []))
+        out = (values - mean) / std
+        clip = group.get("clip", None)
+        if clip is not None:
+            out = np.clip(out, -float(clip), float(clip))
+        return out
+    if gtype in ("min_max",):
+        mins = np.asarray(group.get("min", []), dtype=np.float32)
+        maxs = np.asarray(group.get("max", []), dtype=np.float32)
+        denom = safe_denominator(maxs - mins)
+        out = (2.0 * (values - mins) / denom) - 1.0
+        clip = group.get("clip", None)
+        if clip is not None:
+            out = np.clip(out, -float(clip), float(clip))
+        return out
+    if gtype in ("fixed_scale", "fixed_scale_clip"):
+        scales = safe_denominator(group.get("scales", []))
+        out = values / scales
+        clip = group.get("clip", None)
+        if clip is not None:
+            out = np.clip(out, -float(clip), float(clip))
+        return out
+    if gtype == "log1p":
+        return np.sign(values) * np.log1p(np.abs(values))
+    if gtype == "log1p_zscore_clip":
+        mean = np.asarray(group.get("mean", []), dtype=np.float32)
+        std = safe_denominator(group.get("std", []))
+        out = np.sign(values) * np.log1p(np.abs(values))
+        out = (out - mean) / std
+        clip = group.get("clip", None)
+        if clip is not None:
+            out = np.clip(out, -float(clip), float(clip))
+        return out
+    return values
+
+
+def inverse_group_transform(values: np.ndarray, group: dict) -> np.ndarray:
+    gtype = group.get("type", "identity")
+    if gtype in ("identity",):
+        return values
+    if gtype in ("gaussian", "gaussian_clip", "zscore_clip"):
+        mean = np.asarray(group.get("mean", []), dtype=np.float32)
+        std = safe_denominator(group.get("std", []))
+        return values * std + mean
+    if gtype in ("min_max",):
+        mins = np.asarray(group.get("min", []), dtype=np.float32)
+        maxs = np.asarray(group.get("max", []), dtype=np.float32)
+        return (values + 1.0) * 0.5 * (maxs - mins) + mins
+    if gtype in ("fixed_scale", "fixed_scale_clip"):
+        scales = safe_denominator(group.get("scales", []))
+        return values * scales
+    if gtype == "log1p":
+        return np.sign(values) * np.expm1(np.abs(values))
+    if gtype == "log1p_zscore_clip":
+        mean = np.asarray(group.get("mean", []), dtype=np.float32)
+        std = safe_denominator(group.get("std", []))
+        out = values * std + mean
+        return np.sign(out) * np.expm1(np.abs(out))
+    return values
+
+
+def apply_grouped_transform(values: np.ndarray, stats: dict, inverse: bool = False) -> np.ndarray:
+    arr = values.copy()
+    if not stats:
+        return arr
+
+    mode = stats.get("mode", None)
+    if mode != "grouped":
+        if (not inverse) and "mean" in stats and "std" in stats:
+            mean = np.asarray(stats.get("mean", []), dtype=np.float32)
+            std = safe_denominator(stats.get("std", []))
+            if mean.size == arr.shape[-1] and std.size == arr.shape[-1]:
+                return (arr - mean) / std
+        if inverse and "mean" in stats and "std" in stats:
+            mean = np.asarray(stats.get("mean", []), dtype=np.float32)
+            std = safe_denominator(stats.get("std", []))
+            if mean.size == arr.shape[-1] and std.size == arr.shape[-1]:
+                return arr * std + mean
+        return arr
+
+    for group in stats.get("groups", []):
+        indices = group.get("indices", None)
+        if not indices or len(indices) != 2:
+            continue
+        start, stop = int(indices[0]), int(indices[1])
+        sl = slice(start, stop)
+        if inverse:
+            arr[..., sl] = inverse_group_transform(arr[..., sl], group)
+        else:
+            arr[..., sl] = forward_group_transform(arr[..., sl], group)
+    return arr
+
+
+def detect_already_normalized(values: np.ndarray, stats: dict) -> bool:
+    if not stats or stats.get("mode", None) != "grouped":
+        return True
+
+    gaussian_groups = []
+    for group in stats.get("groups", []):
+        if group.get("type", "identity") in ("gaussian", "gaussian_clip", "zscore_clip"):
+            indices = group.get("indices", None)
+            if indices and len(indices) == 2:
+                gaussian_groups.append((int(indices[0]), int(indices[1]), group))
+    if len(gaussian_groups) == 0:
+        return True
+
+    score_as_is = []
+    score_if_norm = []
+    arr = values.reshape(-1, values.shape[-1])
+    for start, stop, group in gaussian_groups:
+        part = arr[:, start:stop]
+        if part.size == 0:
+            continue
+        as_is_mean = np.mean(part, axis=0)
+        as_is_std = np.std(part, axis=0) + 1e-8
+        score_as_is.append(float(np.mean(np.abs(as_is_mean)) + np.mean(np.abs(as_is_std - 1.0))))
+
+        normed = forward_group_transform(part, group)
+        norm_mean = np.mean(normed, axis=0)
+        norm_std = np.std(normed, axis=0) + 1e-8
+        score_if_norm.append(float(np.mean(np.abs(norm_mean)) + np.mean(np.abs(norm_std - 1.0))))
+
+    if len(score_as_is) == 0:
+        return True
+    return float(np.mean(score_as_is)) <= float(np.mean(score_if_norm))
+
+
+def ensure_normalized(values: np.ndarray, stats: dict, mode: str, name: str):
+    if mode == "skip":
+        print(f"[normalize] {name}: skip")
+        return values.copy(), False
+    if mode == "apply":
+        print(f"[normalize] {name}: apply")
+        return apply_grouped_transform(values, stats, inverse=False), True
+
+    already = detect_already_normalized(values, stats)
+    if already:
+        print(f"[normalize] {name}: auto -> already normalized, skip")
+        return values.copy(), False
+    print(f"[normalize] {name}: auto -> apply normalization from rollout_config")
+    return apply_grouped_transform(values, stats, inverse=False), True
+
+
+def load_norm_stats_from_buffer_path(buffer_path):
+    if not buffer_path:
+        return None, None
+    rollout_path = os.path.join(os.path.dirname(str(buffer_path)), "rollout_config.yaml")
+    if not os.path.exists(rollout_path):
+        return None, None
+    try:
+        with open(rollout_path, "r") as f:
+            cfg = yaml.safe_load(f)
+    except Exception:
+        return None, None
+    if not isinstance(cfg, dict):
+        return None, None
+    norm_stats = cfg.get("norm_stats", {}) or {}
+    state_stats = norm_stats.get("state", None)
+    action_stats = norm_stats.get("action", None)
+    return state_stats, action_stats

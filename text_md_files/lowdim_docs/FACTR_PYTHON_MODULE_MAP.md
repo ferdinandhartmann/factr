@@ -103,7 +103,7 @@ A very effective workflow is: **find behavior in config first, then inspect targ
 
 ## 8) Plot/utility modules
 
-- `factr/plot_utils.py`, `factr/obs_pred_plot_utils.py`
+- `factr/utils_plot.py`, `factr/obs_pred_utils_plot.py`
   - plotting primitives reused by task eval code.
 
 - `factr/transforms.py`
@@ -195,7 +195,7 @@ If you only have a few hours, this priority list helps.
 
 ### Utilities and plotting
 
-- `plot_utils.py`, `obs_pred_plot_utils.py`: reusable figure builders.
+- `utils_plot.py`, `obs_pred_plot_utils.py`: reusable figure builders.
 - `utils.py`, `misc.py`: helper utilities and run-level global state.
 - `transforms.py`: augmentation logic (more relevant for image paths).
 

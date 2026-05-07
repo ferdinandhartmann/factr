@@ -11,8 +11,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import yaml
-from factr.plot_utils import RPYPlotConfig, build_pose_comparison_figure, build_pose_fan_figure
-from factr.plot_utils import rot6d_to_matrix as _shared_rot6d_to_matrix
+from factr.utils import apply_grouped_transform as _apply_grouped_transform
+from factr.utils import ensure_normalized as _ensure_normalized
+from factr.utils_plot import RPYPlotConfig, build_pose_3d_figure, build_pose_comparison_figure, build_pose_fan_figure
 from hydra.utils import instantiate
 from omegaconf import OmegaConf
 
@@ -26,9 +27,9 @@ if str(PROJECT_ROOT) not in sys.path:
 # ---------------------------------------------------------------------------
 # User Config (edit these variables, then run this script directly)
 # ---------------------------------------------------------------------------
-RUN_NAME = "categ_n_b0005_v8k8"
-DATASET_NAME = "fourgoals_12"
-BUFFER_SET_NAME = "fourgoals_12_allgauss_noclip_cmdinput"  
+RUN_NAME = "categ_n_b0005_v4k2"
+DATASET_NAME = "fourgoals_2"
+BUFFER_SET_NAME = "fourgoals_2_allgauss_noclip_cmdinput"
 CHECKPOINT_NAME = "latest_ckpt.ckpt"
 
 EPISODE_FILE_NAME = "ep_52_stiff.pkl"
@@ -61,17 +62,17 @@ elif BUFFER_SET_NAME == "fourgoals_2_stiff2":
     ]
 elif BUFFER_SET_NAME == "fourgoals_2_allgauss_noclip_cmdinput":
     EPISODE_LIST = [
-        "ep_03_soft",
-        "ep_13_stiff",
-        "ep_13_soft",
-        "ep_15_stiff",
-        "ep_20_stiff",
+        # "ep_03_soft",
+        # "ep_13_stiff",
+        # "ep_13_soft",
+        # "ep_15_stiff",
+        # "ep_20_stiff",
         "ep_28_soft",
-        "ep_34_stiff",
+        # "ep_34_stiff",
         "ep_42_stiff",
-        "ep_43_stiff",
-        "ep_49_soft",
-        "ep_57_soft",
+        # "ep_43_stiff",
+        # "ep_49_soft",
+        # "ep_57_soft",
         "ep_58_stiff",
     ]
 elif BUFFER_SET_NAME == "fourgoals_12_allgauss_noclip_cmdinput":
@@ -95,10 +96,10 @@ elif BUFFER_SET_NAME == "fourgoals_12_allgauss_noclip_cmdinput":
         "ep_225_soft",
         # "ep_232_stiff",
         # "ep_247_stiff",
-        "ep_250_stiff",
+        # "ep_250_stiff",
         # "ep_252_stiff",
         # "ep_253_soft",
-        # "ep_258_stiff",
+        "ep_258_stiff",
         # "ep_260_stiff",
     ]
 
@@ -491,165 +492,6 @@ def _build_eval_samples_from_raw_episode(states, actions, episode_label: int, ob
     }
 
 
-def _safe_denominator(arr):
-    arr = np.asarray(arr, dtype=np.float32)
-    arr[np.abs(arr) < 1e-12] = 1e-12
-    return arr
-
-
-def _forward_group_transform(values: np.ndarray, group: Dict) -> np.ndarray:
-    gtype = group.get("type", "identity")
-    if gtype in ("identity",):
-        return values
-    if gtype in ("gaussian", "gaussian_clip", "zscore_clip"):
-        mean = np.asarray(group.get("mean", []), dtype=np.float32)
-        std = _safe_denominator(group.get("std", []))
-        out = (values - mean) / std
-        clip = group.get("clip", None)
-        if clip is not None:
-            c = float(clip)
-            out = np.clip(out, -c, c)
-        return out
-    if gtype in ("min_max",):
-        mins = np.asarray(group.get("min", []), dtype=np.float32)
-        maxs = np.asarray(group.get("max", []), dtype=np.float32)
-        denom = _safe_denominator(maxs - mins)
-        out = (2.0 * (values - mins) / denom) - 1.0
-        clip = group.get("clip", None)
-        if clip is not None:
-            c = float(clip)
-            out = np.clip(out, -c, c)
-        return out
-    if gtype in ("fixed_scale", "fixed_scale_clip"):
-        scales = _safe_denominator(group.get("scales", []))
-        out = values / scales
-        clip = group.get("clip", None)
-        if clip is not None:
-            c = float(clip)
-            out = np.clip(out, -c, c)
-        return out
-    if gtype == "log1p":
-        return np.sign(values) * np.log1p(np.abs(values))
-    if gtype == "log1p_zscore_clip":
-        mean = np.asarray(group.get("mean", []), dtype=np.float32)
-        std = _safe_denominator(group.get("std", []))
-        out = np.sign(values) * np.log1p(np.abs(values))
-        out = (out - mean) / std
-        clip = group.get("clip", None)
-        if clip is not None:
-            c = float(clip)
-            out = np.clip(out, -c, c)
-        return out
-    return values
-
-
-def _inverse_group_transform(values: np.ndarray, group: Dict) -> np.ndarray:
-    gtype = group.get("type", "identity")
-    if gtype in ("identity",):
-        return values
-    if gtype in ("gaussian", "gaussian_clip", "zscore_clip"):
-        mean = np.asarray(group.get("mean", []), dtype=np.float32)
-        std = _safe_denominator(group.get("std", []))
-        return values * std + mean
-    if gtype in ("min_max",):
-        mins = np.asarray(group.get("min", []), dtype=np.float32)
-        maxs = np.asarray(group.get("max", []), dtype=np.float32)
-        return (values + 1.0) * 0.5 * (maxs - mins) + mins
-    if gtype in ("fixed_scale", "fixed_scale_clip"):
-        scales = _safe_denominator(group.get("scales", []))
-        return values * scales
-    if gtype == "log1p":
-        return np.sign(values) * np.expm1(np.abs(values))
-    if gtype == "log1p_zscore_clip":
-        mean = np.asarray(group.get("mean", []), dtype=np.float32)
-        std = _safe_denominator(group.get("std", []))
-        out = values * std + mean
-        return np.sign(out) * np.expm1(np.abs(out))
-    return values
-
-
-def _apply_grouped_transform(values: np.ndarray, stats: Dict, inverse: bool = False) -> np.ndarray:
-    arr = values.copy()
-    if not stats:
-        return arr
-
-    mode = stats.get("mode", None)
-    if mode != "grouped":
-        if (not inverse) and "mean" in stats and "std" in stats:
-            mean = np.asarray(stats.get("mean", []), dtype=np.float32)
-            std = _safe_denominator(stats.get("std", []))
-            if mean.size == arr.shape[-1] and std.size == arr.shape[-1]:
-                return (arr - mean) / std
-        if inverse and "mean" in stats and "std" in stats:
-            mean = np.asarray(stats.get("mean", []), dtype=np.float32)
-            std = _safe_denominator(stats.get("std", []))
-            if mean.size == arr.shape[-1] and std.size == arr.shape[-1]:
-                return arr * std + mean
-        return arr
-
-    for group in stats.get("groups", []):
-        indices = group.get("indices", None)
-        if not indices or len(indices) != 2:
-            continue
-        start, stop = int(indices[0]), int(indices[1])
-        sl = slice(start, stop)
-        if inverse:
-            arr[..., sl] = _inverse_group_transform(arr[..., sl], group)
-        else:
-            arr[..., sl] = _forward_group_transform(arr[..., sl], group)
-    return arr
-
-
-def _detect_already_normalized(values: np.ndarray, stats: Dict) -> bool:
-    if not stats or stats.get("mode", None) != "grouped":
-        return True
-
-    gaussian_groups = []
-    for group in stats.get("groups", []):
-        if group.get("type", "identity") in ("gaussian", "gaussian_clip", "zscore_clip"):
-            indices = group.get("indices", None)
-            if indices and len(indices) == 2:
-                gaussian_groups.append((int(indices[0]), int(indices[1]), group))
-    if len(gaussian_groups) == 0:
-        return True
-
-    score_as_is = []
-    score_if_norm = []
-    arr = values.reshape(-1, values.shape[-1])
-    for start, stop, group in gaussian_groups:
-        part = arr[:, start:stop]
-        if part.size == 0:
-            continue
-        as_is_mean = np.mean(part, axis=0)
-        as_is_std = np.std(part, axis=0) + 1e-8
-        score_as_is.append(float(np.mean(np.abs(as_is_mean)) + np.mean(np.abs(as_is_std - 1.0))))
-
-        normed = _forward_group_transform(part, group)
-        norm_mean = np.mean(normed, axis=0)
-        norm_std = np.std(normed, axis=0) + 1e-8
-        score_if_norm.append(float(np.mean(np.abs(norm_mean)) + np.mean(np.abs(norm_std - 1.0))))
-
-    if len(score_as_is) == 0:
-        return True
-    return float(np.mean(score_as_is)) <= float(np.mean(score_if_norm))
-
-
-def _ensure_normalized(values: np.ndarray, stats: Dict, mode: str, name: str) -> Tuple[np.ndarray, bool]:
-    if mode == "skip":
-        print(f"[normalize] {name}: skip")
-        return values.copy(), False
-    if mode == "apply":
-        print(f"[normalize] {name}: apply")
-        return _apply_grouped_transform(values, stats, inverse=False), True
-
-    already = _detect_already_normalized(values, stats)
-    if already:
-        print(f"[normalize] {name}: auto -> already normalized, skip")
-        return values.copy(), False
-    print(f"[normalize] {name}: auto -> apply normalization from rollout_config")
-    return _apply_grouped_transform(values, stats, inverse=False), True
-
-
 def _build_pose_figure_with_measured(true_actions, pred_actions, measured_pose, mask, title):
     rpy_cfg = RPYPlotConfig(
         subtract_pi=bool(RPY_SUBTRACT_PI),
@@ -699,186 +541,6 @@ def _build_fan_figure_with_measured(
         plot_geodesic_subplot=bool(PLOT_GEODESIC_SUBPLOT),
         rpy_config=rpy_cfg,
     )
-
-
-def _draw_frame(ax, pose9: np.ndarray, axis_len: float, alpha: float, lw: float):
-    pos = np.asarray(pose9[:3], dtype=np.float32)
-    rot6 = np.asarray(pose9[3:9], dtype=np.float32)
-    rot = _shared_rot6d_to_matrix(rot6)
-    colors = ["#e41a1c", "#4daf4a", "#377eb8"]
-    for i in range(3):
-        end = pos + axis_len * rot[:, i]
-        ax.plot(
-            [pos[0], end[0]],
-            [pos[1], end[1]],
-            [pos[2], end[2]],
-            color=colors[i],
-            alpha=alpha,
-            linewidth=lw,
-        )
-
-
-def _draw_frame_dimmed(ax, pose9: np.ndarray, axis_len: float, alpha: float, lw: float, dim: float):
-    pos = np.asarray(pose9[:3], dtype=np.float32)
-    rot6 = np.asarray(pose9[3:9], dtype=np.float32)
-    rot = _shared_rot6d_to_matrix(rot6)
-    colors = ["#e41a1c", "#4daf4a", "#377eb8"]
-    dim = float(np.clip(dim, 0.0, 1.0))
-    for i in range(3):
-        end = pos + axis_len * rot[:, i]
-        base = np.asarray(matplotlib.colors.to_rgb(colors[i]), dtype=np.float32)
-        color = tuple((base * dim).tolist())
-        ax.plot(
-            [pos[0], end[0]],
-            [pos[1], end[1]],
-            [pos[2], end[2]],
-            color=color,
-            alpha=alpha,
-            linewidth=lw,
-        )
-
-
-def _set_axes_equal_3d(ax):
-    x_limits = ax.get_xlim3d()
-    y_limits = ax.get_ylim3d()
-    z_limits = ax.get_zlim3d()
-
-    x_range = abs(x_limits[1] - x_limits[0])
-    y_range = abs(y_limits[1] - y_limits[0])
-    z_range = abs(z_limits[1] - z_limits[0])
-    max_range = max(x_range, y_range, z_range)
-
-    x_mid = np.mean(x_limits)
-    y_mid = np.mean(y_limits)
-    z_mid = np.mean(z_limits)
-
-    half = 0.5 * max_range
-    ax.set_xlim3d([x_mid - half, x_mid + half])
-    ax.set_ylim3d([y_mid - half, y_mid + half])
-    ax.set_zlim3d([z_mid - half, z_mid + half])
-
-
-def _build_3d_pose_figure(
-    measured_pose_first: np.ndarray,
-    gt_pose_first: np.ndarray,
-    pred_pose_first: np.ndarray,
-    sampled_pose_chunks: np.ndarray,
-    prediction_stride: int,
-    action_source: str,
-    SHOW_PLOT: bool,
-):
-    if not SHOW_PLOT:
-        fig = plt.figure(figsize=(10, 8))
-    else:
-        fig = plt.figure(figsize=(18, 15))
-    ax = fig.add_subplot(111, projection="3d")
-
-    meas_xyz = measured_pose_first[:, :3]
-    gt_xyz = gt_pose_first[:, :3]
-    pred_xyz = pred_pose_first[:, :3]
-
-    ax.plot(
-        meas_xyz[:, 0],
-        meas_xyz[:, 1],
-        meas_xyz[:, 2],
-        color="#1f78b4",
-        linewidth=0.8,
-        linestyle="--",
-        alpha=0.5,
-        label="measured",
-    )
-    ax.plot(gt_xyz[:, 0], gt_xyz[:, 1], gt_xyz[:, 2], color="black", linewidth=1.0, alpha=1.0, label="ground_truth")
-    # ax.plot(pred_xyz[:, 0], pred_xyz[:, 1], pred_xyz[:, 2], color="#e31a1c", linewidth=2.0, alpha=0.95, label="posterior_mean")
-
-    num_steps, num_samples = sampled_pose_chunks.shape[0], sampled_pose_chunks.shape[1]
-
-    # Draw start points
-    ax.scatter(meas_xyz[0, 0], meas_xyz[0, 1], meas_xyz[0, 2], color="#1f78b4", s=30, marker="o", alpha=0.95, label="measured_start")
-    ax.scatter(gt_xyz[0, 0], gt_xyz[0, 1], gt_xyz[0, 2], color="black", s=30, marker="o", alpha=0.95, label="ground_truth_start")
-    ax.scatter(
-        pred_xyz[0, 0],
-        pred_xyz[0, 1],
-        pred_xyz[0, 2],
-        color="#e31a1c",
-        s=30,
-        marker="o",
-        alpha=0.95,
-        label=f"{action_source}_mean_start",
-    )
-
-    goal_pos_measured = meas_xyz[-1]
-    ax.scatter(goal_pos_measured[0], goal_pos_measured[1], goal_pos_measured[2], color="#1f78b4", s=40, marker="s", alpha=0.95, label="goal measured")
-
-    goal_pos_gt = gt_xyz[-1]
-    ax.scatter(goal_pos_gt[0], goal_pos_gt[1], goal_pos_gt[2], color="black", s=40, marker="s", alpha=0.95, label="goal ground truth")
-
-    all_xyz = np.concatenate([meas_xyz, gt_xyz, pred_xyz], axis=0)
-    if all_xyz.shape[0] > 1:
-        extent = np.ptp(all_xyz, axis=0)
-        diag = float(np.linalg.norm(extent))
-        axis_len = max(0.01, 0.03 * diag)
-    else:
-        axis_len = 0.02
-
-    anchor_idx = np.arange(0, num_steps, max(1, int(prediction_stride)), dtype=np.int64)
-    if anchor_idx[-1] != (num_steps - 1):
-        anchor_idx = np.concatenate([anchor_idx, np.asarray([num_steps - 1], dtype=np.int64)])
-
-    first_idx = 0
-    last_idx = max(0, num_steps - 1)
-    _draw_frame(ax, gt_pose_first[first_idx], axis_len=axis_len, alpha=0.7, lw=1.1)
-    _draw_frame(ax, gt_pose_first[last_idx], axis_len=axis_len, alpha=0.7, lw=1.1)
-    _draw_frame(ax, pred_pose_first[first_idx], axis_len=axis_len, alpha=0.7, lw=1.1)
-    _draw_frame(ax, pred_pose_first[last_idx], axis_len=axis_len, alpha=0.7, lw=1.1)
-
-    anchor_colors = plt.cm.rainbow(np.linspace(0.0, 1.0, max(1, len(anchor_idx))))
-    for anchor_pos, t_idx in enumerate(anchor_idx):
-        c_t = anchor_colors[anchor_pos]
-        _draw_frame_dimmed(ax, gt_pose_first[t_idx], axis_len=axis_len * 0.8, alpha=0.8, lw=1.0, dim=0.5)
-        for s_idx in range(num_samples):
-            traj = sampled_pose_chunks[t_idx, s_idx, :, :3]
-            ax.plot(
-                traj[:, 0],
-                traj[:, 1],
-                traj[:, 2],
-                color=c_t,
-                linewidth=0.9,
-                alpha=0.7,
-                label=f"{action_source}_samples" if (anchor_pos == 0 and s_idx == 0) else None,
-            )
-            _draw_frame(ax, sampled_pose_chunks[t_idx, s_idx, 0], axis_len=axis_len * 0.3, alpha=0.6, lw=0.6)
-            _draw_frame(ax, sampled_pose_chunks[t_idx, s_idx, -1], axis_len=axis_len * 0.3, alpha=0.6, lw=0.6)
-
-    x_min, x_max = GLOBAL_AXIS_LIMITS["x"]
-    y_min, y_max = GLOBAL_AXIS_LIMITS["y"]
-    z_min, z_max = GLOBAL_AXIS_LIMITS["z"]
-    ax.set_xlim(x_min, x_max)
-    ax.set_ylim(y_min, y_max)
-    ax.set_zlim(z_min, z_max)
-
-    span = np.array([x_max - x_min, y_max - y_min, z_max - z_min], dtype=np.float32)
-    text_offset = 0.03 * float(np.linalg.norm(span))
-    for goal in GOAL_FRAMES:
-        pose = np.asarray(goal["pose"], dtype=np.float32)
-        _draw_frame(ax, pose, axis_len=axis_len * 3.0, alpha=1.0, lw=1.5)
-        ax.text(
-            pose[0] + text_offset,
-            pose[1] - text_offset,
-            pose[2] - text_offset,
-            goal["name"],
-            fontsize=6,
-            color="black",
-        )
-
-    ax.set_xlabel("x")
-    ax.set_ylabel("y")
-    ax.set_zlabel("z")
-    ax.set_title(f"3D EE Pose Frames: measured vs ground truth vs sampled {action_source}s")
-    ax.view_init(elev=float(VIEW_ELEV), azim=float(VIEW_AZIM))
-    _set_axes_equal_3d(ax)
-    ax.legend(loc="upper left")
-    fig.tight_layout()
-    return fig
 
 
 def _summarize_metrics(
@@ -1120,14 +782,22 @@ def main():
         print(f"Saved: {fan_path}")
 
         if pose_dim >= 9:
-            fig_3d = _build_3d_pose_figure(
-                measured_pose_first=measured_first,
-                gt_pose_first=true_first,
-                pred_pose_first=pred_first,
+            fig_3d = build_pose_3d_figure(
+                measured_pose=measured_first,
+                true_pose=true_first,
+                pred_pose=pred_first,
                 sampled_pose_chunks=pred_samples_denorm[:, :, :, :pose_dim],
                 prediction_stride=max(1, int(PREDICTION_STRIDE)),
                 action_source=action_source,
-                SHOW_PLOT=SHOW_PLOT,
+                true_action_chunks=actions_denorm[:, :, :pose_dim],
+                mask_chunks=mask_arr[:, :, :pose_dim],
+                source_time_index=steps_arr,
+                plot_ground_truth_reconstructed=True,
+                axis_limits=GLOBAL_AXIS_LIMITS,
+                goal_frames=GOAL_FRAMES,
+                view_elev=float(VIEW_ELEV),
+                view_azim=float(VIEW_AZIM),
+                show_plot=SHOW_PLOT,
             )
             plot3d_path = out_dir / f"{episode_file.stem}_predictions_3d.png"
             fig_3d.savefig(plot3d_path, dpi=300, bbox_inches="tight")

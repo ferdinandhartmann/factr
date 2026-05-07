@@ -53,14 +53,15 @@ except Exception:
 # ---------------------------------------------------------------------------
 # User Config (edit these variables, then run this script directly)
 # ---------------------------------------------------------------------------
-RUN_NAME = "categ_n_b0005_v8k8"
+RUN_NAME = "categ_n_b0005_v4k4"
 DATASET_NAME = "fourgoals_2"
+BUFFER_SET_NAME = "fourgoals_2_allgauss_noclip_cmdinput" 
 CHECKPOINT_NAME = "latest_ckpt.ckpt"  # or "ckpt_020000.ckpt"
 
 EPISODE_FILE_NAME = "ep_51_stiff.pkl"
 USE_EPISODE_LIST = True
 EPISODE_LIST = []
-if DATASET_NAME == "fourgoals_2":
+if BUFFER_SET_NAME == "fourgoals_2":
     EPISODE_LIST = [
         # "ep_03_soft",
         # "ep_13_stiff",
@@ -75,7 +76,7 @@ if DATASET_NAME == "fourgoals_2":
         # "ep_57_soft",
         # "ep_58_stiff",
     ]
-elif DATASET_NAME == "fourgoals_2_stiff2":
+elif BUFFER_SET_NAME == "fourgoals_2_stiff2":
     EPISODE_LIST = [    
         # "ep_06_stiff",
         # "ep_20_stiff",
@@ -84,8 +85,23 @@ elif DATASET_NAME == "fourgoals_2_stiff2":
         "ep_29_stiff",
         "ep_50_stiff",
     ]
+elif BUFFER_SET_NAME == "fourgoals_2_allgauss_noclip_cmdinput":
+    EPISODE_LIST = [
+        # "ep_03_soft",
+        # "ep_13_stiff",
+        # "ep_13_soft",
+        # "ep_15_stiff",
+        # "ep_20_stiff",
+        "ep_28_soft",
+        # "ep_34_stiff",
+        "ep_42_stiff",
+        # "ep_43_stiff",
+        # "ep_49_soft",
+        # "ep_57_soft",
+        "ep_58_stiff",
+    ]
 
-RUN_DIR = Path.home() / "activeinference" / "factr" / "checkpoints" / DATASET_NAME / RUN_NAME / "rollout"
+RUN_DIR = Path.home() / "activeinference" / "factr" / "checkpoints" / BUFFER_SET_NAME / RUN_NAME / "rollout"
 RAW_EPISODE_DIR = Path.home() / "activeinference" / "factr" / "process_data" / "data_to_process" / DATASET_NAME / "data"
 
 GPU_ID = 2
@@ -107,7 +123,7 @@ def parse_args():
 
 
 def resolve_paths(project_root: Path, model_name: str, checkpoint: str, rollout_config_arg: Optional[str]) -> Tuple[Path, Path, Path]:
-    checkpoints_dir = project_root / "checkpoints" / model_name
+    checkpoints_dir = project_root / "checkpoints" / BUFFER_SET_NAME / model_name
     if not checkpoints_dir.exists():
         raise FileNotFoundError(f"Model directory not found: {checkpoints_dir}")
 
