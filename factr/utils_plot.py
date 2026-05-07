@@ -53,6 +53,12 @@ def make_obs_dim_names(dim: int) -> List[str]:
     return [f"obs_{idx + 1}" for idx in range(dim)]
 
 
+def pose_chunks_for_plot(action_chunks: np.ndarray, measured_pose: np.ndarray, pose_mode: str) -> np.ndarray:
+    if str(pose_mode).strip().lower() != "relative":
+        return action_chunks
+    return np.cumsum(action_chunks, axis=-2) + measured_pose[..., None, :]
+
+
 def _normalize_vec(vec: np.ndarray) -> np.ndarray:
     norm = float(np.linalg.norm(vec))
     if (not np.isfinite(norm)) or norm < 1e-9:

@@ -41,6 +41,8 @@ train_log_freq: 100
 eval_freq: 500
 eval_freq_plot: 2500  # Must be multiple of eval_freq
 # save_freq: 2500
+task:
+  eval_plot_pose_mode: absolute
 
 wandb:
   name: ${exp_name}

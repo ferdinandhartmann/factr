@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import argparse
 import sys
 import warnings
 from pathlib import Path
@@ -13,7 +14,13 @@ import torch
 import yaml
 from factr.utils import apply_grouped_transform as _apply_grouped_transform
 from factr.utils import ensure_normalized as _ensure_normalized
-from factr.utils_plot import RPYPlotConfig, build_pose_3d_figure, build_pose_comparison_figure, build_pose_fan_figure
+from factr.utils_plot import (
+    RPYPlotConfig,
+    build_pose_3d_figure,
+    build_pose_comparison_figure,
+    build_pose_fan_figure,
+    pose_chunks_for_plot,
+)
 from hydra.utils import instantiate
 from omegaconf import OmegaConf
 
@@ -125,6 +132,7 @@ RPY_SUBTRACT_PI = True  # If True, subtract pi from one selected RPY axis for pl
 RPY_SUBTRACT_PI_AXIS = 0  # 0=roll, 1=pitch, 2=yaw
 RPY_PLOT_UNIT = "deg"  # "rad" or "deg"
 PLOT_GEODESIC_SUBPLOT = False
+EVAL_PLOT_POSE_MODE = "absolute"  # one of: absolute, relative
 
 GPU_ID = 2
 
@@ -167,6 +175,13 @@ def _normalize_action_source(value: str) -> str:
 
 def _action_source_title(action_source: str) -> str:
     return "Prior" if action_source == "prior" else "Posterior"
+
+
+def _normalize_pose_mode(value: str) -> str:
+    pose_mode = str(value).strip().lower()
+    if pose_mode not in {"absolute", "relative"}:
+        raise ValueError(f"pose mode must be one of absolute/relative, got: {value}")
+    return pose_mode
 
 
 def _load_run_cfg(exp_config_path: Path):
@@ -602,7 +617,12 @@ def _summarize_metrics(
 def main():
     if NORMALIZATION_MODE not in ("auto", "apply", "skip"):
         raise ValueError(f"NORMALIZATION_MODE must be one of auto/apply/skip, got: {NORMALIZATION_MODE}")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--plot-pose-mode", default=EVAL_PLOT_POSE_MODE, choices=["absolute", "relative"])
+    args = parser.parse_args()
+
     action_source = _normalize_action_source(ACTION_SOURCE)
+    plot_pose_mode = _normalize_pose_mode(args.plot_pose_mode)
     action_source_title = _action_source_title(action_source)
 
     run_dir = Path(RUN_DIR)
@@ -724,9 +744,15 @@ def main():
         ac_dim = actions_denorm.shape[-1]
         pose_dim = min(9, ac_dim)
 
-        true_first = actions_denorm[:, 0, :pose_dim]
-        pred_first = pred_det_denorm[:, 0, :pose_dim]
         measured_first = obs_denorm[:, -1, :pose_dim]
+        actions_plot = pose_chunks_for_plot(actions_denorm[:, :, :pose_dim], measured_first, plot_pose_mode)
+        pred_det_plot = pose_chunks_for_plot(pred_det_denorm[:, :, :pose_dim], measured_first, plot_pose_mode)
+        pred_samples_plot = pose_chunks_for_plot(
+            pred_samples_denorm[:, :, :, :pose_dim], measured_first[:, None, :], plot_pose_mode
+        )
+
+        true_first = actions_plot[:, 0, :pose_dim]
+        pred_first = pred_det_plot[:, 0, :pose_dim]
         mask_first = mask_arr[:, 0, :pose_dim]
 
         episode_name = episode_file.stem
@@ -766,8 +792,8 @@ def main():
         # plt.close(fig_pose)
 
         fig_fan = _build_fan_figure_with_measured(
-            true_action_chunks=actions_denorm[:, :, :pose_dim],
-            pred_action_chunks=pred_samples_denorm[:, :, :, :pose_dim],
+            true_action_chunks=actions_plot,
+            pred_action_chunks=pred_samples_plot,
             measured_pose=measured_first,
             mask_chunks=mask_arr[:, :, :pose_dim],
             source_time_index=steps_arr,
@@ -786,10 +812,10 @@ def main():
                 measured_pose=measured_first,
                 true_pose=true_first,
                 pred_pose=pred_first,
-                sampled_pose_chunks=pred_samples_denorm[:, :, :, :pose_dim],
+                sampled_pose_chunks=pred_samples_plot,
                 prediction_stride=max(1, int(PREDICTION_STRIDE)),
                 action_source=action_source,
-                true_action_chunks=actions_denorm[:, :, :pose_dim],
+                true_action_chunks=actions_plot,
                 mask_chunks=mask_arr[:, :, :pose_dim],
                 source_time_index=steps_arr,
                 plot_ground_truth_reconstructed=True,
