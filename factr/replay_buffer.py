@@ -308,6 +308,7 @@ class RobobufReplayBufferLowdim(ReplayBuffer):
         pose_action_dim=9,
         action_index_offset=0,
         include_goals=False,
+        action_chunk_mode="absolute",
         stiffness_classes=3,
         shuffle=True,
     ):
@@ -322,6 +323,7 @@ class RobobufReplayBufferLowdim(ReplayBuffer):
         self.pose_action_dim = int(pose_action_dim)
         self.action_index_offset = int(action_index_offset)
         self.include_goals = bool(include_goals)
+        self.action_chunk_mode = str(action_chunk_mode)
         self.stiffness_classes = int(stiffness_classes)
         self.use_internal_split = bool(use_internal_split)
         self.transform = None
@@ -448,6 +450,9 @@ class RobobufReplayBufferLowdim(ReplayBuffer):
                     loss_mask.append(0.0)
 
             pose_chunk = np.stack(chunk_actions, axis=0).astype(np.float32)
+            current_pose = obs_window[-1, : self.pose_action_dim]
+            if self.action_chunk_mode == "relative_chunks":
+                pose_chunk = pose_chunk - current_pose[None, :]
             loss_mask = np.asarray(loss_mask, dtype=np.float32)
             self.s_a_mask.append((obs_window, pose_chunk, loss_mask, int(label)))
             self.sample_metadata.append(

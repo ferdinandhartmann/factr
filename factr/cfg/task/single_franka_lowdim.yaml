@@ -7,6 +7,7 @@ stiffness_classes: ${stiffness_classes}
 eval_plot_max_steps: 400
 eval_plot_prediction_stride: 30
 eval_plot_num_samples: 30
+eval_plot_pose_mode: ${eval_plot_pose_mode}
 
 # For Sweeping
 sweep_target_min_diversity: 0.02
@@ -26,6 +27,7 @@ train_buffer:
   pose_action_dim: ${task.ac_dim}
   action_index_offset: 0 # if = 0: Model sees the observation at time t and should predict the action at time t.
   include_goals: False
+  action_chunk_mode: ${action_chunk_mode}
   stiffness_classes: ${task.stiffness_classes}
   shuffle: True
 
@@ -41,5 +43,6 @@ test_buffer:
   pose_action_dim: ${task.ac_dim}
   action_index_offset: 0
   include_goals: False
+  action_chunk_mode: ${action_chunk_mode}
   stiffness_classes: ${task.stiffness_classes}
   shuffle: False

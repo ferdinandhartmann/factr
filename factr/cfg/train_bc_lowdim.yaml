@@ -33,6 +33,8 @@ resume: false
 
 ac_chunk: 30
 obs_window: 6
+action_chunk_mode: absolute  # Choices: absolute, relative_timesteps, relative_chunks
+eval_plot_pose_mode: absolute  # Choices: absolute, relative_timesteps, relative_chunks
 
 train_transform: none
 test_transform: none
@@ -41,8 +43,6 @@ train_log_freq: 100
 eval_freq: 500
 eval_freq_plot: 2500  # Must be multiple of eval_freq
 # save_freq: 2500
-task:
-  eval_plot_pose_mode: absolute # Choices: absolute or relative. Determines how the pose chunks are computed for the eval plots. Choose based on the dataset. 
 
 wandb:
   name: ${exp_name}
