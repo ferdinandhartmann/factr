@@ -19,6 +19,7 @@ buffer_path: /home/ferdinand/activeinference/factr/process_data/processed_data/$
 test_buffer_path: /home/ferdinand/activeinference/factr/process_data/processed_data/${dataset_name}/buf_test.pkl
 
 exp_base_name: categ_b001_v8k2_cattemp15_obs8
+exp_base_name: categ_b001_v8k2_test_rel
 suffix: _
 exp_name: ${exp_base_name}
 
@@ -33,6 +34,9 @@ resume: false
 
 ac_chunk: 30
 obs_window: 8
+obs_window: 6
+action_chunk_mode: absolute  # Choices: absolute, relative_timesteps, relative_chunks
+eval_plot_pose_mode: absolute  # Choices: absolute, relative_timesteps, relative_chunks
 
 train_transform: none
 test_transform: none

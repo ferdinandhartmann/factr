@@ -1,11 +1,10 @@
 
-input_path: /home/ferdinand/activeinference/factr/process_data/data_to_process/fourgoals_12/data
-output_path: /home/ferdinand/activeinference/factr/process_data/processed_data/fourgoals_12_allgauss_noclip_cmdinput
+input_path: /home/ferdinand/activeinference/factr/process_data/data_to_process/fourgoals_2/data
+output_path: /home/ferdinand/activeinference/factr/process_data/processed_data/fourgoals_2_allgauss_noclip_cmdinput_rel
 
 downsample: False
 data_frequency: 50.0
 target_downsampling_freq: 25.0
-
 
 cameras_topics:
 #   - /realsense/im
@@ -17,24 +16,20 @@ obs_topics:
   - /cartesian_impedance_controller/tracking_error
   - /cartesian_impedance_controller/pose_command # added to see if predictions are with less jumps
 
-
 # Normalization
-
 # Explicit pose topic for grouped normalization (must be present in `obs_topics`)
 pose_topic: /franka_robot_state_broadcaster/robot_state
- 
 pose_clip: 0.0           # set 0 to disable clipping (for observations and actions)
 velocity_clip: 0.0       # set 0 to disable clipping
 tracking_error_clip: 0.0 # set 0 to disable clipping (after Gaussian normalization)
 wrench_clip: 0.0         # set 0 to disable clipping
 
-
 action_config:
   # Commanded EE pose: 9D = [x,y,z] + 6D rotation representation
   /cartesian_impedance_controller/pose_command: 9
+action_pose_mode: relative  # absolute: raw pose_command, relative: pose_command[t]-pose_command[t-1] with t0=zeros
 
-# Stiffness class extraction for observation:
-# class=1 (low), class=2 (medium), class=3 (high)
+# Stiffness class extraction for observation (class=1: (low stiffness)) 
 stiffness_label_topic: /cartesian_impedance_gains
 stiffness_label_key: stiffness
 stiffness_norm_thresholds: [500] # If empty, only 1 class

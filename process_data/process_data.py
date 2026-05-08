@@ -508,6 +508,7 @@ def main(cfg: DictConfig):
     goal_topics = list(cfg.get("goal_topic", []))
     action_config = dict(cfg.action_config)
     action_topics = list(action_config.keys())
+    action_pose_mode = str(cfg.get("action_pose_mode", "absolute"))
     stiffness_label_topic = cfg.get("stiffness_label_topic", None)
     stiffness_label_key = cfg.get("stiffness_label_key", "stiffness")
     stiffness_norm_thresholds = cfg.get("stiffness_norm_thresholds", [200.0, 1000.0])
@@ -729,6 +730,11 @@ def main(cfg: DictConfig):
                 topic_array = np.stack(topic_vectors, axis=0)
             else:
                 topic_array = np.stack([np.asarray(m, dtype=float).flatten() for m in traj_data[topic]], axis=0)
+
+            if topic == "/cartesian_impedance_controller/pose_command" and action_pose_mode == "relative":
+                relative_topic_array = np.zeros_like(topic_array)
+                relative_topic_array[1:] = topic_array[1:] - topic_array[:-1]
+                topic_array = relative_topic_array
 
             action_list.append(topic_array)
             action_dims.append(int(topic_array.shape[1]))
