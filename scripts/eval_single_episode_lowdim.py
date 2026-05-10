@@ -60,8 +60,6 @@ def _materialize_globals(config_path: Path):
         "LIST_EPISODES_ONLY": bool(cfg["list_episodes_only"]),
         "RUN_DIR": Path.home() / "activeinference" / "factr" / "checkpoints" / key / run_name / "rollout",
         "RAW_EPISODE_DIR": Path.home() / "activeinference" / "factr" / "process_data" / "data_to_process" / dataset_name / "data",
-        "BUFFER_PATH_OVERRIDE": (Path(cfg["buffer_path_override"]) if cfg["buffer_path_override"] is not None else None),
-        "ROLLOUT_CONFIG_OVERRIDE": (Path(cfg["rollout_config_override"]) if cfg["rollout_config_override"] is not None else None),
         "NUM_SAMPLES": int(cfg["num_samples"]),
         "ACTION_SOURCE": cfg["action_source"],
         "NORMALIZATION_MODE": cfg["normalization_mode"],
@@ -75,7 +73,6 @@ def _materialize_globals(config_path: Path):
         "RPY_SUBTRACT_PI_AXIS": int(cfg["rpy_subtract_pi_axis"]),
         "RPY_PLOT_UNIT": cfg["rpy_plot_unit"],
         "PLOT_GEODESIC_SUBPLOT": bool(cfg["plot_geodesic_subplot"]),
-        "EVAL_PLOT_POSE_MODE": cfg["eval_plot_pose_mode"],
         "GPU_ID": int(cfg["gpu_id"]),
         "GLOBAL_AXIS_LIMITS": {k: tuple(v) for k, v in cfg["global_axis_limits"].items()},
         "GOAL_FRAMES": cfg["goal_frames"],
@@ -565,10 +562,10 @@ def _summarize_metrics(
 def main():
     global DATASET_NAME, DATASET_PROJECT_PREFIX, BUFFER_SET_NAME, RUN_NAME
     global CHECKPOINT_NAME, USE_EPISODE_LIST, EPISODE_FILE_NAME, EPISODE_INDEX, EPISODE_LIST
-    global LIST_EPISODES_ONLY, RUN_DIR, RAW_EPISODE_DIR, BUFFER_PATH_OVERRIDE, ROLLOUT_CONFIG_OVERRIDE
+    global LIST_EPISODES_ONLY, RUN_DIR, RAW_EPISODE_DIR
     global NUM_SAMPLES, ACTION_SOURCE, NORMALIZATION_MODE, PREDICTION_STRIDE, VIEW_ELEV, VIEW_AZIM
     global SHOW_PLOT, ENABLE_TRAIN_BACKGROUND, TRAIN_BACKGROUND_ONLY_MEDIUM, RPY_SUBTRACT_PI
-    global RPY_SUBTRACT_PI_AXIS, RPY_PLOT_UNIT, PLOT_GEODESIC_SUBPLOT, EVAL_PLOT_POSE_MODE, GPU_ID
+    global RPY_SUBTRACT_PI_AXIS, RPY_PLOT_UNIT, PLOT_GEODESIC_SUBPLOT, GPU_ID
     global GLOBAL_AXIS_LIMITS, GOAL_FRAMES, OUT_DIR_OVERRIDE
 
     parser = argparse.ArgumentParser()
@@ -590,8 +587,6 @@ def main():
     episode_index = int(EPISODE_INDEX)
     episode_list = [str(name) for name in EPISODE_LIST if str(name).strip()]
 
-    buffer_path_override = Path(BUFFER_PATH_OVERRIDE) if BUFFER_PATH_OVERRIDE is not None else None
-    rollout_config_override = Path(ROLLOUT_CONFIG_OVERRIDE) if ROLLOUT_CONFIG_OVERRIDE is not None else None
     out_dir_override = Path(OUT_DIR_OVERRIDE) if OUT_DIR_OVERRIDE is not None else None
 
     exp_config_path = run_dir / "exp_config.yaml"
@@ -610,8 +605,8 @@ def main():
     elif plot_pose_mode == "relative_chunks" and action_chunk_mode != "relative_chunks":
         plot_pose_mode = "relative_timesteps" if action_chunk_mode == "relative_timesteps" else "absolute"
     print(f"Eval config | action_chunk_mode={action_chunk_mode} eval_plot_pose_mode={plot_pose_mode}")
-    buffer_path = buffer_path_override if buffer_path_override is not None else Path(cfg.test_buffer_path)
-    rollout_config_path = rollout_config_override if rollout_config_override is not None else (buffer_path.parent / "rollout_config.yaml")
+    buffer_path = Path(cfg.test_buffer_path)
+    rollout_config_path = (buffer_path.parent / "rollout_config.yaml")
     rollout_cfg = _load_rollout_config(rollout_config_path)
     state_stats = rollout_cfg.get("norm_stats", {}).get("state", None)
     action_stats = rollout_cfg.get("norm_stats", {}).get("action", None)

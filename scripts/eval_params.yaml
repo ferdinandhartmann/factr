@@ -1,10 +1,18 @@
 shared:
+  dataset_name: fourgoals_2
   dataset_project_prefix: aifact_
+  buffer_set_name: fourgoals_2_allgauss_noclip_cmdinput_rel
   run_name: categ_b001_v4k4_ct12_klb08_obs4
+  
   checkpoint_name: latest_ckpt.ckpt
-  use_episode_list: true
-  normalization_mode: apply
+  normalization_mode: apply # options: skip, apply, #
   gpu_id: 2
+  
+  use_episode_list: true
+  episode_file_name: ep_52_stiff.pkl
+  episode_index: 0 # index in sorted *.pkl files
+  list_episodes_only: false
+  
   episode_lists:
     aifact_fourgoals_2:
       # - ep_03_soft
@@ -104,26 +112,18 @@ shared:
       # - ep_260_stiff
 
 eval_single_episode_lowdim:
-  dataset_name: fourgoals_2
-  buffer_set_name: fourgoals_2_allgauss_noclip_cmdinput_rel
-  episode_file_name: ep_52_stiff.pkl
-  episode_index: 0
-  list_episodes_only: false
-  buffer_path_override: /home/ferdinand/activeinference/factr/process_data/processed_data/fourgoals_2_allgauss_noclip_cmdinput_rel/buf_test.pkl
-  rollout_config_override: /home/ferdinand/activeinference/factr/process_data/processed_data/fourgoals_2_allgauss_noclip_cmdinput_rel/rollout_config.yaml
   num_samples: 30
-  action_source: prior
+  action_source: prior # options: prior, posterior
   prediction_stride: 40
   view_elev: 24
   view_azim: -60
-  show_plot: false
+  show_plot: false # shows also 3d plot
   enable_train_background: true
   train_background_only_medium: false
-  rpy_subtract_pi: true
-  rpy_subtract_pi_axis: 0
-  rpy_plot_unit: deg
+  rpy_subtract_pi: true # If true, subtract pi from one selected RPY axis for plotting.
+  rpy_subtract_pi_axis: 0 # 0=roll, 1=pitch, 2=yaw
+  rpy_plot_unit: deg  # "rad" or "deg"
   plot_geodesic_subplot: false
-  eval_plot_pose_mode: absolute
   out_dir_override: null
   global_axis_limits:
     x: [0.2, 0.6]
@@ -140,15 +140,13 @@ eval_single_episode_lowdim:
       pose: [0.439, -0.239, -0.043, 0.905, -0.425, 0.023, -0.426, -0.904, 0.028]
 
 eval_z_distr:
-  dataset_name: fourgoals_12
-  buffer_set_name: fourgoals_12_allgauss_noclip_cmdinput_rel
-  episode_file_name: ep_51_stiff.pkl
   save_dir_override: null
   save_static_plots: true
   save_video: true
-  video_fps: 30
+  video_fps: 30 # playback speed
   video_dpi: 50
-  video_frame_stride: 2
-  video_x_points: 80
-  video_x_std_mult: 4.0
+  video_frame_stride: 2 # use every Nth frame for video
+  video_x_points: 80 # number of x points in distribution plots
+  video_x_std_mult: 4.0 # x range for distribution plots will be [mu - x_std_mult*std, mu + x_std_mult*std]
+  # 0 -> auto: min(num_episodes, max(1, cpu_count - 1)); 1 -> disable parallel rendering
   max_parallel_episodes: 5
