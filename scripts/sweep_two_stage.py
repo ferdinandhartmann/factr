@@ -34,6 +34,7 @@ def normalize_sweep_goal(raw_goal: str) -> str:
         return "maximize"
     raise ValueError(f"Unsupported SWEEP_GOAL={raw_goal!r}. Use 'minimize' or 'maximize'.")
 
+
 PROJECT = os.environ.get("WANDB_PROJECT", "aiact_sweep_4")
 ENTITY = os.environ.get("WANDB_ENTITY", "")
 SWEEP_METRIC = os.environ.get("SWEEP_METRIC", "eval/sweep_score")
@@ -61,21 +62,9 @@ class StageConfig:
     method: str
 
 
-SHORT_STAGE = StageConfig(
-    name="short_5000",
-    sweep_name="factr-lowdim-short-5000-article-style",
-    run_cap=SHORT_RUN_CAP,
-    max_steps=5000,
-    method="random",
-)
+SHORT_STAGE = StageConfig(name="short_5000", sweep_name="factr-lowdim-short-5000-article-style", run_cap=SHORT_RUN_CAP, max_steps=5000, method="random")
 
-LONG_STAGE = StageConfig(
-    name="long_15000",
-    sweep_name="factr-lowdim-long-15000-article-style",
-    run_cap=LONG_RUN_CAP,
-    max_steps=15000,
-    method="bayes",
-)
+LONG_STAGE = StageConfig(name="long_15000", sweep_name="factr-lowdim-long-15000-article-style", run_cap=LONG_RUN_CAP, max_steps=15000, method="bayes")
 
 
 def require_cmd(cmd: str) -> None:
@@ -112,14 +101,9 @@ def validate_sweep_config(stage: StageConfig, sweep_config: Dict[str, Any]) -> N
         min_value = param_spec.get("min")
         max_value = param_spec.get("max")
         if min_value is None or max_value is None:
-            raise ValueError(
-                f"Sweep parameter '{param_name}' in stage={stage.name} is missing min/max for {distribution}."
-            )
+            raise ValueError(f"Sweep parameter '{param_name}' in stage={stage.name} is missing min/max for {distribution}.")
         if float(min_value) >= float(max_value):
-            raise ValueError(
-                f"Sweep parameter '{param_name}' in stage={stage.name} has invalid range: "
-                f"min={min_value} max={max_value}."
-            )
+            raise ValueError(f"Sweep parameter '{param_name}' in stage={stage.name} has invalid range: " f"min={min_value} max={max_value}.")
 
 
 def build_sweep_config(stage: StageConfig) -> Dict[str, Any]:
@@ -130,10 +114,7 @@ def build_sweep_config(stage: StageConfig) -> Dict[str, Any]:
         "name": stage.sweep_name,
         "method": stage.method,
         "project": PROJECT,
-        "metric": {
-            "name": SWEEP_METRIC,
-            "goal": SWEEP_GOAL,
-        },
+        "metric": {"name": SWEEP_METRIC, "goal": SWEEP_GOAL},
         "run_cap": int(stage.run_cap),
         "command": [
             "${env}",
@@ -151,32 +132,16 @@ def build_sweep_config(stage: StageConfig) -> Dict[str, Any]:
         "parameters": {
             "max_iterations": {"value": int(stage.max_steps)},
             "seed": {"value": 42},
-            "lr": {
-                "distribution": "log_uniform_values",
-                "min": 0.00001,
-                "max": 0.005,
-            },
+            "lr": {"distribution": "log_uniform_values", "min": 0.00001, "max": 0.005},
             "batch_size": {"values": [64, 128]},
             "obs_window": {"values": [4, 8]},
             "train_log_freq": {"value": 50},
             "eval_freq": {"value": 250},
             "eval_freq_plot": {"value": 5000},
             "ac_chunk": {"value": 30},
-            "agent.beta": {
-                "distribution": "log_uniform_values",
-                "min": 1.0e-03,
-                "max": 5.0e-02,
-            },
-            "agent.kl_balance_alpha": {
-                "distribution": "uniform",
-                "min": 0.55,
-                "max": 0.95,
-            },
-            "agent.categorical_temperature": {
-                "distribution": "uniform",
-                "min": 0.45,
-                "max": 1.00,
-            },
+            "agent.beta": {"distribution": "log_uniform_values", "min": 1.0e-03, "max": 5.0e-02},
+            "agent.kl_balance_alpha": {"distribution": "uniform", "min": 0.55, "max": 0.95},
+            "agent.categorical_temperature": {"distribution": "uniform", "min": 0.45, "max": 1.00},
             "agent.latent_distribution": {"values": ["categorical", "gaussian"]},
             "agent.d_z": {"values": [4, 8, 12, 16, 32]},
             "agent.categorical_num_categories": {"values": [4, 8, 16, 32]},
@@ -212,20 +177,13 @@ def parse_sweep_id(output: str) -> str:
 
 
 def create_sweep(config_path: Path) -> str:
-    proc = subprocess.run(
-        WANDB_CLI + ["sweep", str(config_path)],
-        cwd=str(REPO_ROOT),
-        text=True,
-        capture_output=True,
-    )
+    proc = subprocess.run(WANDB_CLI + ["sweep", str(config_path)], cwd=str(REPO_ROOT), text=True, capture_output=True)
     if proc.stdout:
         print(proc.stdout, end="")
     if proc.stderr:
         print(proc.stderr, end="", file=sys.stderr)
     if proc.returncode != 0:
-        raise RuntimeError(
-            f"wandb sweep failed for {config_path} with exit code {proc.returncode}."
-        )
+        raise RuntimeError(f"wandb sweep failed for {config_path} with exit code {proc.returncode}.")
     return parse_sweep_id(proc.stdout + "\n" + proc.stderr)
 
 
@@ -285,12 +243,7 @@ def launch_agents(stage: StageConfig, sweep_id: str) -> None:
             env = os.environ.copy()
             env["CUDA_VISIBLE_DEVICES"] = str(gpu)
             env["PYTHONPATH"] = f"{REPO_ROOT}:{env.get('PYTHONPATH', '')}".rstrip(":")
-            proc = subprocess.Popen(
-                WANDB_CLI + ["agent", "--count", str(per_agent_count), sweep_id],
-                cwd=str(REPO_ROOT),
-                env=env,
-                start_new_session=True,
-            )
+            proc = subprocess.Popen(WANDB_CLI + ["agent", "--count", str(per_agent_count), sweep_id], cwd=str(REPO_ROOT), env=env, start_new_session=True)
             ACTIVE_PROCS.append(proc)
             print(f"  started stage={stage.name} gpu={gpu} slot={slot} pid={proc.pid}")
 
@@ -369,14 +322,7 @@ def write_best_run_summary(stage: StageConfig, sweep_id: str) -> None:
         "best": None,
     }
 
-    text_lines = [
-        f"stage={stage.name}",
-        f"sweep_id={sweep_id}",
-        f"metric={SWEEP_METRIC}",
-        f"goal={SWEEP_GOAL}",
-        f"total_runs={len(sweep.runs)}",
-        f"eligible_runs={len(eligible)}",
-    ]
+    text_lines = [f"stage={stage.name}", f"sweep_id={sweep_id}", f"metric={SWEEP_METRIC}", f"goal={SWEEP_GOAL}", f"total_runs={len(sweep.runs)}", f"eligible_runs={len(eligible)}"]
 
     if eligible:
         best_value, best_run = eligible[0]
@@ -387,14 +333,7 @@ def write_best_run_summary(stage: StageConfig, sweep_id: str) -> None:
             if path and len(path) >= 2:
                 run_url = f"https://wandb.ai/{path[0]}/{path[1]}/runs/{best_run.id}"
 
-        payload["best"] = {
-            "run_id": best_run.id,
-            "run_name": best_run.name,
-            "run_state": best_run.state,
-            "metric_value": best_value,
-            "run_url": run_url,
-            "config": cleaned_config,
-        }
+        payload["best"] = {"run_id": best_run.id, "run_name": best_run.name, "run_state": best_run.state, "metric_value": best_value, "run_url": run_url, "config": cleaned_config}
         text_lines.extend(
             [
                 f"best_run_id={best_run.id}",
@@ -502,23 +441,13 @@ def main() -> None:
         method=SHORT_STAGE.method,
     )
     long_stage = StageConfig(
-        name=LONG_STAGE.name,
-        sweep_name=LONG_STAGE.sweep_name,
-        run_cap=resolve_run_cap(LONG_STAGE.run_cap, total_agents),
-        max_steps=LONG_STAGE.max_steps,
-        method=LONG_STAGE.method,
+        name=LONG_STAGE.name, sweep_name=LONG_STAGE.sweep_name, run_cap=resolve_run_cap(LONG_STAGE.run_cap, total_agents), max_steps=LONG_STAGE.max_steps, method=LONG_STAGE.method
     )
 
     if short_stage.run_cap != SHORT_STAGE.run_cap:
-        print(
-            f"Short stage run_cap increased from {SHORT_STAGE.run_cap} to {short_stage.run_cap} "
-            f"to ensure at least {MIN_WAVES_PER_STAGE} waves across {total_agents} agents."
-        )
+        print(f"Short stage run_cap increased from {SHORT_STAGE.run_cap} to {short_stage.run_cap} " f"to ensure at least {MIN_WAVES_PER_STAGE} waves across {total_agents} agents.")
     if long_stage.run_cap != LONG_STAGE.run_cap:
-        print(
-            f"Long stage run_cap increased from {LONG_STAGE.run_cap} to {long_stage.run_cap} "
-            f"to ensure at least {MIN_WAVES_PER_STAGE} waves across {total_agents} agents."
-        )
+        print(f"Long stage run_cap increased from {LONG_STAGE.run_cap} to {long_stage.run_cap} " f"to ensure at least {MIN_WAVES_PER_STAGE} waves across {total_agents} agents.")
 
     RESULTS_ROOT.mkdir(parents=True, exist_ok=True)
     install_signal_handlers()

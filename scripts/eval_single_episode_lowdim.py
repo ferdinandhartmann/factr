@@ -14,13 +14,7 @@ import torch
 import yaml
 from factr.utils import apply_grouped_transform as _apply_grouped_transform
 from factr.utils import ensure_normalized as _ensure_normalized
-from factr.utils_plot import (
-    RPYPlotConfig,
-    build_pose_3d_figure,
-    build_pose_comparison_figure,
-    build_pose_fan_figure,
-    pose_chunks_for_plot,
-)
+from factr.utils_plot import RPYPlotConfig, build_pose_3d_figure, build_pose_comparison_figure, build_pose_fan_figure, pose_chunks_for_plot
 from hydra.utils import instantiate
 from omegaconf import OmegaConf
 
@@ -31,176 +25,65 @@ PROJECT_ROOT = SCRIPT_DIR.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-# ---------------------------------------------------------------------------
-# User Config (edit these variables, then run this script directly)
-# ---------------------------------------------------------------------------
-DATASET_NAME = "fourgoals_2"
-DATASET_PROJECT_PREFIX = "aifact_"
-BUFFER_SET_NAME = "fourgoals_2_allgauss_noclip_cmdinput_rel"
-RUN_NAME = "categ_b001_v4k4_ct12_klb08_obs4"
-
-CHECKPOINT_NAME = "latest_ckpt.ckpt"
-
-USE_EPISODE_LIST = True
-EPISODE_FILE_NAME = "ep_52_stiff.pkl"
-EPISODE_INDEX = 0  # index in sorted *.pkl files
-EPISODE_LIST = []
-if (DATASET_PROJECT_PREFIX + BUFFER_SET_NAME) == "aifact_fourgoals_2":
-    EPISODE_LIST = [
-        # "ep_03_soft",
-        # "ep_13_stiff",
-        # "ep_13_soft",
-        # "ep_15_stiff",
-        # "ep_20_stiff",
-        "ep_28_soft",
-        "ep_34_stiff",
-        "ep_42_stiff",
-        # "ep_43_stiff",
-        "ep_49_soft",
-        # "ep_57_soft",
-        # "ep_58_stiff",
-    ]
-elif (DATASET_PROJECT_PREFIX + BUFFER_SET_NAME) == "aifact_fourgoals_2_stiff2":
-    EPISODE_LIST = [
-        # "ep_06_stiff",
-        # "ep_20_stiff",
-        # "ep_21_stiff",
-        "ep_25_stiff",
-        "ep_29_stiff",
-        "ep_50_stiff",
-    ]
-elif (DATASET_PROJECT_PREFIX + BUFFER_SET_NAME) == "aifact_fourgoals_2_allgauss_noclip_cmdinput":
-    EPISODE_LIST = [
-        # "ep_03_soft",
-        # "ep_13_stiff",
-        # "ep_13_soft",
-        # "ep_15_stiff",
-        # "ep_20_stiff",
-        "ep_28_soft",
-        # "ep_34_stiff",
-        "ep_42_stiff",
-        # "ep_43_stiff",
-        # "ep_49_soft",
-        # "ep_57_soft",
-        "ep_58_stiff",
-    ]
-elif (DATASET_PROJECT_PREFIX + BUFFER_SET_NAME) == "aifact_fourgoals_12_allgauss_noclip_cmdinput":
-    EPISODE_LIST = [
-        # "ep_103_soft",
-        # "ep_109_stiff",
-        # "ep_110_medium",
-        # "ep_112_medium",
-        # "ep_113_medium",
-        "ep_113_stiff",
-        "ep_114_medium",
-        # "ep_115_medium",
-        # "ep_116_medium",
-        # "ep_123_soft",
-        "ep_124_soft",
-        # "ep_128_medium",
-        # "ep_129_soft",
-        # "ep_130_stiff",
-        # "ep_139_stiff",
-        # "ep_218_stiff",
-        "ep_225_soft",
-        # "ep_232_stiff",
-        # "ep_247_stiff",
-        # "ep_250_stiff",
-        # "ep_252_stiff",
-        # "ep_253_soft",
-        "ep_258_stiff",
-        # "ep_260_stiff",
-    ]
-elif (DATASET_PROJECT_PREFIX + BUFFER_SET_NAME) == "aifact_fourgoals_2_allgauss_noclip_cmdinput_rel":
-    EPISODE_LIST = [
-        # "ep_03_soft",
-        # "ep_13_stiff",
-        # "ep_13_soft",
-        # "ep_15_stiff",
-        # "ep_20_stiff",
-        "ep_28_soft",
-        # "ep_34_stiff",
-        # "ep_42_stiff",
-        # "ep_43_stiff",
-        # "ep_49_soft",
-        # "ep_57_soft",
-        "ep_58_stiff",
-    ]
-elif (DATASET_PROJECT_PREFIX + BUFFER_SET_NAME) == "aifact_fourgoals_12_allgauss_noclip_cmdinput_rel":
-    EPISODE_LIST = [
-        # "ep_103_soft",
-        # "ep_109_stiff",
-        # "ep_110_medium",
-        # "ep_112_medium",
-        # "ep_113_medium",
-        # "ep_113_stiff",
-        # "ep_114_medium",
-        # "ep_115_medium",
-        # "ep_116_medium",
-        # "ep_123_soft",
-        # "ep_124_soft",
-        # "ep_128_medium",
-        # "ep_129_soft",
-        # "ep_130_stiff",
-        # "ep_139_stiff",
-        # "ep_218_stiff",
-        "ep_225_soft",
-        # "ep_232_stiff",
-        # "ep_247_stiff",
-        # "ep_250_stiff",
-        # "ep_252_stiff",
-        # "ep_253_soft",
-        "ep_258_stiff",
-        # "ep_260_stiff",
-    ]
+DEFAULT_CONFIG_PATH = SCRIPT_DIR / "eval_params.yaml"
 
 
-LIST_EPISODES_ONLY = False  # list available episodes and exit, without running evaluation
+def _load_script_config(config_path: Path):
+    with open(config_path, "r") as f:
+        cfg = yaml.safe_load(f)
+    shared = cfg["shared"]
+    script_cfg = cfg["eval_single_episode_lowdim"]
+    merged = dict(shared)
+    merged.update(script_cfg)
+    return merged
 
-RUN_DIR = Path.home() / "activeinference" / "factr" / "checkpoints" / (DATASET_PROJECT_PREFIX + BUFFER_SET_NAME) / RUN_NAME / "rollout"
-# Raw episode source
-RAW_EPISODE_DIR = Path.home() / "activeinference" / "factr" / "process_data" / "data_to_process" / DATASET_NAME / "data"
 
-BUFFER_PATH_OVERRIDE = Path.home() / "activeinference" / "factr" / "process_data" / "processed_data" / BUFFER_SET_NAME / "buf_test.pkl"
-ROLLOUT_CONFIG_OVERRIDE = Path.home() / "activeinference" / "factr" / "process_data" / "processed_data" / BUFFER_SET_NAME / "rollout_config.yaml"
+def _materialize_globals(config_path: Path):
+    cfg = _load_script_config(config_path)
+    dataset_name = cfg["dataset_name"]
+    dataset_project_prefix = cfg["dataset_project_prefix"]
+    buffer_set_name = cfg["buffer_set_name"]
+    run_name = cfg["run_name"]
+    key = f"{dataset_project_prefix}{buffer_set_name}"
+    episode_list = list(cfg["episode_lists"].get(key, []))
 
-NUM_SAMPLES = 30
-ACTION_SOURCE = "prior"  # one of: prior, posterior
-NORMALIZATION_MODE = "apply"  # one of: auto, apply, skip # for denormalization
-PREDICTION_STRIDE = 40  # stride for fan plot + 3d plot
-VIEW_ELEV = 24
-VIEW_AZIM = -60
-SHOW_PLOT = False  # shows also 3d plot
-ENABLE_TRAIN_BACKGROUND = True
-TRAIN_BACKGROUND_ONLY_MEDIUM = False
-RPY_SUBTRACT_PI = True  # If True, subtract pi from one selected RPY axis for plotting.
-RPY_SUBTRACT_PI_AXIS = 0  # 0=roll, 1=pitch, 2=yaw
-RPY_PLOT_UNIT = "deg"  # "rad" or "deg"
-PLOT_GEODESIC_SUBPLOT = False
-EVAL_PLOT_POSE_MODE = "absolute"  # one of: absolute, relative
+    return {
+        "DATASET_NAME": dataset_name,
+        "DATASET_PROJECT_PREFIX": dataset_project_prefix,
+        "BUFFER_SET_NAME": buffer_set_name,
+        "RUN_NAME": run_name,
+        "CHECKPOINT_NAME": cfg["checkpoint_name"],
+        "USE_EPISODE_LIST": bool(cfg["use_episode_list"]),
+        "EPISODE_FILE_NAME": cfg["episode_file_name"],
+        "EPISODE_INDEX": int(cfg["episode_index"]),
+        "EPISODE_LIST": episode_list,
+        "LIST_EPISODES_ONLY": bool(cfg["list_episodes_only"]),
+        "RUN_DIR": Path.home() / "activeinference" / "factr" / "checkpoints" / key / run_name / "rollout",
+        "RAW_EPISODE_DIR": Path.home() / "activeinference" / "factr" / "process_data" / "data_to_process" / dataset_name / "data",
+        "BUFFER_PATH_OVERRIDE": (Path(cfg["buffer_path_override"]) if cfg["buffer_path_override"] is not None else None),
+        "ROLLOUT_CONFIG_OVERRIDE": (Path(cfg["rollout_config_override"]) if cfg["rollout_config_override"] is not None else None),
+        "NUM_SAMPLES": int(cfg["num_samples"]),
+        "ACTION_SOURCE": cfg["action_source"],
+        "NORMALIZATION_MODE": cfg["normalization_mode"],
+        "PREDICTION_STRIDE": int(cfg["prediction_stride"]),
+        "VIEW_ELEV": int(cfg["view_elev"]),
+        "VIEW_AZIM": int(cfg["view_azim"]),
+        "SHOW_PLOT": bool(cfg["show_plot"]),
+        "ENABLE_TRAIN_BACKGROUND": bool(cfg["enable_train_background"]),
+        "TRAIN_BACKGROUND_ONLY_MEDIUM": bool(cfg["train_background_only_medium"]),
+        "RPY_SUBTRACT_PI": bool(cfg["rpy_subtract_pi"]),
+        "RPY_SUBTRACT_PI_AXIS": int(cfg["rpy_subtract_pi_axis"]),
+        "RPY_PLOT_UNIT": cfg["rpy_plot_unit"],
+        "PLOT_GEODESIC_SUBPLOT": bool(cfg["plot_geodesic_subplot"]),
+        "EVAL_PLOT_POSE_MODE": cfg["eval_plot_pose_mode"],
+        "GPU_ID": int(cfg["gpu_id"]),
+        "GLOBAL_AXIS_LIMITS": {k: tuple(v) for k, v in cfg["global_axis_limits"].items()},
+        "GOAL_FRAMES": cfg["goal_frames"],
+        "OUT_DIR_OVERRIDE": cfg["out_dir_override"],
+    }
 
-GPU_ID = 2
 
-GLOBAL_AXIS_LIMITS = {
-    "x": (0.2, 0.6),
-    "y": (-0.4, 0.4),
-    "z": (0.0, 0.7),
-}
-
-GOAL_FRAMES = [
-    # fourgoals_1
-    # {"name": "goal 1", "pose": [0.384, -0.26, 0.181, 0.998, 0.014, 0.065, 0.011, -0.999, 0.05]},
-    # {"name": "goal 2", "pose": [0.656, -0.155, -0.023, 0.996, -0.054, 0.065, -0.057, -0.997, 0.045]},
-    # {"name": "goal 3", "pose": [0.51, 0.269, -0.028, -0.015, 1.0, -0.027, 1.0, 0.015, 0.013]},
-    # {"name": "goal 4", "pose": [0.466, 0.361, 0.48, 0.998, 0.056, 0.032, 0.034, -0.034, -0.999]},
-    # fourgoals_2
-    {"name": "goal 1", "pose": [0.341, 0.240, 0.606, 0.999, -0.007, 0.013, -0.007, -1.000, -0.010]},  # 33
-    {"name": "goal 2", "pose": [0.524, 0.226, 0.381, 1.000, 0.013, 0.025, 0.013, -1.000, 0.004]},  # 27
-    {"name": "goal 3", "pose": [0.591, -0.336, -0.038, 0.907, -0.421, 0.037, -0.421, -0.907, 0.006]},  # 31
-    {"name": "goal 4", "pose": [0.439, -0.239, -0.043, 0.905, -0.425, 0.023, -0.426, -0.904, 0.028]},  # 29
-]
-
-OUT_DIR_OVERRIDE = None
+globals().update(_materialize_globals(DEFAULT_CONFIG_PATH))
 
 if SHOW_PLOT:
     plt.switch_backend("TkAgg")
@@ -322,12 +205,7 @@ def _extract_state_from_buffer_obs(obs) -> Optional[np.ndarray]:
     return None
 
 
-def _load_train_buffer_background(
-    buf_path: Path,
-    action_stats: Optional[dict],
-    state_stats: Optional[dict],
-    action_pose_mode: str,
-) -> List[np.ndarray]:
+def _load_train_buffer_background(buf_path: Path, action_stats: Optional[dict], state_stats: Optional[dict], action_pose_mode: str) -> List[np.ndarray]:
     import pickle
 
     with open(buf_path, "rb") as f:
@@ -504,25 +382,11 @@ def _load_raw_episode_to_arrays(episode_file: Path, rollout_cfg) -> Dict:
     state_specs = {
         "/franka_robot_state_broadcaster/robot_state": {"keys": ["ee_pose"], "dim": 9, "fallback": "data"},
         "/cartesian_impedance_controller/ee_velocity": {"keys": ["ee_velocity"], "dim": 6, "fallback": "data"},
-        "/franka_robot_state_broadcaster/external_wrench_in_stiffness_frame": {
-            "keys": ["external_wrench"],
-            "dim": 6,
-            "fallback": "data",
-        },
+        "/franka_robot_state_broadcaster/external_wrench_in_stiffness_frame": {"keys": ["external_wrench"], "dim": 6, "fallback": "data"},
         "/cartesian_impedance_controller/tracking_error": {"keys": ["tracking_error"], "dim": 6, "fallback": "data"},
-        "/cartesian_impedance_controller/pose_command": {
-            "keys": ["ee_pose_commanded"],
-            "dim": action_dim,
-            "fallback": None,
-        },
+        "/cartesian_impedance_controller/pose_command": {"keys": ["ee_pose_commanded"], "dim": action_dim, "fallback": None},
     }
-    action_specs = {
-        "/cartesian_impedance_controller/pose_command": {
-            "keys": ["ee_pose_commanded"],
-            "dim": action_dim,
-            "fallback": None,
-        }
-    }
+    action_specs = {"/cartesian_impedance_controller/pose_command": {"keys": ["ee_pose_commanded"], "dim": action_dim, "fallback": None}}
 
     state_arrays = []
     for topic in state_topics:
@@ -613,11 +477,7 @@ def _build_eval_samples_from_raw_episode(states, actions, episode_label: int, ob
 
 
 def _build_pose_figure_with_measured(true_actions, pred_actions, measured_pose, mask, title):
-    rpy_cfg = RPYPlotConfig(
-        subtract_pi=bool(RPY_SUBTRACT_PI),
-        subtract_pi_axis=int(RPY_SUBTRACT_PI_AXIS),
-        unit=str(RPY_PLOT_UNIT),
-    )
+    rpy_cfg = RPYPlotConfig(subtract_pi=bool(RPY_SUBTRACT_PI), subtract_pi_axis=int(RPY_SUBTRACT_PI_AXIS), unit=str(RPY_PLOT_UNIT))
     return build_pose_comparison_figure(
         true_values=true_actions,
         pred_values=pred_actions,
@@ -639,11 +499,7 @@ def _build_fan_figure_with_measured(
     action_source: str,
     background_actions: Optional[List[np.ndarray]] = None,
 ):
-    rpy_cfg = RPYPlotConfig(
-        subtract_pi=bool(RPY_SUBTRACT_PI),
-        subtract_pi_axis=int(RPY_SUBTRACT_PI_AXIS),
-        unit=str(RPY_PLOT_UNIT),
-    )
+    rpy_cfg = RPYPlotConfig(subtract_pi=bool(RPY_SUBTRACT_PI), subtract_pi_axis=int(RPY_SUBTRACT_PI_AXIS), unit=str(RPY_PLOT_UNIT))
     return build_pose_fan_figure(
         true_action_chunks=true_action_chunks,
         pred_action_chunks=pred_action_chunks,
@@ -653,10 +509,7 @@ def _build_fan_figure_with_measured(
         measured_pose=measured_pose,
         background_actions=background_actions,
         max_plot_steps=None,
-        title=(
-            f"Sampled {_action_source_title(action_source)} Fan + Measured Pose + Ground-Truth Command Pose "
-            f"(full episode, stride={max(1, int(prediction_stride))})"
-        ),
+        title=(f"Sampled {_action_source_title(action_source)} Fan + Measured Pose + Ground-Truth Command Pose " f"(full episode, stride={max(1, int(prediction_stride))})"),
         plot_ground_truth_reconstructed=True,
         plot_geodesic_subplot=bool(PLOT_GEODESIC_SUBPLOT),
         rpy_config=rpy_cfg,
@@ -664,14 +517,7 @@ def _build_fan_figure_with_measured(
 
 
 def _summarize_metrics(
-    model,
-    device: torch.device,
-    obs_norm: np.ndarray,
-    actions_norm: np.ndarray,
-    mask_norm: np.ndarray,
-    labels: np.ndarray,
-    num_samples: int,
-    action_source: str,
+    model, device: torch.device, obs_norm: np.ndarray, actions_norm: np.ndarray, mask_norm: np.ndarray, labels: np.ndarray, num_samples: int, action_source: str
 ):
     obs_t = torch.from_numpy(obs_norm).float().to(device)
     actions_t = torch.from_numpy(actions_norm).float().to(device)
@@ -698,10 +544,7 @@ def _summarize_metrics(
     selected_det_l1 = selected_det_l1.sum((1, 2)) / mask_den
     action_l2 = torch.square(mask_t * (pred_det - actions_t))
     action_l2 = action_l2.sum((1, 2)) / mask_den
-    lsig = torch.logical_or(
-        torch.logical_and(actions_t > 0, pred_det <= 0),
-        torch.logical_and(actions_t <= 0, pred_det > 0),
-    )
+    lsig = torch.logical_or(torch.logical_and(actions_t > 0, pred_det <= 0), torch.logical_and(actions_t <= 0, pred_det > 0))
     lsig = (lsig.float() * mask_t).sum((1, 2)) / mask_den
 
     metrics = {
@@ -720,10 +563,21 @@ def _summarize_metrics(
 
 
 def main():
+    global DATASET_NAME, DATASET_PROJECT_PREFIX, BUFFER_SET_NAME, RUN_NAME
+    global CHECKPOINT_NAME, USE_EPISODE_LIST, EPISODE_FILE_NAME, EPISODE_INDEX, EPISODE_LIST
+    global LIST_EPISODES_ONLY, RUN_DIR, RAW_EPISODE_DIR, BUFFER_PATH_OVERRIDE, ROLLOUT_CONFIG_OVERRIDE
+    global NUM_SAMPLES, ACTION_SOURCE, NORMALIZATION_MODE, PREDICTION_STRIDE, VIEW_ELEV, VIEW_AZIM
+    global SHOW_PLOT, ENABLE_TRAIN_BACKGROUND, TRAIN_BACKGROUND_ONLY_MEDIUM, RPY_SUBTRACT_PI
+    global RPY_SUBTRACT_PI_AXIS, RPY_PLOT_UNIT, PLOT_GEODESIC_SUBPLOT, EVAL_PLOT_POSE_MODE, GPU_ID
+    global GLOBAL_AXIS_LIMITS, GOAL_FRAMES, OUT_DIR_OVERRIDE
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", type=str, default=str(DEFAULT_CONFIG_PATH))
+    args = parser.parse_args()
+    globals().update(_materialize_globals(Path(args.config)))
+
     if NORMALIZATION_MODE not in ("auto", "apply", "skip"):
         raise ValueError(f"NORMALIZATION_MODE must be one of auto/apply/skip, got: {NORMALIZATION_MODE}")
-    parser = argparse.ArgumentParser()
-    args = parser.parse_args()
 
     action_source = _normalize_action_source(ACTION_SOURCE)
     action_source_title = _action_source_title(action_source)
@@ -748,11 +602,7 @@ def main():
         raise FileNotFoundError(f"checkpoint not found: {ckpt_path}")
 
     cfg = _load_run_cfg(exp_config_path)
-    cfg_pose_mode = OmegaConf.select(
-        cfg,
-        "eval_plot_pose_mode",
-        default=OmegaConf.select(cfg, "task.eval_plot_pose_mode", default="absolute"),
-    )
+    cfg_pose_mode = OmegaConf.select(cfg, "eval_plot_pose_mode", default=OmegaConf.select(cfg, "task.eval_plot_pose_mode", default="absolute"))
     plot_pose_mode = _normalize_pose_mode(cfg_pose_mode)
     action_chunk_mode = str(OmegaConf.select(cfg, "action_chunk_mode", default="absolute")).strip().lower()
     if plot_pose_mode in ("relative", "relative_timesteps") and action_chunk_mode != "relative_timesteps":
@@ -795,12 +645,7 @@ def main():
     if ENABLE_TRAIN_BACKGROUND:
         train_buf_path = _resolve_train_buffer_path(rollout_cfg, buffer_path)
         if train_buf_path.exists():
-            train_background = _load_train_buffer_background(
-                train_buf_path,
-                action_stats=action_stats,
-                state_stats=state_stats,
-                action_pose_mode=action_pose_mode,
-            )
+            train_background = _load_train_buffer_background(train_buf_path, action_stats=action_stats, state_stats=state_stats, action_pose_mode=action_pose_mode)
             print(f"Loaded train background trajectories: {len(train_background)} | {train_buf_path}")
         else:
             print(f"Train buffer not found for background: {train_buf_path}")
@@ -817,23 +662,12 @@ def main():
         obs_window = int(cfg.obs_window)
         ac_chunk = int(cfg.ac_chunk)
         action_index_offset = int(OmegaConf.select(cfg, "task.test_buffer.action_index_offset", default=1))
-        include_tracking_error = bool(
-            OmegaConf.select(
-                cfg,
-                "include_tracking_error",
-                default=OmegaConf.select(cfg, "agent.include_tracking_error", default=True),
-            )
-        )
+        include_tracking_error = bool(OmegaConf.select(cfg, "include_tracking_error", default=OmegaConf.select(cfg, "agent.include_tracking_error", default=True)))
         states = raw_ep["states"]
         if (not include_tracking_error) and states.shape[-1] >= 36:
             states = np.concatenate([states[:, :21], states[:, 27:]], axis=-1)
         ep_data = _build_eval_samples_from_raw_episode(
-            states=states,
-            actions=raw_actions,
-            episode_label=int(raw_ep["episode_label"]),
-            obs_window=obs_window,
-            ac_chunk=ac_chunk,
-            action_index_offset=action_index_offset,
+            states=states, actions=raw_actions, episode_label=int(raw_ep["episode_label"]), obs_window=obs_window, ac_chunk=ac_chunk, action_index_offset=action_index_offset
         )
 
         obs_arr = ep_data["obs"]
@@ -940,9 +774,7 @@ def main():
             source_time_index=steps_arr,
             prediction_stride=max(1, int(PREDICTION_STRIDE)),
             action_source=action_source,
-            background_actions=train_background
-            if (ENABLE_TRAIN_BACKGROUND and train_background) and (not TRAIN_BACKGROUND_ONLY_MEDIUM or "medium" in episode_name)
-            else None,
+            background_actions=(train_background if (ENABLE_TRAIN_BACKGROUND and train_background) and (not TRAIN_BACKGROUND_ONLY_MEDIUM or "medium" in episode_name) else None),
         )
         fan_path = out_dir / f"{episode_file.stem}_predictions.png"
         fig_fan.savefig(fan_path, dpi=300, bbox_inches="tight")

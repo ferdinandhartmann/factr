@@ -1,0 +1,154 @@
+shared:
+  dataset_project_prefix: aifact_
+  run_name: categ_b001_v4k4_ct12_klb08_obs4
+  checkpoint_name: latest_ckpt.ckpt
+  use_episode_list: true
+  normalization_mode: apply
+  gpu_id: 2
+  episode_lists:
+    aifact_fourgoals_2:
+      # - ep_03_soft
+      # - ep_13_stiff
+      # - ep_13_soft
+      # - ep_15_stiff
+      # - ep_20_stiff
+      - ep_28_soft
+      - ep_34_stiff
+      - ep_42_stiff
+      # - ep_43_stiff
+      - ep_49_soft
+      # - ep_57_soft
+      # - ep_58_stiff
+    aifact_fourgoals_2_stiff2:
+      # - ep_06_stiff
+      # - ep_20_stiff
+      # - ep_21_stiff
+      - ep_25_stiff
+      - ep_29_stiff
+      - ep_50_stiff
+    aifact_fourgoals_2_allgauss_noclip_cmdinput:
+      # - ep_03_soft
+      # - ep_13_stiff
+      # - ep_13_soft
+      # - ep_15_stiff
+      # - ep_20_stiff
+      - ep_28_soft
+      # - ep_34_stiff
+      - ep_42_stiff
+      # - ep_43_stiff
+      # - ep_49_soft
+      # - ep_57_soft
+      - ep_58_stiff
+    aifact_fourgoals_12_allgauss_noclip_cmdinput:
+      # - ep_103_soft
+      # - ep_109_stiff
+      # - ep_110_medium
+      # - ep_112_medium
+      # - ep_113_medium
+      - ep_113_stiff
+      - ep_114_medium
+      # - ep_115_medium
+      # - ep_116_medium
+      # - ep_123_soft
+      - ep_124_soft
+      # - ep_128_medium
+      # - ep_129_soft
+      # - ep_130_stiff
+      # - ep_139_stiff
+      # - ep_218_stiff
+      - ep_225_soft
+      # - ep_232_stiff
+      # - ep_247_stiff
+      # - ep_250_stiff
+      # - ep_252_stiff
+      # - ep_253_soft
+      - ep_258_stiff
+      # - ep_260_stiff
+    aifact_fourgoals_2_allgauss_noclip_cmdinput_rel:
+      # - ep_03_soft
+      # - ep_13_stiff
+      # - ep_13_soft
+      # - ep_15_stiff
+      # - ep_20_stiff
+      - ep_28_soft
+      # - ep_34_stiff
+      # - ep_42_stiff
+      # - ep_43_stiff
+      # - ep_49_soft
+      # - ep_57_soft
+      - ep_58_stiff
+    aifact_fourgoals_12_allgauss_noclip_cmdinput_rel:
+      # - ep_103_soft
+      # - ep_109_stiff
+      # - ep_110_medium
+      # - ep_112_medium
+      # - ep_113_medium
+      # - ep_113_stiff
+      # - ep_114_medium
+      # - ep_115_medium
+      # - ep_116_medium
+      # - ep_123_soft
+      # - ep_124_soft
+      # - ep_128_medium
+      # - ep_129_soft
+      # - ep_130_stiff
+      # - ep_139_stiff
+      # - ep_218_stiff
+      - ep_225_soft
+      # - ep_232_stiff
+      # - ep_247_stiff
+      # - ep_250_stiff
+      # - ep_252_stiff
+      # - ep_253_soft
+      - ep_258_stiff
+      # - ep_260_stiff
+
+eval_single_episode_lowdim:
+  dataset_name: fourgoals_2
+  buffer_set_name: fourgoals_2_allgauss_noclip_cmdinput_rel
+  episode_file_name: ep_52_stiff.pkl
+  episode_index: 0
+  list_episodes_only: false
+  buffer_path_override: /home/ferdinand/activeinference/factr/process_data/processed_data/fourgoals_2_allgauss_noclip_cmdinput_rel/buf_test.pkl
+  rollout_config_override: /home/ferdinand/activeinference/factr/process_data/processed_data/fourgoals_2_allgauss_noclip_cmdinput_rel/rollout_config.yaml
+  num_samples: 30
+  action_source: prior
+  prediction_stride: 40
+  view_elev: 24
+  view_azim: -60
+  show_plot: false
+  enable_train_background: true
+  train_background_only_medium: false
+  rpy_subtract_pi: true
+  rpy_subtract_pi_axis: 0
+  rpy_plot_unit: deg
+  plot_geodesic_subplot: false
+  eval_plot_pose_mode: absolute
+  out_dir_override: null
+  global_axis_limits:
+    x: [0.2, 0.6]
+    y: [-0.4, 0.4]
+    z: [0.0, 0.7]
+  goal_frames:
+    - name: goal 1
+      pose: [0.341, 0.240, 0.606, 0.999, -0.007, 0.013, -0.007, -1.000, -0.010]
+    - name: goal 2
+      pose: [0.524, 0.226, 0.381, 1.000, 0.013, 0.025, 0.013, -1.000, 0.004]
+    - name: goal 3
+      pose: [0.591, -0.336, -0.038, 0.907, -0.421, 0.037, -0.421, -0.907, 0.006]
+    - name: goal 4
+      pose: [0.439, -0.239, -0.043, 0.905, -0.425, 0.023, -0.426, -0.904, 0.028]
+
+eval_z_distr:
+  dataset_name: fourgoals_12
+  buffer_set_name: fourgoals_12_allgauss_noclip_cmdinput_rel
+  episode_file_name: ep_51_stiff.pkl
+  save_dir_override: null
+  save_static_plots: true
+  save_video: true
+  video_fps: 30
+  video_dpi: 50
+  video_frame_stride: 2
+  video_x_points: 80
+  video_x_std_mult: 4.0
+  max_parallel_episodes: 5

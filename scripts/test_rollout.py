@@ -12,14 +12,7 @@ import plotly.graph_objects as go
 import yaml
 from tqdm import tqdm
 
-from test_rollout_utils import (
-    calculate_franka_fk,
-    get_all_joint_cmds_np,
-    load_and_extract_raw_data,
-    load_and_prepare_policy,
-    load_episode_from_buffer,
-    preprocess_image,
-)
+from test_rollout_utils import calculate_franka_fk, get_all_joint_cmds_np, load_and_extract_raw_data, load_and_prepare_policy, load_episode_from_buffer, preprocess_image
 
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -134,11 +127,7 @@ for episode_name in episode_names:
             print(f"ℹ️ Info: Could not load episode {episode_name} from buffer. Error: {e}, loading from raw PKL instead.")
             RAW_DATA_PATH = RAW_DATA_PATH_EVAL / f"{episode_name}.pkl"
             image_obs, torque_obs, true_actions = load_and_extract_raw_data(
-                RAW_DATA_PATH,
-                downsample=downsample,
-                image_topic=image_topic,
-                obs_topic=obs_topic,
-                action_topic=action_topic,
+                RAW_DATA_PATH, downsample=downsample, image_topic=image_topic, obs_topic=obs_topic, action_topic=action_topic
             )
             use_eval = True
 
@@ -150,11 +139,7 @@ for episode_name in episode_names:
             print(f"Required PKL file not found: {RAW_DATA_PATH}, skipping this episode.")
             break
         image_obs, torque_obs, true_actions = load_and_extract_raw_data(
-            RAW_DATA_PATH,
-            downsample=downsample,
-            image_topic=image_topic,
-            obs_topic=obs_topic,
-            action_topic=action_topic,
+            RAW_DATA_PATH, downsample=downsample, image_topic=image_topic, obs_topic=obs_topic, action_topic=action_topic
         )
 
     # -----------------------------
@@ -307,25 +292,11 @@ for episode_name in episode_names:
         fig = go.Figure()
         # Plot Ground Truth 3D path
         fig.add_trace(
-            go.Scatter3d(
-                x=ground_truth_pos[:, 0],
-                y=ground_truth_pos[:, 1],
-                z=ground_truth_pos[:, 2],
-                mode="lines",
-                name="GT Trajectory",
-                line=dict(color="red", width=4),
-            )
+            go.Scatter3d(x=ground_truth_pos[:, 0], y=ground_truth_pos[:, 1], z=ground_truth_pos[:, 2], mode="lines", name="GT Trajectory", line=dict(color="red", width=4))
         )
         # Plot Predicted 3D path
         fig.add_trace(
-            go.Scatter3d(
-                x=predicted_pos[:, 0],
-                y=predicted_pos[:, 1],
-                z=predicted_pos[:, 2],
-                mode="lines",
-                name="Predicted Trajectory",
-                line=dict(color="blue", width=4),
-            )
+            go.Scatter3d(x=predicted_pos[:, 0], y=predicted_pos[:, 1], z=predicted_pos[:, 2], mode="lines", name="Predicted Trajectory", line=dict(color="blue", width=4))
         )
         # Mark start and end points
         fig.add_trace(
@@ -340,32 +311,17 @@ for episode_name in episode_names:
         )
         fig.add_trace(
             go.Scatter3d(
-                x=[ground_truth_pos[-1, 0]],
-                y=[ground_truth_pos[-1, 1]],
-                z=[ground_truth_pos[-1, 2]],
-                mode="markers",
-                name="GT End",
-                marker=dict(color="red", size=8, symbol="x"),
+                x=[ground_truth_pos[-1, 0]], y=[ground_truth_pos[-1, 1]], z=[ground_truth_pos[-1, 2]], mode="markers", name="GT End", marker=dict(color="red", size=8, symbol="x")
             )
         )
         fig.add_trace(
             go.Scatter3d(
-                x=[predicted_pos[0, 0]],
-                y=[predicted_pos[0, 1]],
-                z=[predicted_pos[0, 2]],
-                mode="markers",
-                name="Pred Start",
-                marker=dict(color="darkgray", size=6, symbol="circle"),
+                x=[predicted_pos[0, 0]], y=[predicted_pos[0, 1]], z=[predicted_pos[0, 2]], mode="markers", name="Pred Start", marker=dict(color="darkgray", size=6, symbol="circle")
             )
         )
         fig.add_trace(
             go.Scatter3d(
-                x=[predicted_pos[-1, 0]],
-                y=[predicted_pos[-1, 1]],
-                z=[predicted_pos[-1, 2]],
-                mode="markers",
-                name="Pred End",
-                marker=dict(color="blue", size=8, symbol="x"),
+                x=[predicted_pos[-1, 0]], y=[predicted_pos[-1, 1]], z=[predicted_pos[-1, 2]], mode="markers", name="Pred End", marker=dict(color="blue", size=8, symbol="x")
             )
         )
 
@@ -427,59 +383,13 @@ for episode_name in episode_names:
 
         # --- Plot 5: 3D Trajectory (The New Plot) ---
         # Plot Ground Truth 3D path
-        ax_3d.plot(
-            ground_truth_pos[:, 0],
-            ground_truth_pos[:, 1],
-            ground_truth_pos[:, 2],
-            label="GT Trajectory",
-            color="red",
-            linewidth=1.2,
-        )
-        ax_3d.plot(
-            predicted_pos[:, 0],
-            predicted_pos[:, 1],
-            predicted_pos[:, 2],
-            label="Predicted Trajectory",
-            color="blue",
-            linewidth=1.2,
-        )
+        ax_3d.plot(ground_truth_pos[:, 0], ground_truth_pos[:, 1], ground_truth_pos[:, 2], label="GT Trajectory", color="red", linewidth=1.2)
+        ax_3d.plot(predicted_pos[:, 0], predicted_pos[:, 1], predicted_pos[:, 2], label="Predicted Trajectory", color="blue", linewidth=1.2)
         # Mark start and end points
-        ax_3d.scatter(
-            ground_truth_pos[0, 0],
-            ground_truth_pos[0, 1],
-            ground_truth_pos[0, 2],
-            c="k",
-            marker="o",
-            s=20,
-            label="GT Start",
-        )
-        ax_3d.scatter(
-            ground_truth_pos[-1, 0],
-            ground_truth_pos[-1, 1],
-            ground_truth_pos[-1, 2],
-            c="r",
-            marker="x",
-            s=50,
-            label="GT End",
-        )
-        ax_3d.scatter(
-            predicted_pos[0, 0],
-            predicted_pos[0, 1],
-            predicted_pos[0, 2],
-            c="darkgray",
-            marker="o",
-            s=20,
-            label="Pred Start",
-        )
-        ax_3d.scatter(
-            predicted_pos[-1, 0],
-            predicted_pos[-1, 1],
-            predicted_pos[-1, 2],
-            c="blue",
-            marker="x",
-            s=50,
-            label="Pred End",
-        )
+        ax_3d.scatter(ground_truth_pos[0, 0], ground_truth_pos[0, 1], ground_truth_pos[0, 2], c="k", marker="o", s=20, label="GT Start")
+        ax_3d.scatter(ground_truth_pos[-1, 0], ground_truth_pos[-1, 1], ground_truth_pos[-1, 2], c="r", marker="x", s=50, label="GT End")
+        ax_3d.scatter(predicted_pos[0, 0], predicted_pos[0, 1], predicted_pos[0, 2], c="darkgray", marker="o", s=20, label="Pred Start")
+        ax_3d.scatter(predicted_pos[-1, 0], predicted_pos[-1, 1], predicted_pos[-1, 2], c="blue", marker="x", s=50, label="Pred End")
 
         ax_3d.set_xlabel("X (m)")
         ax_3d.set_ylabel("Y (m)")
@@ -527,7 +437,7 @@ for episode_name in episode_names:
         #     color=f"C{layer_idx}",
         # )
         linestyle = "-" if layer_idx == 0 else "-" if layer_idx == attn_layer_vectors_stacked.shape[1] - 1 else "--"
-        colour = "blue" if layer_idx == 0 else "black" if layer_idx == attn_layer_vectors_stacked.shape[1] - 1 else f"C{layer_idx}"
+        colour = "blue" if layer_idx == 0 else ("black" if layer_idx == attn_layer_vectors_stacked.shape[1] - 1 else f"C{layer_idx}")
         alpha = 1.0 if layer_idx == 0 else 1.0 if layer_idx == attn_layer_vectors_stacked.shape[1] - 1 else 0.7
         ax1.plot(
             (attn_layer_vectors_stacked[:, layer_idx, 1] - attn_layer_vectors_stacked[:, layer_idx, 0]),
@@ -572,11 +482,7 @@ for episode_name in episode_names:
 
     # Visualization (unchanged content)
     fig, axes = plt.subplots(dof_dims, 1, figsize=(12, 2 * dof_dims), sharex=True)
-    fig.suptitle(
-        f"FACTR Prediction vs Ground Truth for episode {episode_name}, y-plot-range: {max_y_diff:.1f}",
-        fontsize=16,
-        y=0.98,
-    )
+    fig.suptitle(f"FACTR Prediction vs Ground Truth for episode {episode_name}, y-plot-range: {max_y_diff:.1f}", fontsize=16, y=0.98)
     fig.text(0.5, 0.95, f"model: {model_name}", fontsize=11, ha="center", va="top")
     for d in range(dof_dims):
         ax = axes[d]
@@ -607,14 +513,7 @@ for episode_name in episode_names:
         ax.set_ylabel(f"J{d + 1} Pos. norm.")
         ax.set_ylim(-3.0, 3.0)
         for i in range(pred_dims):
-            ax.plot(
-                t + i,
-                pred_actions_norm[:, i, d],
-                label="Normalized Predicted Joint Pos.",
-                linewidth=0.8,
-                alpha=0.3,
-                color="blue",
-            )
+            ax.plot(t + i, pred_actions_norm[:, i, d], label="Normalized Predicted Joint Pos.", linewidth=0.8, alpha=0.3, color="blue")
             if i == 0:
                 ax.legend(loc="upper right", fontsize=10)
         ax.grid(True, alpha=0.4)
@@ -628,25 +527,14 @@ for episode_name in episode_names:
     if vs_all_plot:
         # Plot overlay of all dataset trajectories and FACTR predictions in rad
         fig, axes = plt.subplots(dof_dims, 1, figsize=(12, 2 * dof_dims), sharex=True)
-        fig.suptitle(
-            f"Joint Positions vs FACTR Predictions episode {episode_name}, y-plot-range: {max_y_diff:.1f}",
-            fontsize=16,
-            y=0.98,
-        )
+        fig.suptitle(f"Joint Positions vs FACTR Predictions episode {episode_name}, y-plot-range: {max_y_diff:.1f}", fontsize=16, y=0.98)
         fig.text(0.5, 0.95, f"model: {model_name}", fontsize=11, ha="center", va="top")
         for d in range(dof_dims):
             ax = axes[d]
             # Dataset trajectories
             for ep_idx, ep_data in enumerate(joint_cmds_all):
                 t_ep = np.arange(ep_data.shape[0])
-                ax.plot(
-                    t_ep,
-                    ep_data[:, d],
-                    color="red",
-                    alpha=0.3,
-                    linewidth=1.0,
-                    label="Joint Pos. from Dataset" if (d == 0 and ep_idx == 0) else None,
-                )
+                ax.plot(t_ep, ep_data[:, d], color="red", alpha=0.3, linewidth=1.0, label="Joint Pos. from Dataset" if (d == 0 and ep_idx == 0) else None)
             # Ground truth
             t_pred = np.arange(pred_actions.shape[0])
             ax.plot(t_pred, true_actions[:, d], label="Ground Truth Joint Pos.", linewidth=2, color="black", alpha=0.8)
@@ -654,14 +542,7 @@ for episode_name in episode_names:
             ax.set_ylim(mid - max_y_diff / 2 - 0.06 * max_y_diff, mid + max_y_diff / 2 + 0.06 * max_y_diff)
             # Predictions
             for i in range(pred_dims):
-                ax.plot(
-                    t_pred + i,
-                    pred_actions[:, i, d],
-                    color="blue",
-                    alpha=0.4,
-                    linewidth=0.8,
-                    label="FACTR prediction" if (d == 0 and i == 0) else None,
-                )
+                ax.plot(t_pred + i, pred_actions[:, i, d], color="blue", alpha=0.4, linewidth=0.8, label="FACTR prediction" if (d == 0 and i == 0) else None)
             ax.set_ylabel(f"J{d + 1} Pos. [rad]")
             if d == 0:
                 ax.legend(loc="upper right", fontsize=10)
@@ -682,34 +563,13 @@ for episode_name in episode_names:
             # Dataset trajectories
             for ep_idx, ep_data in enumerate(joint_cmds_all_norm):
                 t_ep = np.arange(ep_data.shape[0])
-                ax.plot(
-                    t_ep,
-                    ep_data[:, d],
-                    color="red",
-                    alpha=0.3,
-                    linewidth=1.0,
-                    label="Normalized Joint Pos. from Dataset" if (d == 0 and ep_idx == 0) else None,
-                )
+                ax.plot(t_ep, ep_data[:, d], color="red", alpha=0.3, linewidth=1.0, label=("Normalized Joint Pos. from Dataset" if (d == 0 and ep_idx == 0) else None))
             # Ground truth
             t_pred = np.arange(pred_actions_norm.shape[0])
-            ax.plot(
-                t_pred,
-                true_actions_normalized[:, d],
-                label="Normalized Ground Truth Joint Pos.",
-                linewidth=2,
-                color="black",
-                alpha=0.8,
-            )
+            ax.plot(t_pred, true_actions_normalized[:, d], label="Normalized Ground Truth Joint Pos.", linewidth=2, color="black", alpha=0.8)
             # Predictions
             for i in range(pred_dims):
-                ax.plot(
-                    t_pred + i,
-                    pred_actions_norm[:, i, d],
-                    color="blue",
-                    alpha=0.4,
-                    linewidth=0.8,
-                    label="Normalized FACTR prediction" if (d == 0 and i == 0) else None,
-                )
+                ax.plot(t_pred + i, pred_actions_norm[:, i, d], color="blue", alpha=0.4, linewidth=0.8, label="Normalized FACTR prediction" if (d == 0 and i == 0) else None)
             ax.set_ylabel(f"J{d + 1} pos. norm.")
             if d == 0:
                 ax.legend(loc="upper right", fontsize=10)

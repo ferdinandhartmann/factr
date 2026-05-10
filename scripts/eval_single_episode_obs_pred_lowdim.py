@@ -84,53 +84,25 @@ def _load_run_cfg(exp_config_path: Path):
     # Backward/forward compatibility: older run configs may miss some top-level
     # keys that newer agent/task configs reference via interpolation.
     if OmegaConf.select(cfg, "goal_classes", default=None) is None:
-        goal_classes = OmegaConf.select(
-            cfg,
-            "agent.goal_classes",
-            default=OmegaConf.select(cfg, "task.test_buffer.goal_classes", default=4),
-        )
+        goal_classes = OmegaConf.select(cfg, "agent.goal_classes", default=OmegaConf.select(cfg, "task.test_buffer.goal_classes", default=4))
         cfg.goal_classes = int(goal_classes)
     if OmegaConf.select(cfg, "stiffness_classes", default=None) is None:
-        stiffness_classes = OmegaConf.select(
-            cfg,
-            "agent.stiffness_classes",
-            default=OmegaConf.select(cfg, "task.test_buffer.stiffness_classes", default=3),
-        )
+        stiffness_classes = OmegaConf.select(cfg, "agent.stiffness_classes", default=OmegaConf.select(cfg, "task.test_buffer.stiffness_classes", default=3))
         cfg.stiffness_classes = int(stiffness_classes)
     if OmegaConf.select(cfg, "pose_action_dim", default=None) is None:
-        pose_action_dim = OmegaConf.select(
-            cfg,
-            "agent.pose_action_dim",
-            default=OmegaConf.select(cfg, "task.test_buffer.pose_action_dim", default=9),
-        )
+        pose_action_dim = OmegaConf.select(cfg, "agent.pose_action_dim", default=OmegaConf.select(cfg, "task.test_buffer.pose_action_dim", default=9))
         cfg.pose_action_dim = int(pose_action_dim)
     if OmegaConf.select(cfg, "obs_input_dim", default=None) is None:
-        obs_input_dim = OmegaConf.select(
-            cfg,
-            "agent.obs_input_dim",
-            default=OmegaConf.select(cfg, "task.test_buffer.input_obs_dim", default=21),
-        )
+        obs_input_dim = OmegaConf.select(cfg, "agent.obs_input_dim", default=OmegaConf.select(cfg, "task.test_buffer.input_obs_dim", default=21))
         cfg.obs_input_dim = int(obs_input_dim)
     if OmegaConf.select(cfg, "obs_target_dim", default=None) is None:
-        obs_target_dim = OmegaConf.select(
-            cfg,
-            "agent.predict_obs_dim",
-            default=OmegaConf.select(cfg, "task.test_buffer.predict_obs_dim", default=21),
-        )
+        obs_target_dim = OmegaConf.select(cfg, "agent.predict_obs_dim", default=OmegaConf.select(cfg, "task.test_buffer.predict_obs_dim", default=21))
         cfg.obs_target_dim = int(obs_target_dim)
     if OmegaConf.select(cfg, "pred_horizon", default=None) is None:
-        pred_horizon = OmegaConf.select(
-            cfg,
-            "agent.pred_horizon",
-            default=OmegaConf.select(cfg, "task.test_buffer.pred_horizon", default=30),
-        )
+        pred_horizon = OmegaConf.select(cfg, "agent.pred_horizon", default=OmegaConf.select(cfg, "task.test_buffer.pred_horizon", default=30))
         cfg.pred_horizon = int(pred_horizon)
     if OmegaConf.select(cfg, "raw_obs_dim", default=None) is None:
-        raw_obs_dim = OmegaConf.select(
-            cfg,
-            "task.test_buffer.obs_dim",
-            default=OmegaConf.select(cfg, "task.obs_dim", default=27),
-        )
+        raw_obs_dim = OmegaConf.select(cfg, "task.test_buffer.obs_dim", default=OmegaConf.select(cfg, "task.obs_dim", default=27))
         cfg.raw_obs_dim = int(raw_obs_dim)
     if OmegaConf.select(cfg, "action_index_offset", default=None) is None:
         cfg.action_index_offset = int(OmegaConf.select(cfg, "task.test_buffer.action_index_offset", default=0))
@@ -322,23 +294,11 @@ def _load_raw_episode_to_arrays(episode_file: Path, rollout_cfg: Dict, goal_clas
     state_specs = {
         "/franka_robot_state_broadcaster/robot_state": {"keys": ["ee_pose"], "dim": 9, "fallback": "data"},
         "/cartesian_impedance_controller/ee_velocity": {"keys": ["ee_velocity"], "dim": 6, "fallback": "data"},
-        "/franka_robot_state_broadcaster/external_wrench_in_stiffness_frame": {
-            "keys": ["external_wrench"],
-            "dim": 6,
-            "fallback": "data",
-        },
+        "/franka_robot_state_broadcaster/external_wrench_in_stiffness_frame": {"keys": ["external_wrench"], "dim": 6, "fallback": "data"},
         "/cartesian_impedance_controller/tracking_error": {"keys": ["tracking_error"], "dim": 6, "fallback": "data"},
     }
-    action_specs = {
-        "/cartesian_impedance_controller/pose_command": {
-            "keys": ["ee_pose_commanded"],
-            "dim": action_dim,
-            "fallback": None,
-        }
-    }
-    goal_topic_specs = {
-        "/goal": {"keys": ["goal"], "dim": 1, "fallback": None},
-    }
+    action_specs = {"/cartesian_impedance_controller/pose_command": {"keys": ["ee_pose_commanded"], "dim": action_dim, "fallback": None}}
+    goal_topic_specs = {"/goal": {"keys": ["goal"], "dim": 1, "fallback": None}}
 
     state_arrays = []
     for topic in state_topics:
@@ -387,32 +347,19 @@ def _load_raw_episode_to_arrays(episode_file: Path, rollout_cfg: Dict, goal_clas
 
     if goals_concat is not None:
         goals_concat = goals_concat[:num_steps]
-        goal_labels = np.asarray(
-            [_goal_value_to_class(goals_concat[t], goal_classes=goal_classes) for t in range(num_steps)],
-            dtype=np.int64,
-        )
+        goal_labels = np.asarray([_goal_value_to_class(goals_concat[t], goal_classes=goal_classes) for t in range(num_steps)], dtype=np.int64)
     else:
         goal_labels = np.ones((num_steps,), dtype=np.int64)
 
     if stiffness_topic:
         raw_stiff = synced[stiffness_topic][:num_steps]
         stiff_vecs = [_extract_fixed_vector(msg, [stiffness_key], 6, None) for msg in raw_stiff]
-        stiffness_labels = np.asarray(
-            [_stiffness_vec_to_class(vec, stiffness_thresholds) for vec in stiff_vecs],
-            dtype=np.int64,
-        )
+        stiffness_labels = np.asarray([_stiffness_vec_to_class(vec, stiffness_thresholds) for vec in stiff_vecs], dtype=np.int64)
     else:
         stiffness_labels = np.ones((num_steps,), dtype=np.int64)
     episode_label = int(stiffness_labels[0]) if len(stiffness_labels) > 0 else 1
 
-    return {
-        "states": states,
-        "actions": actions,
-        "goal_labels": goal_labels,
-        "stiffness_labels": stiffness_labels,
-        "episode_label": episode_label,
-        "num_steps": int(num_steps),
-    }
+    return {"states": states, "actions": actions, "goal_labels": goal_labels, "stiffness_labels": stiffness_labels, "episode_label": episode_label, "num_steps": int(num_steps)}
 
 
 def _build_eval_samples_from_raw_episode(
@@ -680,14 +627,7 @@ def _summarize_metrics(
 
     goal_artifacts = None
     with torch.no_grad():
-        output = model(
-            obs_window=obs_t,
-            action_chunk=action_t,
-            stiffness_labels=stiffness_t,
-            goal_labels=goal_t,
-            target_obs=target_t,
-            target_mask=mask_t,
-        )
+        output = model(obs_window=obs_t, action_chunk=action_t, stiffness_labels=stiffness_t, goal_labels=goal_t, target_obs=target_t, target_mask=mask_t)
         mean = output["mean"]
         std = output["std"]
         sample = output["sample"]
@@ -709,21 +649,11 @@ def _summarize_metrics(
         track_l2_sample = (track_l2_sample * mask_t).sum() / torch.clamp(mask_t.sum(), min=1.0)
 
         if hasattr(model, "infer_goals"):
-            goal_eval = model.infer_goals(
-                obs_window=obs_t,
-                action_chunk=action_t,
-                stiffness_labels=stiffness_t,
-                target_obs=target_t,
-                target_mask=mask_t,
-                num_goal_samples=1,
-            )
+            goal_eval = model.infer_goals(obs_window=obs_t, action_chunk=action_t, stiffness_labels=stiffness_t, target_obs=target_t, target_mask=mask_t, num_goal_samples=1)
             true_goal_idx = model.normalize_goal_labels(goal_t, batch_size=goal_t.shape[0], device=goal_t.device)
             pred_goal_idx = torch.argmax(goal_eval["goal_posterior"], dim=-1)
             goal_acc = (pred_goal_idx == true_goal_idx).float().mean()
-            goal_entropy = -torch.sum(
-                goal_eval["goal_posterior"] * torch.log(goal_eval["goal_posterior"].clamp_min(1e-8)),
-                dim=-1,
-            ).mean()
+            goal_entropy = -torch.sum(goal_eval["goal_posterior"] * torch.log(goal_eval["goal_posterior"].clamp_min(1e-8)), dim=-1).mean()
             goal_prob_sum_err = torch.abs(goal_eval["goal_posterior"].sum(dim=-1) - 1.0)
             true_goal_loglik = goal_eval["log_likelihood_per_goal"].gather(1, true_goal_idx.unsqueeze(-1)).squeeze(-1)
             goal_artifacts = {
@@ -756,14 +686,7 @@ def _summarize_metrics(
         "goal_prob_sum_error_max": float(goal_prob_sum_err.max().item()),
         "goal_prob_sum_error_mean": float(goal_prob_sum_err.mean().item()),
     }
-    return (
-        metrics,
-        mean.detach().cpu().numpy(),
-        std.detach().cpu().numpy(),
-        sample.detach().cpu().numpy(),
-        tracking_error_mean.detach().cpu().numpy(),
-        goal_artifacts,
-    )
+    return (metrics, mean.detach().cpu().numpy(), std.detach().cpu().numpy(), sample.detach().cpu().numpy(), tracking_error_mean.detach().cpu().numpy(), goal_artifacts)
 
 
 def main():
@@ -864,14 +787,7 @@ def main():
         target_model_norm = target_full_norm[..., :obs_target_dim]
         action_model_norm = action_norm[..., :pose_action_dim]
 
-        (
-            metrics,
-            pred_mean_norm,
-            pred_std_norm,
-            pred_sample_norm,
-            tracking_err_mean_norm,
-            goal_artifacts,
-        ) = _summarize_metrics(
+        metrics, pred_mean_norm, pred_std_norm, pred_sample_norm, tracking_err_mean_norm, goal_artifacts = _summarize_metrics(
             model=model,
             device=device,
             obs_model_norm=obs_model_norm,
@@ -1024,10 +940,7 @@ def main():
         )
         fig_track = None
         if collapsed_track is not None:
-            fig_track = build_tracking_error_plot(
-                tracking_error=collapsed_track["true"],
-                per_dim_mse=per_dim_mse_denorm,
-            )
+            fig_track = build_tracking_error_plot(tracking_error=collapsed_track["true"], per_dim_mse=per_dim_mse_denorm)
         if fig_track is not None:
             track_path = out_dir / f"{episode_file.stem}_tracking_error.png"
             fig_track.savefig(track_path, dpi=300, bbox_inches="tight")
@@ -1059,11 +972,7 @@ def main():
             print(f"Saved: {goal_episode_fig_path}")
             plt.close(fig_goal_episode)
 
-            print(
-                "Goal probability check | "
-                f"max|sum(p)-1|={goal_episode_payload['max_sum_error']:.3e} "
-                f"mean|sum(p)-1|={goal_episode_payload['mean_sum_error']:.3e}"
-            )
+            print("Goal probability check | " f"max|sum(p)-1|={goal_episode_payload['max_sum_error']:.3e} " f"mean|sum(p)-1|={goal_episode_payload['mean_sum_error']:.3e}")
 
 
 if __name__ == "__main__":

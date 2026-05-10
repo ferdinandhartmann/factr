@@ -197,10 +197,7 @@ def load_pkl(path: Path):
 
 def extract_topic(pkl_data, topic: str):
     """Return (data, timestamps) for topic if exists."""
-    return (
-        pkl_data["data"].get(topic, []),
-        pkl_data["timestamps"].get(topic, []),
-    )
+    return (pkl_data["data"].get(topic, []), pkl_data["timestamps"].get(topic, []))
 
 
 def extract_7d(data_list: List[Any], key: str) -> np.ndarray:

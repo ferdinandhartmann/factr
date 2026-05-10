@@ -18,9 +18,7 @@ from typing import Any, Iterable, Optional, Tuple
 # ---------------------------------------------------------------------------
 # User Config (edit these variables, then run this script directly)
 # ---------------------------------------------------------------------------
-RAW_EPISODE_DIR = Path(
-    "/home/ferdinand/activeinference/factr/process_data/data_to_process/fourgoals_1/data"
-)
+RAW_EPISODE_DIR = Path("/home/ferdinand/activeinference/factr/process_data/data_to_process/fourgoals_1/data")
 
 # Topics/keys used by FACTR raw data
 MEASURED_TOPIC = "/franka_robot_state_broadcaster/robot_state"
@@ -97,9 +95,7 @@ def _extract_xyz_from_msg(msg: Any, keys: Iterable[str]) -> Optional[Tuple[float
 
 
 def _update_minmax(
-    cur_min: Tuple[float, float, float],
-    cur_max: Tuple[float, float, float],
-    xyz_list: Iterable[Tuple[float, float, float]],
+    cur_min: Tuple[float, float, float], cur_max: Tuple[float, float, float], xyz_list: Iterable[Tuple[float, float, float]]
 ) -> Tuple[Tuple[float, float, float], Tuple[float, float, float], int]:
     count = 0
     min_x, min_y, min_z = cur_min

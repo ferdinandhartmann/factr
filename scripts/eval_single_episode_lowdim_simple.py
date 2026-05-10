@@ -150,19 +150,11 @@ def _load_raw_episode_to_arrays(episode_file: Path, rollout_cfg) -> Dict:
     state_specs = {
         "/franka_robot_state_broadcaster/robot_state": {"keys": ["ee_pose"], "dim": 9},
         "/cartesian_impedance_controller/ee_velocity": {"keys": ["ee_velocity"], "dim": 6},
-        "/franka_robot_state_broadcaster/external_wrench_in_stiffness_frame": {
-            "keys": ["external_wrench"],
-            "dim": 6,
-        },
+        "/franka_robot_state_broadcaster/external_wrench_in_stiffness_frame": {"keys": ["external_wrench"], "dim": 6},
         "/cartesian_impedance_controller/tracking_error": {"keys": ["tracking_error"], "dim": 6},
     }
 
-    action_specs = {
-        "/cartesian_impedance_controller/pose_command": {
-            "keys": ["ee_pose_commanded"],
-            "dim": action_dim,
-        }
-    }
+    action_specs = {"/cartesian_impedance_controller/pose_command": {"keys": ["ee_pose_commanded"], "dim": action_dim}}
 
     state_arrays = []
     for topic in state_topics:
@@ -193,14 +185,7 @@ def _load_raw_episode_to_arrays(episode_file: Path, rollout_cfg) -> Dict:
     return {"states": states, "actions": actions, "episode_label": int(episode_label), "num_steps": num_steps}
 
 
-def _build_eval_windows(
-    states: np.ndarray,
-    actions: np.ndarray,
-    episode_label: int,
-    obs_window: int,
-    ac_chunk: int,
-    action_index_offset: int,
-) -> Dict[str, np.ndarray]:
+def _build_eval_windows(states: np.ndarray, actions: np.ndarray, episode_label: int, obs_window: int, ac_chunk: int, action_index_offset: int) -> Dict[str, np.ndarray]:
     if states.ndim != 2 or actions.ndim != 2:
         raise ValueError(f"Expected 2D states/actions, got states={states.shape} actions={actions.shape}")
 
@@ -305,13 +290,7 @@ def _apply_grouped_transform(values: np.ndarray, stats: Dict, inverse: bool = Fa
     return arr
 
 
-def _predict_actions(
-    model,
-    device: torch.device,
-    obs_norm: np.ndarray,
-    labels: np.ndarray,
-    num_samples: int,
-) -> np.ndarray:
+def _predict_actions(model, device: torch.device, obs_norm: np.ndarray, labels: np.ndarray, num_samples: int) -> np.ndarray:
     obs_t = torch.from_numpy(obs_norm).float().to(device)
     labels_t = torch.from_numpy(labels).long().to(device)
 
@@ -323,15 +302,7 @@ def _predict_actions(
     return pred.detach().cpu().numpy()
 
 
-def _plot_direct_values(
-    true_actions: np.ndarray,
-    measured_pose: np.ndarray,
-    pred_actions: np.ndarray,
-    title: str,
-    out_path: Path,
-    stride: int,
-    step_idx: np.ndarray,
-):
+def _plot_direct_values(true_actions: np.ndarray, measured_pose: np.ndarray, pred_actions: np.ndarray, title: str, out_path: Path, stride: int, step_idx: np.ndarray):
     if true_actions.ndim != 2:
         raise ValueError(f"Expected true_actions shape (T, D), got {true_actions.shape}")
     if measured_pose.ndim != 2:
@@ -446,13 +417,7 @@ def main():
 
     model = _load_model(cfg, ckpt_path, device)
 
-    pred_samples_norm = _predict_actions(
-        model=model,
-        device=device,
-        obs_norm=obs_norm,
-        labels=labels_arr,
-        num_samples=int(NUM_SAMPLES),
-    )
+    pred_samples_norm = _predict_actions(model=model, device=device, obs_norm=obs_norm, labels=labels_arr, num_samples=int(NUM_SAMPLES))
 
     # Convert predictions and targets back to original value space.
     pred_samples_denorm = _apply_grouped_transform(pred_samples_norm, action_stats, inverse=True)

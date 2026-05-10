@@ -51,148 +51,63 @@ except Exception:
     pass
 
 
-# ---------------------------------------------------------------------------
-# User Config (edit these variables, then run this script directly)
-# ---------------------------------------------------------------------------
-DATASET_NAME = "fourgoals_12"
-DATASET_PROJECT_PREFIX = "aifact_"
-BUFFER_SET_NAME = "fourgoals_12_allgauss_noclip_cmdinput_rel"
-RUN_NAME = "categ_b001_v4k4_ct12_klb08_obs4"
+SCRIPT_DIR = Path(__file__).resolve().parent
+DEFAULT_CONFIG_PATH = SCRIPT_DIR / "eval_params.yaml"
 
-CHECKPOINT_NAME = "latest_ckpt.ckpt"  # or "ckpt_020000.ckpt"
 
-USE_EPISODE_LIST = True
-EPISODE_FILE_NAME = "ep_51_stiff.pkl"
-EPISODE_LIST = []
-if (DATASET_PROJECT_PREFIX + BUFFER_SET_NAME) == "aifact_fourgoals_2":
-    EPISODE_LIST = [
-        # "ep_03_soft",
-        # "ep_13_stiff",
-        # "ep_13_soft",
-        # "ep_15_stiff",
-        # "ep_20_stiff",
-        "ep_28_soft",
-        "ep_34_stiff",
-        "ep_42_stiff",
-        # "ep_43_stiff",
-        "ep_49_soft",
-        # "ep_57_soft",
-        # "ep_58_stiff",
-    ]
-elif (DATASET_PROJECT_PREFIX + BUFFER_SET_NAME) == "aifact_fourgoals_2_stiff2":
-    EPISODE_LIST = [
-        # "ep_06_stiff",
-        # "ep_20_stiff",
-        # "ep_21_stiff",
-        "ep_25_stiff",
-        "ep_29_stiff",
-        "ep_50_stiff",
-    ]
-elif (DATASET_PROJECT_PREFIX + BUFFER_SET_NAME) == "aifact_fourgoals_2_allgauss_noclip_cmdinput":
-    EPISODE_LIST = [
-        # "ep_03_soft",
-        # "ep_13_stiff",
-        # "ep_13_soft",
-        # "ep_15_stiff",
-        # "ep_20_stiff",
-        "ep_28_soft",
-        # "ep_34_stiff",
-        "ep_42_stiff",
-        # "ep_43_stiff",
-        # "ep_49_soft",
-        # "ep_57_soft",
-        "ep_58_stiff",
-    ]
-elif (DATASET_PROJECT_PREFIX + BUFFER_SET_NAME) == "aifact_fourgoals_12_allgauss_noclip_cmdinput":
-    EPISODE_LIST = [
-        # "ep_103_soft",
-        # "ep_109_stiff",
-        # "ep_110_medium",
-        # "ep_112_medium",
-        # "ep_113_medium",
-        "ep_113_stiff",
-        "ep_114_medium",
-        # "ep_115_medium",
-        # "ep_116_medium",
-        # "ep_123_soft",
-        "ep_124_soft",
-        # "ep_128_medium",
-        # "ep_129_soft",
-        # "ep_130_stiff",
-        # "ep_139_stiff",
-        # "ep_218_stiff",
-        "ep_225_soft",
-        # "ep_232_stiff",
-        # "ep_247_stiff",
-        # "ep_250_stiff",
-        # "ep_252_stiff",
-        # "ep_253_soft",
-        "ep_258_stiff",
-        # "ep_260_stiff",
-    ]
-elif (DATASET_PROJECT_PREFIX + BUFFER_SET_NAME) == "aifact_fourgoals_2_allgauss_noclip_cmdinput_rel":
-    EPISODE_LIST = [
-        # "ep_03_soft",
-        # "ep_13_stiff",
-        # "ep_13_soft",
-        # "ep_15_stiff",
-        # "ep_20_stiff",
-        "ep_28_soft",
-        # "ep_34_stiff",
-        # "ep_42_stiff",
-        # "ep_43_stiff",
-        # "ep_49_soft",
-        # "ep_57_soft",
-        "ep_58_stiff",
-    ]
-elif (DATASET_PROJECT_PREFIX + BUFFER_SET_NAME) == "aifact_fourgoals_12_allgauss_noclip_cmdinput_rel":
-    EPISODE_LIST = [
-        # "ep_103_soft",
-        # "ep_109_stiff",
-        # "ep_110_medium",
-        # "ep_112_medium",
-        # "ep_113_medium",
-        # "ep_113_stiff",
-        # "ep_114_medium",
-        # "ep_115_medium",
-        # "ep_116_medium",
-        # "ep_123_soft",
-        # "ep_124_soft",
-        # "ep_128_medium",
-        # "ep_129_soft",
-        # "ep_130_stiff",
-        # "ep_139_stiff",
-        # "ep_218_stiff",
-        "ep_225_soft",
-        # "ep_232_stiff",
-        # "ep_247_stiff",
-        # "ep_250_stiff",
-        # "ep_252_stiff",
-        # "ep_253_soft",
-        "ep_258_stiff",
-        # "ep_260_stiff",
-    ]
+def _load_script_config(config_path: Path):
+    with open(config_path, "r") as f:
+        cfg = yaml.safe_load(f)
+    shared = cfg["shared"]
+    script_cfg = cfg["eval_z_distr"]
+    merged = dict(shared)
+    merged.update(script_cfg)
+    return merged
 
-RUN_DIR = Path.home() / "activeinference" / "factr" / "checkpoints" / (DATASET_PROJECT_PREFIX + BUFFER_SET_NAME) / RUN_NAME / "rollout"
-RAW_EPISODE_DIR = Path.home() / "activeinference" / "factr" / "process_data" / "data_to_process" / DATASET_NAME / "data"
 
-GPU_ID = 2
-# If None, outputs are saved under: <checkpoints>/<RUN_NAME>/eval_z
-SAVE_DIR_OVERRIDE = None
-SAVE_STATIC_PLOTS = True
-SAVE_VIDEO = True
-VIDEO_FPS = 30  # playback speed
-VIDEO_DPI = 50
-VIDEO_FRAME_STRIDE = 2  # use every Nth frame for video
-VIDEO_X_POINTS = 80  # number of x points in distribution plots
-VIDEO_X_STD_MULT = 4.0  # x range for distribution plots will be [mu - x_std_mult*std, mu + x_std_mult*std]
-# 0 -> auto: min(num_episodes, max(1, cpu_count - 1)); 1 -> disable parallel rendering
-MAX_PARALLEL_EPISODES = 5
-NORMALIZATION_MODE = "apply"  # auto | apply | skip
+def _materialize_globals(config_path: Path):
+    cfg = _load_script_config(config_path)
+    dataset_name = cfg["dataset_name"]
+    dataset_project_prefix = cfg["dataset_project_prefix"]
+    buffer_set_name = cfg["buffer_set_name"]
+    run_name = cfg["run_name"]
+    key = f"{dataset_project_prefix}{buffer_set_name}"
+    episode_list = list(cfg["episode_lists"].get(key, []))
+
+    return {
+        "DATASET_NAME": dataset_name,
+        "DATASET_PROJECT_PREFIX": dataset_project_prefix,
+        "BUFFER_SET_NAME": buffer_set_name,
+        "RUN_NAME": run_name,
+        "CHECKPOINT_NAME": cfg["checkpoint_name"],
+        "USE_EPISODE_LIST": bool(cfg["use_episode_list"]),
+        "EPISODE_FILE_NAME": cfg["episode_file_name"],
+        "EPISODE_LIST": episode_list,
+        "RUN_DIR": Path.home() / "activeinference" / "factr" / "checkpoints" / key / run_name / "rollout",
+        "RAW_EPISODE_DIR": Path.home() / "activeinference" / "factr" / "process_data" / "data_to_process" / dataset_name / "data",
+        "GPU_ID": int(cfg["gpu_id"]),
+        "SAVE_DIR_OVERRIDE": cfg["save_dir_override"],
+        "SAVE_STATIC_PLOTS": bool(cfg["save_static_plots"]),
+        "SAVE_VIDEO": bool(cfg["save_video"]),
+        "VIDEO_FPS": int(cfg["video_fps"]),
+        "VIDEO_DPI": int(cfg["video_dpi"]),
+        "VIDEO_FRAME_STRIDE": int(cfg["video_frame_stride"]),
+        "VIDEO_X_POINTS": int(cfg["video_x_points"]),
+        "VIDEO_X_STD_MULT": float(cfg["video_x_std_mult"]),
+        "MAX_PARALLEL_EPISODES": int(cfg["max_parallel_episodes"]),
+        "NORMALIZATION_MODE": cfg["normalization_mode"],
+    }
+
+
+globals().update(_materialize_globals(DEFAULT_CONFIG_PATH))
 
 
 def parse_args():
-    return None
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", type=str, default=str(DEFAULT_CONFIG_PATH))
+    return parser.parse_args()
 
 
 def resolve_paths(project_root: Path, model_name: str, checkpoint: str, rollout_config_arg: Optional[str]) -> Tuple[Path, Path, Path]:
@@ -212,11 +127,7 @@ def resolve_paths(project_root: Path, model_name: str, checkpoint: str, rollout_
     if rollout_config_arg is not None:
         rollout_cfg_path = Path(rollout_config_arg)
     else:
-        candidates = [
-            ckpt_path.parent / "rollout_config.yaml",
-            checkpoints_dir / "rollout" / "rollout_config.yaml",
-            checkpoints_dir / "rollout_config.yaml",
-        ]
+        candidates = [ckpt_path.parent / "rollout_config.yaml", checkpoints_dir / "rollout" / "rollout_config.yaml", checkpoints_dir / "rollout_config.yaml"]
         rollout_cfg_path = None
         for candidate in candidates:
             if candidate.exists():
@@ -325,10 +236,7 @@ def _state_candidate_keys(topic: str) -> List[str]:
 def _action_candidate_keys(topic: str) -> List[str]:
     if topic == "/cartesian_impedance_controller/pose_command":
         return ["ee_pose_commanded", "position", "data"]
-    if topic in [
-        "/joint_impedance_dynamic_gain_controller/joint_impedance_command",
-        "/joint_impedance_command_controller/joint_trajectory",
-    ]:
+    if topic in ["/joint_impedance_dynamic_gain_controller/joint_impedance_command", "/joint_impedance_command_controller/joint_trajectory"]:
         return ["position", "data"]
     return ["position", "data"]
 
@@ -363,11 +271,7 @@ def _extract_stiffness_vector(msg, key: str) -> np.ndarray:
     return np.asarray(msg, dtype=np.float32).reshape(-1)
 
 
-def _stiffness_vec_to_class(
-    stiffness_vec: np.ndarray,
-    thresholds: Optional[List[float]],
-    num_classes: Optional[int] = None,
-) -> int:
+def _stiffness_vec_to_class(stiffness_vec: np.ndarray, thresholds: Optional[List[float]], num_classes: Optional[int] = None) -> int:
     norm = float(np.linalg.norm(stiffness_vec))
     if not np.isfinite(norm):
         return 1
@@ -477,10 +381,7 @@ def load_episode_arrays(episode_path: Path, rollout_cfg: Dict) -> Tuple[np.ndarr
     states = np.concatenate(state_arrays, axis=-1).astype(np.float32)
 
     act_keys = _action_candidate_keys(action_topic)
-    actions = np.stack(
-        [_extract_vector_flexible(item, act_keys, expected_dim=action_dim) for item in synced[action_topic]],
-        axis=0,
-    ).astype(np.float32)
+    actions = np.stack([_extract_vector_flexible(item, act_keys, expected_dim=action_dim) for item in synced[action_topic]], axis=0).astype(np.float32)
     if actions.shape[0] > min_steps:
         actions = actions[:min_steps]
 
@@ -515,13 +416,7 @@ def normalize_episode(states: np.ndarray, actions: np.ndarray, rollout_cfg: Dict
     return norm_states, norm_actions
 
 
-def build_windows(
-    states: np.ndarray,
-    actions: np.ndarray,
-    classes: Optional[np.ndarray],
-    obs_window: int,
-    ac_chunk: int,
-) -> Tuple[np.ndarray, np.ndarray, Optional[np.ndarray]]:
+def build_windows(states: np.ndarray, actions: np.ndarray, classes: Optional[np.ndarray], obs_window: int, ac_chunk: int) -> Tuple[np.ndarray, np.ndarray, Optional[np.ndarray]]:
     total_steps = len(actions)
     start_t = obs_window - 1
     end_t = total_steps - ac_chunk
@@ -598,11 +493,7 @@ def extract_z_params(policy, obs_np: np.ndarray, act_np: np.ndarray, cls_np: Opt
     std_p = torch.exp(0.5 * logvar_p)
     std_q = torch.exp(0.5 * logvar_q)
 
-    return {
-        "latent_distribution": "gaussian",
-        "Prior": (mu_p.cpu().numpy(), std_p.cpu().numpy(), "blue"),
-        "Posterior": (mu_q.cpu().numpy(), std_q.cpu().numpy(), "red"),
-    }
+    return {"latent_distribution": "gaussian", "Prior": (mu_p.cpu().numpy(), std_p.cpu().numpy(), "blue"), "Posterior": (mu_q.cpu().numpy(), std_q.cpu().numpy(), "red")}
 
 
 def visualize_z_statistics(dists_data: Dict, save_dir: Path, ep_name: str):
@@ -692,28 +583,12 @@ def visualize_z_statistics_categorical(dists_data: Dict, save_dir: Path, ep_name
         ax_prior = axes[var_idx, 0]
         ax_post = axes[var_idx, 1]
 
-        im_prior = ax_prior.imshow(
-            prior_probs[:, var_idx, :].T,
-            aspect="auto",
-            origin="lower",
-            interpolation="nearest",
-            vmin=0.0,
-            vmax=1.0,
-            cmap="viridis",
-        )
+        im_prior = ax_prior.imshow(prior_probs[:, var_idx, :].T, aspect="auto", origin="lower", interpolation="nearest", vmin=0.0, vmax=1.0, cmap="viridis")
         ax_prior.set_ylabel(f"Var {var_idx} cat", fontsize=10)
         if var_idx == 0:
             ax_prior.set_title("Prior", fontsize=12)
 
-        ax_post.imshow(
-            post_probs[:, var_idx, :].T,
-            aspect="auto",
-            origin="lower",
-            interpolation="nearest",
-            vmin=0.0,
-            vmax=1.0,
-            cmap="viridis",
-        )
+        ax_post.imshow(post_probs[:, var_idx, :].T, aspect="auto", origin="lower", interpolation="nearest", vmin=0.0, vmax=1.0, cmap="viridis")
         if var_idx == 0:
             ax_post.set_title("Posterior", fontsize=12)
 
@@ -754,48 +629,18 @@ def _gaussian_pdf(x: np.ndarray, mu: float, std: float) -> np.ndarray:
 
 
 def visualize_distributions_video(
-    dists_data: Dict,
-    save_path: Path,
-    ep_name: str,
-    fps: int = 15,
-    dpi: int = 80,
-    frame_stride: int = 1,
-    x_points: int = 80,
-    x_std_mult: float = 4.0,
+    dists_data: Dict, save_path: Path, ep_name: str, fps: int = 15, dpi: int = 80, frame_stride: int = 1, x_points: int = 80, x_std_mult: float = 4.0
 ):
     latent_distribution = str(dists_data.get("latent_distribution", "gaussian")).lower()
     if latent_distribution == "categorical":
-        visualize_distributions_video_categorical(
-            dists_data,
-            save_path,
-            ep_name,
-            fps=fps,
-            dpi=dpi,
-            frame_stride=frame_stride,
-        )
+        visualize_distributions_video_categorical(dists_data, save_path, ep_name, fps=fps, dpi=dpi, frame_stride=frame_stride)
         return
 
-    visualize_distributions_video_gaussian(
-        dists_data,
-        save_path,
-        ep_name,
-        fps=fps,
-        dpi=dpi,
-        frame_stride=frame_stride,
-        x_points=x_points,
-        x_std_mult=x_std_mult,
-    )
+    visualize_distributions_video_gaussian(dists_data, save_path, ep_name, fps=fps, dpi=dpi, frame_stride=frame_stride, x_points=x_points, x_std_mult=x_std_mult)
 
 
 def visualize_distributions_video_gaussian(
-    dists_data: Dict,
-    save_path: Path,
-    ep_name: str,
-    fps: int = 15,
-    dpi: int = 80,
-    frame_stride: int = 1,
-    x_points: int = 80,
-    x_std_mult: float = 4.0,
+    dists_data: Dict, save_path: Path, ep_name: str, fps: int = 15, dpi: int = 80, frame_stride: int = 1, x_points: int = 80, x_std_mult: float = 4.0
 ):
     if not dists_data:
         return
@@ -816,18 +661,10 @@ def visualize_distributions_video_gaussian(
 
     all_mus = np.concatenate([prior_mu.reshape(-1), post_mu.reshape(-1)], axis=0)
     all_low = np.concatenate(
-        [
-            (prior_mu - float(x_std_mult) * np.clip(prior_std, 1e-6, None)).reshape(-1),
-            (post_mu - float(x_std_mult) * np.clip(post_std, 1e-6, None)).reshape(-1),
-        ],
-        axis=0,
+        [(prior_mu - float(x_std_mult) * np.clip(prior_std, 1e-6, None)).reshape(-1), (post_mu - float(x_std_mult) * np.clip(post_std, 1e-6, None)).reshape(-1)], axis=0
     )
     all_high = np.concatenate(
-        [
-            (prior_mu + float(x_std_mult) * np.clip(prior_std, 1e-6, None)).reshape(-1),
-            (post_mu + float(x_std_mult) * np.clip(post_std, 1e-6, None)).reshape(-1),
-        ],
-        axis=0,
+        [(prior_mu + float(x_std_mult) * np.clip(prior_std, 1e-6, None)).reshape(-1), (post_mu + float(x_std_mult) * np.clip(post_std, 1e-6, None)).reshape(-1)], axis=0
     )
 
     x_min = float(np.nanmin(all_low))
@@ -882,14 +719,7 @@ def visualize_distributions_video_gaussian(
     print(f"Saved: {save_path}")
 
 
-def visualize_distributions_video_categorical(
-    dists_data: Dict,
-    save_path: Path,
-    ep_name: str,
-    fps: int = 15,
-    dpi: int = 80,
-    frame_stride: int = 1,
-):
+def visualize_distributions_video_categorical(dists_data: Dict, save_path: Path, ep_name: str, fps: int = 15, dpi: int = 80, frame_stride: int = 1):
     if not dists_data:
         return
 
@@ -992,14 +822,7 @@ def render_episode_outputs(
         if save_video:
             video_path = save_dir / f"{ep_name}_z_distr.mp4"
             visualize_distributions_video(
-                dists,
-                video_path,
-                ep_name,
-                fps=video_fps,
-                dpi=video_dpi,
-                frame_stride=video_frame_stride,
-                x_points=video_x_points,
-                x_std_mult=video_x_std_mult,
+                dists, video_path, ep_name, fps=video_fps, dpi=video_dpi, frame_stride=video_frame_stride, x_points=video_x_points, x_std_mult=video_x_std_mult
             )
         return ep_name, None
     except Exception as e:
@@ -1007,6 +830,15 @@ def render_episode_outputs(
 
 
 def main():
+    global DATASET_NAME, DATASET_PROJECT_PREFIX, BUFFER_SET_NAME, RUN_NAME
+    global CHECKPOINT_NAME, USE_EPISODE_LIST, EPISODE_FILE_NAME, EPISODE_LIST
+    global RUN_DIR, RAW_EPISODE_DIR, GPU_ID, SAVE_DIR_OVERRIDE, SAVE_STATIC_PLOTS
+    global SAVE_VIDEO, VIDEO_FPS, VIDEO_DPI, VIDEO_FRAME_STRIDE, VIDEO_X_POINTS
+    global VIDEO_X_STD_MULT, MAX_PARALLEL_EPISODES, NORMALIZATION_MODE
+
+    args = parse_args()
+    globals().update(_materialize_globals(Path(args.config)))
+
     run_dir = Path(RUN_DIR)
     checkpoint_name = str(CHECKPOINT_NAME)
     data_root = Path(RAW_EPISODE_DIR)
@@ -1076,13 +908,7 @@ def main():
 
         try:
             states, actions, classes = load_episode_arrays(ep_path, rollout_cfg)
-            include_tracking_error = bool(
-                OmegaConf.select(
-                    cfg,
-                    "include_tracking_error",
-                    default=OmegaConf.select(cfg, "agent.include_tracking_error", default=True),
-                )
-            )
+            include_tracking_error = bool(OmegaConf.select(cfg, "include_tracking_error", default=OmegaConf.select(cfg, "agent.include_tracking_error", default=True)))
             if (not include_tracking_error) and states.shape[-1] >= 36:
                 states = np.concatenate([states[:, :21], states[:, 27:]], axis=-1)
 
@@ -1111,18 +937,7 @@ def main():
 
     if max_workers <= 1:
         for ep_name, dists in render_jobs:
-            _, err = render_episode_outputs(
-                dists,
-                save_dir,
-                ep_name,
-                SAVE_STATIC_PLOTS,
-                SAVE_VIDEO,
-                VIDEO_FPS,
-                VIDEO_DPI,
-                VIDEO_FRAME_STRIDE,
-                VIDEO_X_POINTS,
-                VIDEO_X_STD_MULT,
-            )
+            _, err = render_episode_outputs(dists, save_dir, ep_name, SAVE_STATIC_PLOTS, SAVE_VIDEO, VIDEO_FPS, VIDEO_DPI, VIDEO_FRAME_STRIDE, VIDEO_X_POINTS, VIDEO_X_STD_MULT)
             if err is not None:
                 print(f"Output save failed for {ep_name}: {err}")
         return
@@ -1130,17 +945,7 @@ def main():
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
         futures = [
             executor.submit(
-                render_episode_outputs,
-                dists,
-                save_dir,
-                ep_name,
-                SAVE_STATIC_PLOTS,
-                SAVE_VIDEO,
-                VIDEO_FPS,
-                VIDEO_DPI,
-                VIDEO_FRAME_STRIDE,
-                VIDEO_X_POINTS,
-                VIDEO_X_STD_MULT,
+                render_episode_outputs, dists, save_dir, ep_name, SAVE_STATIC_PLOTS, SAVE_VIDEO, VIDEO_FPS, VIDEO_DPI, VIDEO_FRAME_STRIDE, VIDEO_X_POINTS, VIDEO_X_STD_MULT
             )
             for ep_name, dists in render_jobs
         ]
