@@ -6,6 +6,7 @@ obs_dim: ${task.obs_dim}
 ac_dim: ${task.ac_dim}
 ac_chunk: ${ac_chunk}
 obs_window: ${obs_window}
+include_tracking_error: ${oc.select:include_tracking_error,true}
 
 stiffness_classes: ${stiffness_classes}
 

@@ -14,11 +14,12 @@ hydra:
 dataset_project_prefix: aifact_
 dataset_name: fourgoals_2_allgauss_noclip_cmdinput_rel
 stiffness_classes: 2
+include_tracking_error: false
 
 buffer_path: /home/ferdinand/activeinference/factr/process_data/processed_data/${dataset_name}/buf_train.pkl
 test_buffer_path: /home/ferdinand/activeinference/factr/process_data/processed_data/${dataset_name}/buf_test.pkl
 
-exp_base_name: categ_b001_v4k4_others_obs4
+exp_base_name: categ_b001_v4k4_others_obs4_notrack
 
 suffix: _
 exp_name: ${exp_base_name}

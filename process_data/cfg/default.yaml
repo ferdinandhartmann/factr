@@ -1,6 +1,6 @@
 
 input_path: /home/ferdinand/activeinference/factr/process_data/data_to_process/fourgoals_12/data
-output_path: /home/ferdinand/activeinference/factr/process_data/processed_data/fourgoals_12_allgauss_noclip_cmdinput_rel_notrack
+output_path: /home/ferdinand/activeinference/factr/process_data/processed_data/fourgoals_12_allgauss_noclip_cmdinput_rel
 
 downsample: False
 data_frequency: 50.0
@@ -13,7 +13,7 @@ obs_topics:
   - /franka_robot_state_broadcaster/robot_state
   - /cartesian_impedance_controller/ee_velocity
   - /franka_robot_state_broadcaster/external_wrench_in_stiffness_frame
-  # - /cartesian_impedance_controller/tracking_error
+  - /cartesian_impedance_controller/tracking_error
   - /cartesian_impedance_controller/pose_command # added to see if predictions are with less jumps
 
 # Normalization

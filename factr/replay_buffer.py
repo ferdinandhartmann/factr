@@ -307,6 +307,7 @@ class RobobufReplayBufferLowdim(ReplayBuffer):
         obs_dim=27,
         pose_action_dim=9,
         action_index_offset=0,
+        include_tracking_error=True,
         include_goals=False,
         action_chunk_mode="absolute",
         stiffness_classes=3,
@@ -319,12 +320,16 @@ class RobobufReplayBufferLowdim(ReplayBuffer):
         self.buffer_path = buffer_path
 
         self.obs_window = int(obs_window)
+        self.include_tracking_error = bool(include_tracking_error)
         self.obs_dim = int(obs_dim)
         self.pose_action_dim = int(pose_action_dim)
         self.action_index_offset = int(action_index_offset)
         self.include_goals = bool(include_goals)
         self.action_chunk_mode = str(action_chunk_mode)
         self.stiffness_classes = int(stiffness_classes)
+        self._tracking_slice = slice(21, 27)
+        if not self.include_tracking_error and self.obs_dim >= 36:
+            self.obs_dim -= 6
         self.use_internal_split = bool(use_internal_split)
         self.transform = None
         self.s_a_mask = []
@@ -389,6 +394,13 @@ class RobobufReplayBufferLowdim(ReplayBuffer):
     def _extract_obs_vector(self, step):
         obs_dict = _obs_to_dict(step.obs)
         state = np.asarray(obs_dict["state"], dtype=np.float32).reshape(-1)
+        if not self.include_tracking_error:
+            if state.shape[0] == self.obs_dim + 6:
+                state = np.concatenate(
+                    [state[: self._tracking_slice.start], state[self._tracking_slice.stop :]], axis=0
+                )
+            elif state.shape[0] != self.obs_dim:
+                raise ValueError(f"Expected state dim {self.obs_dim} without tracking error, got {state.shape[0]}.")
         if self.include_goals and "goals" in obs_dict:
             goals = np.asarray(obs_dict["goals"], dtype=np.float32).reshape(-1)
             state = np.concatenate([state, goals], axis=0)
@@ -659,7 +671,9 @@ class RobobufReplayBufferObsPredLowdim(ReplayBuffer):
             target_mask = np.asarray(target_mask, dtype=np.float32)
             goal_label = int(episode_goals[target_idx])
 
-            self.s_a_mask.append((obs_window, action_chunk, target_chunk, target_mask, int(stiffness_label), goal_label))
+            self.s_a_mask.append(
+                (obs_window, action_chunk, target_chunk, target_mask, int(stiffness_label), goal_label)
+            )
             self.sample_metadata.append(
                 {
                     "episode_id": int(episode_id),

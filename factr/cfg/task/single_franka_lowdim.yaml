@@ -1,5 +1,6 @@
 _target_: factr.task.BCTask
 obs_dim: 36
+include_tracking_error: ${oc.select:include_tracking_error,true}
 ac_dim: 9
 cam_indexes: []
 n_cams: ${len:${task.cam_indexes}}
@@ -26,6 +27,7 @@ train_buffer:
   obs_dim: ${task.obs_dim}
   pose_action_dim: ${task.ac_dim}
   action_index_offset: 0 # if = 0: Model sees the observation at time t and should predict the action at time t.
+  include_tracking_error: ${task.include_tracking_error}
   include_goals: False
   action_chunk_mode: ${action_chunk_mode}
   stiffness_classes: ${task.stiffness_classes}
@@ -42,6 +44,7 @@ test_buffer:
   obs_dim: ${task.obs_dim}
   pose_action_dim: ${task.ac_dim}
   action_index_offset: 0
+  include_tracking_error: ${task.include_tracking_error}
   include_goals: False
   action_chunk_mode: ${action_chunk_mode}
   stiffness_classes: ${task.stiffness_classes}

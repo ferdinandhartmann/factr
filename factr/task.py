@@ -362,6 +362,7 @@ class DefaultTask:
         eval_plot_axis_limits=None,
         eval_plot_goal_frames=None,
         eval_plot_pose_mode: str = "absolute",
+        include_tracking_error: bool | None = None,
         sweep_target_min_diversity: float = 0.02,
         sweep_target_min_kl: float = 0.5,
         sweep_diversity_penalty: float = 2.0,
