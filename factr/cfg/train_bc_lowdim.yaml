@@ -19,15 +19,15 @@ include_tracking_error: false
 buffer_path: /home/ferdinand/activeinference/factr/process_data/processed_data/${dataset_name}/buf_train.pkl
 test_buffer_path: /home/ferdinand/activeinference/factr/process_data/processed_data/${dataset_name}/buf_test.pkl
 
-exp_base_name: categ_b001_v4k4_others_obs4_notrack
+exp_base_name: categ_b001_v4k4_ct12_klb08_obs4
 
 suffix: _
 exp_name: ${exp_base_name}
 
-batch_size: 256
+batch_size: 180
 num_workers: 8
 lr: 0.00035
-max_iterations: 25000
+max_iterations: 10000
 schedule_freq: 1
 devices: 1
 seed: 42

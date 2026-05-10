@@ -13,6 +13,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 import yaml
+from factr.utils import ensure_normalized as _ensure_normalized
 from hydra.utils import instantiate
 from omegaconf import OmegaConf
 from tqdm import tqdm
@@ -45,7 +46,7 @@ try:
     if "factr.misc" in sys.modules:
         import factr.misc
 
-        factr.misc.get_transform_by_name = lambda name: (lambda x: x)
+        factr.misc.get_transform_by_name = lambda name: lambda x: x
 except Exception:
     pass
 
@@ -53,15 +54,17 @@ except Exception:
 # ---------------------------------------------------------------------------
 # User Config (edit these variables, then run this script directly)
 # ---------------------------------------------------------------------------
-RUN_NAME = "categ_n_b0005_v4k4"
-DATASET_NAME = "fourgoals_2"
-BUFFER_SET_NAME = "fourgoals_2_allgauss_noclip_cmdinput" 
+DATASET_NAME = "fourgoals_12"
+DATASET_PROJECT_PREFIX = "aifact_"
+BUFFER_SET_NAME = "fourgoals_12_allgauss_noclip_cmdinput_rel"
+RUN_NAME = "categ_b001_v4k4_ct12_klb08_obs4"
+
 CHECKPOINT_NAME = "latest_ckpt.ckpt"  # or "ckpt_020000.ckpt"
 
-EPISODE_FILE_NAME = "ep_51_stiff.pkl"
 USE_EPISODE_LIST = True
+EPISODE_FILE_NAME = "ep_51_stiff.pkl"
 EPISODE_LIST = []
-if BUFFER_SET_NAME == "fourgoals_2":
+if (DATASET_PROJECT_PREFIX + BUFFER_SET_NAME) == "aifact_fourgoals_2":
     EPISODE_LIST = [
         # "ep_03_soft",
         # "ep_13_stiff",
@@ -76,8 +79,8 @@ if BUFFER_SET_NAME == "fourgoals_2":
         # "ep_57_soft",
         # "ep_58_stiff",
     ]
-elif BUFFER_SET_NAME == "fourgoals_2_stiff2":
-    EPISODE_LIST = [    
+elif (DATASET_PROJECT_PREFIX + BUFFER_SET_NAME) == "aifact_fourgoals_2_stiff2":
+    EPISODE_LIST = [
         # "ep_06_stiff",
         # "ep_20_stiff",
         # "ep_21_stiff",
@@ -85,7 +88,7 @@ elif BUFFER_SET_NAME == "fourgoals_2_stiff2":
         "ep_29_stiff",
         "ep_50_stiff",
     ]
-elif BUFFER_SET_NAME == "fourgoals_2_allgauss_noclip_cmdinput":
+elif (DATASET_PROJECT_PREFIX + BUFFER_SET_NAME) == "aifact_fourgoals_2_allgauss_noclip_cmdinput":
     EPISODE_LIST = [
         # "ep_03_soft",
         # "ep_13_stiff",
@@ -100,8 +103,77 @@ elif BUFFER_SET_NAME == "fourgoals_2_allgauss_noclip_cmdinput":
         # "ep_57_soft",
         "ep_58_stiff",
     ]
+elif (DATASET_PROJECT_PREFIX + BUFFER_SET_NAME) == "aifact_fourgoals_12_allgauss_noclip_cmdinput":
+    EPISODE_LIST = [
+        # "ep_103_soft",
+        # "ep_109_stiff",
+        # "ep_110_medium",
+        # "ep_112_medium",
+        # "ep_113_medium",
+        "ep_113_stiff",
+        "ep_114_medium",
+        # "ep_115_medium",
+        # "ep_116_medium",
+        # "ep_123_soft",
+        "ep_124_soft",
+        # "ep_128_medium",
+        # "ep_129_soft",
+        # "ep_130_stiff",
+        # "ep_139_stiff",
+        # "ep_218_stiff",
+        "ep_225_soft",
+        # "ep_232_stiff",
+        # "ep_247_stiff",
+        # "ep_250_stiff",
+        # "ep_252_stiff",
+        # "ep_253_soft",
+        "ep_258_stiff",
+        # "ep_260_stiff",
+    ]
+elif (DATASET_PROJECT_PREFIX + BUFFER_SET_NAME) == "aifact_fourgoals_2_allgauss_noclip_cmdinput_rel":
+    EPISODE_LIST = [
+        # "ep_03_soft",
+        # "ep_13_stiff",
+        # "ep_13_soft",
+        # "ep_15_stiff",
+        # "ep_20_stiff",
+        "ep_28_soft",
+        # "ep_34_stiff",
+        # "ep_42_stiff",
+        # "ep_43_stiff",
+        # "ep_49_soft",
+        # "ep_57_soft",
+        "ep_58_stiff",
+    ]
+elif (DATASET_PROJECT_PREFIX + BUFFER_SET_NAME) == "aifact_fourgoals_12_allgauss_noclip_cmdinput_rel":
+    EPISODE_LIST = [
+        # "ep_103_soft",
+        # "ep_109_stiff",
+        # "ep_110_medium",
+        # "ep_112_medium",
+        # "ep_113_medium",
+        # "ep_113_stiff",
+        # "ep_114_medium",
+        # "ep_115_medium",
+        # "ep_116_medium",
+        # "ep_123_soft",
+        # "ep_124_soft",
+        # "ep_128_medium",
+        # "ep_129_soft",
+        # "ep_130_stiff",
+        # "ep_139_stiff",
+        # "ep_218_stiff",
+        "ep_225_soft",
+        # "ep_232_stiff",
+        # "ep_247_stiff",
+        # "ep_250_stiff",
+        # "ep_252_stiff",
+        # "ep_253_soft",
+        "ep_258_stiff",
+        # "ep_260_stiff",
+    ]
 
-RUN_DIR = Path.home() / "activeinference" / "factr" / "checkpoints" / BUFFER_SET_NAME / RUN_NAME / "rollout"
+RUN_DIR = Path.home() / "activeinference" / "factr" / "checkpoints" / (DATASET_PROJECT_PREFIX + BUFFER_SET_NAME) / RUN_NAME / "rollout"
 RAW_EPISODE_DIR = Path.home() / "activeinference" / "factr" / "process_data" / "data_to_process" / DATASET_NAME / "data"
 
 GPU_ID = 2
@@ -116,6 +188,7 @@ VIDEO_X_POINTS = 80  # number of x points in distribution plots
 VIDEO_X_STD_MULT = 4.0  # x range for distribution plots will be [mu - x_std_mult*std, mu + x_std_mult*std]
 # 0 -> auto: min(num_episodes, max(1, cpu_count - 1)); 1 -> disable parallel rendering
 MAX_PARALLEL_EPISODES = 5
+NORMALIZATION_MODE = "apply"  # auto | apply | skip
 
 
 def parse_args():
@@ -213,6 +286,13 @@ def _extract_vector_flexible(msg, keys: List[str], expected_dim: Optional[int] =
             if key in msg and msg[key] is not None:
                 arr = np.asarray(msg[key], dtype=np.float32).reshape(-1)
                 break
+        if arr is None:
+            parts = []
+            for value in msg.values():
+                if value is not None and isinstance(value, (list, tuple, np.ndarray)):
+                    parts.append(np.asarray(value, dtype=np.float32).reshape(-1))
+            if parts:
+                arr = np.concatenate(parts, axis=0)
 
     if arr is None:
         arr = np.asarray(msg, dtype=np.float32).reshape(-1)
@@ -251,6 +331,27 @@ def _action_candidate_keys(topic: str) -> List[str]:
     ]:
         return ["position", "data"]
     return ["position", "data"]
+
+
+def _infer_action_pose_mode(cfg, rollout_cfg, action_stats) -> str:
+    mode = OmegaConf.select(cfg, "action_pose_mode", default=None)
+    if mode is None and isinstance(rollout_cfg, dict):
+        mode = rollout_cfg.get("action_pose_mode", None)
+    if mode is not None:
+        return str(mode).strip().lower()
+
+    if isinstance(action_stats, dict) and action_stats.get("mode", None) == "grouped":
+        std_vals = []
+        for group in action_stats.get("groups", []):
+            std = np.asarray(group.get("std", []), dtype=np.float32).reshape(-1)
+            if std.size > 0:
+                std_vals.append(std)
+        if std_vals:
+            mean_std = float(np.mean(np.concatenate(std_vals)))
+            if np.isfinite(mean_std) and mean_std < 0.02:
+                return "relative"
+
+    return "absolute"
 
 
 def _extract_stiffness_vector(msg, key: str) -> np.ndarray:
@@ -369,6 +470,10 @@ def load_episode_arrays(episode_path: Path, rollout_cfg: Dict) -> Tuple[np.ndarr
         arr = np.stack(padded, axis=0)
         state_arrays.append(arr)
 
+    if len(state_arrays) == 0:
+        raise ValueError(f"No state topics found in episode: {episode_path}")
+    min_steps = min(arr.shape[0] for arr in state_arrays)
+    state_arrays = [arr[:min_steps] for arr in state_arrays]
     states = np.concatenate(state_arrays, axis=-1).astype(np.float32)
 
     act_keys = _action_candidate_keys(action_topic)
@@ -376,6 +481,8 @@ def load_episode_arrays(episode_path: Path, rollout_cfg: Dict) -> Tuple[np.ndarr
         [_extract_vector_flexible(item, act_keys, expected_dim=action_dim) for item in synced[action_topic]],
         axis=0,
     ).astype(np.float32)
+    if actions.shape[0] > min_steps:
+        actions = actions[:min_steps]
 
     classes = None
     if stiffness_topic is not None:
@@ -399,47 +506,12 @@ def load_episode_arrays(episode_path: Path, rollout_cfg: Dict) -> Tuple[np.ndarr
     return states, actions, classes
 
 
-def apply_grouped_norm(x: np.ndarray, grouped_cfg: Optional[Dict]) -> np.ndarray:
-    if grouped_cfg is None or not isinstance(grouped_cfg, dict):
-        return x
-
-    out = x.copy()
-    eps = 1e-6
-    groups = grouped_cfg.get("groups") or []
-    if not isinstance(groups, (list, tuple)):
-        return out
-
-    for group in groups:
-        if not isinstance(group, dict):
-            continue
-        indices = group.get("indices", None)
-        norm_type = group.get("type", "identity")
-        if indices is None or len(indices) != 2:
-            continue
-        start, end = int(indices[0]), int(indices[1])
-
-        if norm_type == "identity":
-            continue
-
-        if norm_type.startswith("gaussian"):
-            mean = np.asarray(group.get("mean", []), dtype=np.float32)
-            std = np.asarray(group.get("std", []), dtype=np.float32)
-            if mean.size != (end - start) or std.size != (end - start):
-                continue
-            out[:, start:end] = (out[:, start:end] - mean) / (std + eps)
-            if "clip" in group:
-                clip_val = float(group["clip"])
-                out[:, start:end] = np.clip(out[:, start:end], -clip_val, clip_val)
-
-    return out
-
-
 def normalize_episode(states: np.ndarray, actions: np.ndarray, rollout_cfg: Dict) -> Tuple[np.ndarray, np.ndarray]:
     norm_stats = rollout_cfg.get("norm_stats", {})
     state_cfg = norm_stats.get("state", None)
     action_cfg = norm_stats.get("action", None)
-    norm_states = apply_grouped_norm(states, state_cfg)
-    norm_actions = apply_grouped_norm(actions, action_cfg)
+    norm_states, _ = _ensure_normalized(states, state_cfg, NORMALIZATION_MODE, "state")
+    norm_actions, _ = _ensure_normalized(actions, action_cfg, NORMALIZATION_MODE, "action")
     return norm_states, norm_actions
 
 
@@ -973,7 +1045,7 @@ def main():
     with open(rollout_cfg_path, "r") as f:
         rollout_cfg = yaml.safe_load(f)
 
-    policy, _ = load_model(ckpt_path, device)
+    policy, cfg = load_model(ckpt_path, device)
     obs_window = int(getattr(policy, "obs_window", 8))
     ac_chunk = int(getattr(policy, "ac_chunk", 30))
 
@@ -1004,6 +1076,22 @@ def main():
 
         try:
             states, actions, classes = load_episode_arrays(ep_path, rollout_cfg)
+            include_tracking_error = bool(
+                OmegaConf.select(
+                    cfg,
+                    "include_tracking_error",
+                    default=OmegaConf.select(cfg, "agent.include_tracking_error", default=True),
+                )
+            )
+            if (not include_tracking_error) and states.shape[-1] >= 36:
+                states = np.concatenate([states[:, :21], states[:, 27:]], axis=-1)
+
+            action_stats = rollout_cfg.get("norm_stats", {}).get("action", None)
+            action_pose_mode = _infer_action_pose_mode(cfg, rollout_cfg, action_stats)
+            if action_pose_mode == "relative" and actions.shape[0] > 1:
+                rel_actions = np.zeros_like(actions)
+                rel_actions[1:] = actions[1:] - actions[:-1]
+                actions = rel_actions
             states_norm, actions_norm = normalize_episode(states, actions, rollout_cfg)
             obs_np, act_np, cls_np = build_windows(states_norm, actions_norm, classes, obs_window=obs_window, ac_chunk=ac_chunk)
             dists = extract_z_params(policy, obs_np, act_np, cls_np, device=device)

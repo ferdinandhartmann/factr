@@ -708,10 +708,14 @@ class BCTask(DefaultTask):
             #         wandb.log({f"eval/chunk_step_{i + 1}_mse": float(v)}, step=global_step)
 
             log_dict = {
-                "eval/posterior_l1": mean_val_loss,
+                "eval/sample_diversity_combined": mean_sample_diversity_combined,
+                "eval/sample_diversity": mean_sample_diversity,
                 "eval/prior_l1": mean_prior_l1,
+                "eval/prior_entropy": mean_prior_entropy,
+                "eval/posterior_l1": mean_val_loss,
+                "eval/posterior_entropy": mean_posterior_entropy,
+                "eval/sample_endpoint_diversity": mean_sample_endpoint_diversity,
                 "eval/posterior_kl": mean_posterior_kl,
-                "eval/prior_l2": ac_l2,
                 "eval/prior_lsig": ac_lsig,
                 **(
                     {
@@ -721,12 +725,8 @@ class BCTask(DefaultTask):
                     if getattr(model, "latent_distribution", None) != "categorical"
                     else {}
                 ),
-                "eval/prior_entropy": mean_prior_entropy,
-                "eval/posterior_entropy": mean_posterior_entropy,
-                "eval/sample_diversity": mean_sample_diversity,
-                "eval/sample_endpoint_diversity": mean_sample_endpoint_diversity,
                 "eval/sample_end_direction_diversity": mean_sample_end_direction_diversity,
-                "eval/sample_diversity_combined": mean_sample_diversity_combined,
+                # "eval/prior_l2": ac_l2,
                 # "eval/sweep_score": sweep_score,
             }
 

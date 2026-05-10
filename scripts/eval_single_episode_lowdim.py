@@ -34,16 +34,18 @@ if str(PROJECT_ROOT) not in sys.path:
 # ---------------------------------------------------------------------------
 # User Config (edit these variables, then run this script directly)
 # ---------------------------------------------------------------------------
-RUN_NAME = "categ_n_b0005_v4k2"
 DATASET_NAME = "fourgoals_2"
-BUFFER_SET_NAME = "fourgoals_2_allgauss_noclip_cmdinput"
+DATASET_PROJECT_PREFIX = "aifact_"
+BUFFER_SET_NAME = "fourgoals_2_allgauss_noclip_cmdinput_rel"
+RUN_NAME = "categ_b001_v4k4_ct12_klb08_obs4"
+
 CHECKPOINT_NAME = "latest_ckpt.ckpt"
 
+USE_EPISODE_LIST = True
 EPISODE_FILE_NAME = "ep_52_stiff.pkl"
 EPISODE_INDEX = 0  # index in sorted *.pkl files
-USE_EPISODE_LIST = True
 EPISODE_LIST = []
-if BUFFER_SET_NAME == "fourgoals_2":
+if (DATASET_PROJECT_PREFIX + BUFFER_SET_NAME) == "aifact_fourgoals_2":
     EPISODE_LIST = [
         # "ep_03_soft",
         # "ep_13_stiff",
@@ -58,7 +60,7 @@ if BUFFER_SET_NAME == "fourgoals_2":
         # "ep_57_soft",
         # "ep_58_stiff",
     ]
-elif BUFFER_SET_NAME == "fourgoals_2_stiff2":
+elif (DATASET_PROJECT_PREFIX + BUFFER_SET_NAME) == "aifact_fourgoals_2_stiff2":
     EPISODE_LIST = [
         # "ep_06_stiff",
         # "ep_20_stiff",
@@ -67,7 +69,7 @@ elif BUFFER_SET_NAME == "fourgoals_2_stiff2":
         "ep_29_stiff",
         "ep_50_stiff",
     ]
-elif BUFFER_SET_NAME == "fourgoals_2_allgauss_noclip_cmdinput":
+elif (DATASET_PROJECT_PREFIX + BUFFER_SET_NAME) == "aifact_fourgoals_2_allgauss_noclip_cmdinput":
     EPISODE_LIST = [
         # "ep_03_soft",
         # "ep_13_stiff",
@@ -82,7 +84,7 @@ elif BUFFER_SET_NAME == "fourgoals_2_allgauss_noclip_cmdinput":
         # "ep_57_soft",
         "ep_58_stiff",
     ]
-elif BUFFER_SET_NAME == "fourgoals_12_allgauss_noclip_cmdinput":
+elif (DATASET_PROJECT_PREFIX + BUFFER_SET_NAME) == "aifact_fourgoals_12_allgauss_noclip_cmdinput":
     EPISODE_LIST = [
         # "ep_103_soft",
         # "ep_109_stiff",
@@ -109,10 +111,53 @@ elif BUFFER_SET_NAME == "fourgoals_12_allgauss_noclip_cmdinput":
         "ep_258_stiff",
         # "ep_260_stiff",
     ]
+elif (DATASET_PROJECT_PREFIX + BUFFER_SET_NAME) == "aifact_fourgoals_2_allgauss_noclip_cmdinput_rel":
+    EPISODE_LIST = [
+        # "ep_03_soft",
+        # "ep_13_stiff",
+        # "ep_13_soft",
+        # "ep_15_stiff",
+        # "ep_20_stiff",
+        "ep_28_soft",
+        # "ep_34_stiff",
+        # "ep_42_stiff",
+        # "ep_43_stiff",
+        # "ep_49_soft",
+        # "ep_57_soft",
+        "ep_58_stiff",
+    ]
+elif (DATASET_PROJECT_PREFIX + BUFFER_SET_NAME) == "aifact_fourgoals_12_allgauss_noclip_cmdinput_rel":
+    EPISODE_LIST = [
+        # "ep_103_soft",
+        # "ep_109_stiff",
+        # "ep_110_medium",
+        # "ep_112_medium",
+        # "ep_113_medium",
+        # "ep_113_stiff",
+        # "ep_114_medium",
+        # "ep_115_medium",
+        # "ep_116_medium",
+        # "ep_123_soft",
+        # "ep_124_soft",
+        # "ep_128_medium",
+        # "ep_129_soft",
+        # "ep_130_stiff",
+        # "ep_139_stiff",
+        # "ep_218_stiff",
+        "ep_225_soft",
+        # "ep_232_stiff",
+        # "ep_247_stiff",
+        # "ep_250_stiff",
+        # "ep_252_stiff",
+        # "ep_253_soft",
+        "ep_258_stiff",
+        # "ep_260_stiff",
+    ]
+
 
 LIST_EPISODES_ONLY = False  # list available episodes and exit, without running evaluation
 
-RUN_DIR = Path.home() / "activeinference" / "factr" / "checkpoints" / BUFFER_SET_NAME / RUN_NAME / "rollout"
+RUN_DIR = Path.home() / "activeinference" / "factr" / "checkpoints" / (DATASET_PROJECT_PREFIX + BUFFER_SET_NAME) / RUN_NAME / "rollout"
 # Raw episode source
 RAW_EPISODE_DIR = Path.home() / "activeinference" / "factr" / "process_data" / "data_to_process" / DATASET_NAME / "data"
 
@@ -121,7 +166,7 @@ ROLLOUT_CONFIG_OVERRIDE = Path.home() / "activeinference" / "factr" / "process_d
 
 NUM_SAMPLES = 30
 ACTION_SOURCE = "prior"  # one of: prior, posterior
-NORMALIZATION_MODE = "apply"  # one of: auto, apply, skip
+NORMALIZATION_MODE = "apply"  # one of: auto, apply, skip # for denormalization
 PREDICTION_STRIDE = 40  # stride for fan plot + 3d plot
 VIEW_ELEV = 24
 VIEW_AZIM = -60
@@ -179,8 +224,8 @@ def _action_source_title(action_source: str) -> str:
 
 def _normalize_pose_mode(value: str) -> str:
     pose_mode = str(value).strip().lower()
-    if pose_mode not in {"absolute", "relative"}:
-        raise ValueError(f"pose mode must be one of absolute/relative, got: {value}")
+    if pose_mode not in {"absolute", "relative", "relative_timesteps", "relative_chunks"}:
+        raise ValueError(f"pose mode must be one of absolute/relative/relative_timesteps/relative_chunks, got {value}")
     return pose_mode
 
 
@@ -245,27 +290,87 @@ def _optional_metric_float(value) -> float:
     return float(value)
 
 
-def _load_train_buffer_actions(buf_path: Path) -> List[np.ndarray]:
+def _infer_action_pose_mode(cfg, rollout_cfg, action_stats) -> str:
+    """Infer whether actions are absolute or relative deltas for eval plotting."""
+    mode = OmegaConf.select(cfg, "action_pose_mode", default=None)
+    if mode is None and isinstance(rollout_cfg, dict):
+        mode = rollout_cfg.get("action_pose_mode", None)
+    if mode is not None:
+        return str(mode).strip().lower()
+
+    if isinstance(action_stats, dict) and action_stats.get("mode", None) == "grouped":
+        std_vals = []
+        for group in action_stats.get("groups", []):
+            std = np.asarray(group.get("std", []), dtype=np.float32).reshape(-1)
+            if std.size > 0:
+                std_vals.append(std)
+        if std_vals:
+            mean_std = float(np.mean(np.concatenate(std_vals)))
+            if np.isfinite(mean_std) and mean_std < 0.02:
+                return "relative"
+
+    return "absolute"
+
+
+def _extract_state_from_buffer_obs(obs) -> Optional[np.ndarray]:
+    if isinstance(obs, dict) and "state" in obs:
+        return np.asarray(obs["state"], dtype=np.float32).reshape(-1)
+    if hasattr(obs, "state"):
+        return np.asarray(getattr(obs, "state"), dtype=np.float32).reshape(-1)
+    if hasattr(obs, "obs") and isinstance(obs.obs, dict) and "state" in obs.obs:
+        return np.asarray(obs.obs["state"], dtype=np.float32).reshape(-1)
+    return None
+
+
+def _load_train_buffer_background(
+    buf_path: Path,
+    action_stats: Optional[dict],
+    state_stats: Optional[dict],
+    action_pose_mode: str,
+) -> List[np.ndarray]:
     import pickle
 
     with open(buf_path, "rb") as f:
         buffer = pickle.load(f)
 
-    actions_list = []
+    background = []
     if isinstance(buffer, (list, tuple)) and buffer and isinstance(buffer[0], (list, tuple)):
         for traj in buffer:
             if not traj or not isinstance(traj[0], tuple):
                 continue
+
             actions = []
+            pose0 = None
             for entry in traj:
                 try:
-                    _, action, _ = entry
+                    obs, action, _ = entry
                     actions.append(np.asarray(action, dtype=np.float32))
+                    if pose0 is None:
+                        state0 = _extract_state_from_buffer_obs(obs)
+                        if state0 is not None and state_stats is not None:
+                            state0 = _apply_grouped_transform(state0[None, :], state_stats, inverse=True)[0]
+                        if state0 is not None and state0.size >= 9:
+                            pose0 = state0[:9]
                 except Exception:
                     continue
-            if actions:
-                actions_list.append(np.stack(actions, axis=0))
-    return actions_list
+
+            if not actions:
+                continue
+
+            actions_arr = np.stack(actions, axis=0)
+            if action_stats is not None:
+                actions_arr = _apply_grouped_transform(actions_arr, action_stats, inverse=True)
+
+            action_dim = actions_arr.shape[-1]
+            pose_dim = min(9, action_dim)
+            pose_seq = actions_arr[:, :pose_dim]
+            if action_pose_mode == "relative":
+                base = pose0 if pose0 is not None else np.zeros((pose_dim,), dtype=np.float32)
+                pose_seq = np.cumsum(pose_seq, axis=0) + base[None, :]
+
+            background.append(pose_seq)
+
+    return background
 
 
 def _extract_ep_index(path: Path) -> Tuple[int, str]:
@@ -618,11 +723,9 @@ def main():
     if NORMALIZATION_MODE not in ("auto", "apply", "skip"):
         raise ValueError(f"NORMALIZATION_MODE must be one of auto/apply/skip, got: {NORMALIZATION_MODE}")
     parser = argparse.ArgumentParser()
-    parser.add_argument("--plot-pose-mode", default=EVAL_PLOT_POSE_MODE, choices=["absolute", "relative"])
     args = parser.parse_args()
 
     action_source = _normalize_action_source(ACTION_SOURCE)
-    plot_pose_mode = _normalize_pose_mode(args.plot_pose_mode)
     action_source_title = _action_source_title(action_source)
 
     run_dir = Path(RUN_DIR)
@@ -645,11 +748,24 @@ def main():
         raise FileNotFoundError(f"checkpoint not found: {ckpt_path}")
 
     cfg = _load_run_cfg(exp_config_path)
+    cfg_pose_mode = OmegaConf.select(
+        cfg,
+        "eval_plot_pose_mode",
+        default=OmegaConf.select(cfg, "task.eval_plot_pose_mode", default="absolute"),
+    )
+    plot_pose_mode = _normalize_pose_mode(cfg_pose_mode)
+    action_chunk_mode = str(OmegaConf.select(cfg, "action_chunk_mode", default="absolute")).strip().lower()
+    if plot_pose_mode in ("relative", "relative_timesteps") and action_chunk_mode != "relative_timesteps":
+        plot_pose_mode = "relative_chunks" if action_chunk_mode == "relative_chunks" else "absolute"
+    elif plot_pose_mode == "relative_chunks" and action_chunk_mode != "relative_chunks":
+        plot_pose_mode = "relative_timesteps" if action_chunk_mode == "relative_timesteps" else "absolute"
+    print(f"Eval config | action_chunk_mode={action_chunk_mode} eval_plot_pose_mode={plot_pose_mode}")
     buffer_path = buffer_path_override if buffer_path_override is not None else Path(cfg.test_buffer_path)
     rollout_config_path = rollout_config_override if rollout_config_override is not None else (buffer_path.parent / "rollout_config.yaml")
     rollout_cfg = _load_rollout_config(rollout_config_path)
     state_stats = rollout_cfg.get("norm_stats", {}).get("state", None)
     action_stats = rollout_cfg.get("norm_stats", {}).get("action", None)
+    action_pose_mode = _infer_action_pose_mode(cfg, rollout_cfg, action_stats)
 
     if not buffer_path.exists():
         raise FileNotFoundError(f"buffer not found: {buffer_path}")
@@ -679,9 +795,12 @@ def main():
     if ENABLE_TRAIN_BACKGROUND:
         train_buf_path = _resolve_train_buffer_path(rollout_cfg, buffer_path)
         if train_buf_path.exists():
-            train_background = _load_train_buffer_actions(train_buf_path)
-            if action_stats is not None:
-                train_background = [_apply_grouped_transform(traj, action_stats, inverse=True) for traj in train_background]
+            train_background = _load_train_buffer_background(
+                train_buf_path,
+                action_stats=action_stats,
+                state_stats=state_stats,
+                action_pose_mode=action_pose_mode,
+            )
             print(f"Loaded train background trajectories: {len(train_background)} | {train_buf_path}")
         else:
             print(f"Train buffer not found for background: {train_buf_path}")
@@ -690,12 +809,27 @@ def main():
         print(f"Selected episode file: {episode_file}")
 
         raw_ep = _load_raw_episode_to_arrays(episode_file, rollout_cfg)
+        raw_actions = raw_ep["actions"]
+        if action_pose_mode == "relative" and raw_actions.shape[0] > 1:
+            rel_actions = np.zeros_like(raw_actions)
+            rel_actions[1:] = raw_actions[1:] - raw_actions[:-1]
+            raw_actions = rel_actions
         obs_window = int(cfg.obs_window)
         ac_chunk = int(cfg.ac_chunk)
         action_index_offset = int(OmegaConf.select(cfg, "task.test_buffer.action_index_offset", default=1))
+        include_tracking_error = bool(
+            OmegaConf.select(
+                cfg,
+                "include_tracking_error",
+                default=OmegaConf.select(cfg, "agent.include_tracking_error", default=True),
+            )
+        )
+        states = raw_ep["states"]
+        if (not include_tracking_error) and states.shape[-1] >= 36:
+            states = np.concatenate([states[:, :21], states[:, 27:]], axis=-1)
         ep_data = _build_eval_samples_from_raw_episode(
-            states=raw_ep["states"],
-            actions=raw_ep["actions"],
+            states=states,
+            actions=raw_actions,
             episode_label=int(raw_ep["episode_label"]),
             obs_window=obs_window,
             ac_chunk=ac_chunk,
@@ -736,10 +870,19 @@ def main():
             action_source=action_source,
         )
 
-        actions_denorm = _apply_grouped_transform(actions_norm, action_stats, inverse=True)
-        pred_det_denorm = _apply_grouped_transform(pred_det_norm, action_stats, inverse=True)
-        pred_samples_denorm = _apply_grouped_transform(pred_samples_norm, action_stats, inverse=True)
-        obs_denorm = _apply_grouped_transform(obs_norm, state_stats, inverse=True)
+        if action_applied:
+            actions_denorm = _apply_grouped_transform(actions_norm, action_stats, inverse=True)
+            pred_det_denorm = _apply_grouped_transform(pred_det_norm, action_stats, inverse=True)
+            pred_samples_denorm = _apply_grouped_transform(pred_samples_norm, action_stats, inverse=True)
+        else:
+            actions_denorm = actions_norm
+            pred_det_denorm = pred_det_norm
+            pred_samples_denorm = pred_samples_norm
+
+        if obs_applied:
+            obs_denorm = _apply_grouped_transform(obs_norm, state_stats, inverse=True)
+        else:
+            obs_denorm = obs_norm
 
         ac_dim = actions_denorm.shape[-1]
         pose_dim = min(9, ac_dim)
@@ -747,9 +890,7 @@ def main():
         measured_first = obs_denorm[:, -1, :pose_dim]
         actions_plot = pose_chunks_for_plot(actions_denorm[:, :, :pose_dim], measured_first, plot_pose_mode)
         pred_det_plot = pose_chunks_for_plot(pred_det_denorm[:, :, :pose_dim], measured_first, plot_pose_mode)
-        pred_samples_plot = pose_chunks_for_plot(
-            pred_samples_denorm[:, :, :, :pose_dim], measured_first[:, None, :], plot_pose_mode
-        )
+        pred_samples_plot = pose_chunks_for_plot(pred_samples_denorm[:, :, :, :pose_dim], measured_first[:, None, :], plot_pose_mode)
 
         true_first = actions_plot[:, 0, :pose_dim]
         pred_first = pred_det_plot[:, 0, :pose_dim]

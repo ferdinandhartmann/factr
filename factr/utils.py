@@ -31,8 +31,7 @@ def build_episode_goal_probabilities(log_likelihood_per_timestep, goal_classes, 
     log_likelihood_per_timestep = np.asarray(log_likelihood_per_timestep, dtype=np.float32)
     if log_likelihood_per_timestep.ndim != 3:
         raise ValueError(
-            "Expected log_likelihood_per_timestep shape (T, G, H), "
-            f"got {tuple(log_likelihood_per_timestep.shape)}."
+            f"Expected log_likelihood_per_timestep shape (T, G, H), got {tuple(log_likelihood_per_timestep.shape)}."
         )
     if log_likelihood_per_timestep.shape[1] != int(goal_classes):
         raise ValueError(
@@ -301,11 +300,30 @@ def apply_grouped_transform(values: np.ndarray, stats: dict, inverse: bool = Fal
         if not indices or len(indices) != 2:
             continue
         start, stop = int(indices[0]), int(indices[1])
+        if start >= arr.shape[-1]:  # skip groups where slice length doesnt match stat dimensions
+            continue
         sl = slice(start, stop)
+        part = arr[..., sl]
+        gtype = group.get("type", "identity")
+        stat_dim = None
+        if gtype in ("gaussian", "gaussian_clip", "zscore_clip", "log1p_zscore_clip"):
+            mean = np.asarray(group.get("mean", []), dtype=np.float32)
+            std = np.asarray(group.get("std", []), dtype=np.float32)
+            stat_dim = int(mean.size or std.size or 0) or None
+        elif gtype in ("min_max",):
+            mins = np.asarray(group.get("min", []), dtype=np.float32)
+            maxs = np.asarray(group.get("max", []), dtype=np.float32)
+            stat_dim = int(mins.size or maxs.size or 0) or None
+        elif gtype in ("fixed_scale", "fixed_scale_clip"):
+            scales = np.asarray(group.get("scales", []), dtype=np.float32)
+            stat_dim = int(scales.size or 0) or None
+
+        if stat_dim is not None and part.shape[-1] != stat_dim:
+            continue
         if inverse:
-            arr[..., sl] = inverse_group_transform(arr[..., sl], group)
+            arr[..., sl] = inverse_group_transform(part, group)
         else:
-            arr[..., sl] = forward_group_transform(arr[..., sl], group)
+            arr[..., sl] = forward_group_transform(part, group)
     return arr
 
 
