@@ -7,6 +7,9 @@ diversity_weight: ${diversity_weight}
 diversity_weight_position: ${diversity_weight_position}
 diversity_weight_orientation: ${diversity_weight_orientation}
 diversity_warmup_steps: ${diversity_warmup_steps}
+diversity_margin: ${diversity_margin}
+diversity_smoothing: ${diversity_smoothing}
+diversity_debug: ${diversity_debug}
 
 optim_builder:
   optimizer_type: AdamW

@@ -194,11 +194,11 @@ def normalize_states_groupwise(all_states_for_norm, state_obs_topics, state_topi
 
     pose_topic = _resolve_pose_topic(state_obs_topics, topic_slices, cfg)
     vel_topic = "/cartesian_impedance_controller/ee_velocity"
-    track_topic = "/cartesian_impedance_controller/tracking_error"
+    # track_topic = "/cartesian_impedance_controller/tracking_error"
     wrench_topic = "/franka_robot_state_broadcaster/external_wrench_in_stiffness_frame"
     cmd_topic = "/cartesian_impedance_controller/pose_command"
 
-    required_topics = [pose_topic, vel_topic, track_topic, wrench_topic, cmd_topic]
+    required_topics = [pose_topic, vel_topic, wrench_topic, cmd_topic]
     missing_topics = [t for t in required_topics if t is None or t not in topic_slices]
     if missing_topics:
         print(f"⚠️ Missing topics for grouped normalization: {missing_topics}. Falling back to gaussian norm.")
@@ -212,9 +212,9 @@ def normalize_states_groupwise(all_states_for_norm, state_obs_topics, state_topi
     if (vel_slice.stop - vel_slice.start) != 6:
         raise ValueError(f"EE velocity topic {vel_topic} must be 6-dim.")
 
-    track_slice = topic_slices[track_topic]
-    if (track_slice.stop - track_slice.start) != 6:
-        raise ValueError(f"Tracking error topic {track_topic} must be 6-dim.")
+    # track_slice = topic_slices[track_topic]
+    # if (track_slice.stop - track_slice.start) != 6:
+    #     raise ValueError(f"Tracking error topic {track_topic} must be 6-dim.")
 
     wrench_slice = topic_slices[wrench_topic]
     if (wrench_slice.stop - wrench_slice.start) != 6:
@@ -292,25 +292,25 @@ def normalize_states_groupwise(all_states_for_norm, state_obs_topics, state_topi
         vel_group["clip"] = float(velocity_clip_value)
     stats["groups"].append(vel_group)
 
-    track_mean, track_std = _compute_gaussian_stats(all_states_for_norm, track_slice)
-    _apply_gaussian(all_states_for_norm, track_slice, track_mean, track_std)
+    # track_mean, track_std = _compute_gaussian_stats(all_states_for_norm, track_slice)
+    # _apply_gaussian(all_states_for_norm, track_slice, track_mean, track_std)
 
-    track_clip = cfg.get("tracking_error_clip", None)
-    track_clip = None if track_clip is None else float(track_clip)
-    track_clip_value = track_clip if (track_clip is not None and track_clip > 0) else None
-    if track_clip_value is not None:
-        _apply_clip(all_states_for_norm, track_slice, track_clip_value)
+    # track_clip = cfg.get("tracking_error_clip", None)
+    # track_clip = None if track_clip is None else float(track_clip)
+    # track_clip_value = track_clip if (track_clip is not None and track_clip > 0) else None
+    # if track_clip_value is not None:
+    #     _apply_clip(all_states_for_norm, track_slice, track_clip_value)
 
-    track_group = {
-        "name": "tracking_error",
-        "type": "gaussian_clip" if track_clip_value is not None else "gaussian",
-        "indices": [track_slice.start, track_slice.stop],
-        "mean": [float(x) for x in track_mean],
-        "std": [float(x) for x in track_std],
-    }
-    if track_clip_value is not None:
-        track_group["clip"] = float(track_clip_value)
-    stats["groups"].append(track_group)
+    # track_group = {
+    #     "name": "tracking_error",
+    #     "type": "gaussian_clip" if track_clip_value is not None else "gaussian",
+    #     "indices": [track_slice.start, track_slice.stop],
+    #     "mean": [float(x) for x in track_mean],
+    #     "std": [float(x) for x in track_std],
+    # }
+    # if track_clip_value is not None:
+    #     track_group["clip"] = float(track_clip_value)
+    # stats["groups"].append(track_group)
 
     # wrench_mins, wrench_maxs = min_max_norm(all_states_for_norm, wrench_slice, clip_value=None)
     # stats["groups"].append(

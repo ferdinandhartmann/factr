@@ -1290,12 +1290,13 @@ def build_pose_3d_figure(
 
     sample_xyz = sampled_pose_chunks[..., :3].reshape(-1, 3)
     all_xyz = np.concatenate([meas_xyz, gt_xyz, pred_xyz, sample_xyz], axis=0)
-    if all_xyz.shape[0] > 1:
-        extent = np.ptp(all_xyz, axis=0)
-        diag = float(np.linalg.norm(extent))
-        axis_len = max(0.01, 0.03 * diag)
-    else:
-        axis_len = 0.02
+    # if all_xyz.shape[0] > 1:
+    #     extent = np.ptp(all_xyz, axis=0)
+    #     diag = float(np.linalg.norm(extent))
+    #     axis_len = max(0.01, 0.03 * diag)
+    # else:
+        # axis_len = 0.02
+    axis_len = 0.02
 
     anchor_idx = _prepare_anchor_indices(anchor_steps, prediction_stride)
     anchor_colors = plt.cm.rainbow(np.linspace(0.0, 1.0, max(1, len(anchor_idx))))

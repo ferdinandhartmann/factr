@@ -6,6 +6,7 @@
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 
 from factr.trainers.base import BaseTrainer
 
@@ -21,7 +22,36 @@ def _rot6d_to_matrix(rot6):
     return torch.stack([b1, b2, b3], dim=-1)
 
 
-def _pairwise_endpoint_position_diversity(sampled_actions, mask):
+def _smooth_trajectory(actions, smoothing_factor):
+    factor = float(smoothing_factor)
+    if factor <= 0.0:
+        return actions
+    if actions.shape[-2] < 3:
+        return actions
+
+    kernel = torch.tensor([0.25, 0.5, 0.25], device=actions.device, dtype=actions.dtype).view(1, 1, 3)
+    bsz, ns, steps, dims = actions.shape
+    flat = actions.permute(0, 1, 3, 2).reshape(-1, 1, steps)
+    smoothed = F.conv1d(flat, kernel, padding=1)
+    smoothed = smoothed.reshape(bsz, ns, dims, steps).permute(0, 1, 3, 2)
+    smoothed = actions * (1.0 - factor) + smoothed * factor
+
+    smoothed[..., 0, :] = actions[..., 0, :]
+    smoothed[..., -1, :] = actions[..., -1, :]
+    return smoothed
+
+
+def _apply_diversity_margin(pairwise_vals, margin):
+    if margin is None:
+        return pairwise_vals
+    margin_val = float(margin)
+    if margin_val <= 0.0:
+        return pairwise_vals
+    return torch.relu(pairwise_vals - margin_val)
+
+
+def _pairwise_endpoint_position_diversity(sampled_actions, mask, margin=None, smoothing=0.0):
+    sampled_actions = _smooth_trajectory(sampled_actions, smoothing)
     endpoints = sampled_actions[:, :, -1, :3]
     endpoint_mask = mask[:, -1, :3].mean(dim=1, keepdim=True)
     diffs = endpoints.unsqueeze(2) - endpoints.unsqueeze(1)
@@ -33,10 +63,12 @@ def _pairwise_endpoint_position_diversity(sampled_actions, mask):
         device=sampled_actions.device,
     )
     pairwise_vals = dist[:, tri_i, tri_j] * endpoint_mask
+    pairwise_vals = _apply_diversity_margin(pairwise_vals, margin)
     return pairwise_vals.mean()
 
 
-def _pairwise_endpoint_orientation_diversity(sampled_actions, mask):
+def _pairwise_endpoint_orientation_diversity(sampled_actions, mask, margin=None, smoothing=0.0):
+    sampled_actions = _smooth_trajectory(sampled_actions, smoothing)
     endpoint_rot6 = sampled_actions[:, :, -1, 3:9]
     endpoint_mask = mask[:, -1, 3:9].mean(dim=1, keepdim=True)
     rot = _rot6d_to_matrix(endpoint_rot6)
@@ -51,7 +83,48 @@ def _pairwise_endpoint_orientation_diversity(sampled_actions, mask):
         device=sampled_actions.device,
     )
     pairwise_vals = theta[:, tri_i, tri_j] * endpoint_mask
+    pairwise_vals = _apply_diversity_margin(pairwise_vals, margin)
     return pairwise_vals.mean()
+
+
+def _pairwise_trajectory_position_diversity(sampled_actions, mask, margin=None, smoothing=0.0, debug=False):
+    # sampled_actions: [B, S, T, D]
+    # mask: [B, T, D]
+    sampled_actions = _smooth_trajectory(sampled_actions, smoothing)
+    traj = sampled_actions[..., :3]  # [B, S, T, 3]
+    traj_mask = mask[:, None, :, :3].mean(dim=-1)  # [B, 1, T]
+
+    diffs = traj.unsqueeze(2) - traj.unsqueeze(1)  # [B, S, S, T, 3]
+    dist = torch.sqrt((diffs.pow(2)).sum(dim=-1) + 1e-12)  # [B, S, S, T]
+
+    tri_i, tri_j = torch.triu_indices(
+        sampled_actions.shape[1],
+        sampled_actions.shape[1],
+        offset=1,
+        device=sampled_actions.device,
+    )
+
+    pairwise_vals = dist[:, tri_i, tri_j, :] * traj_mask  # [B, P, T]
+    margin_vals = _apply_diversity_margin(pairwise_vals, margin)
+    if debug:
+        with torch.no_grad():
+            valid = traj_mask > 0
+            valid_frac = float(valid.float().mean().item()) if valid.numel() > 0 else 0.0
+            raw_min = float(pairwise_vals.min().item()) if pairwise_vals.numel() > 0 else 0.0
+            raw_mean = float(pairwise_vals.mean().item()) if pairwise_vals.numel() > 0 else 0.0
+            raw_max = float(pairwise_vals.max().item()) if pairwise_vals.numel() > 0 else 0.0
+            loss_mean = float(margin_vals.mean().item()) if margin_vals.numel() > 0 else 0.0
+            loss_pos = float((margin_vals > 0).float().mean().item()) if margin_vals.numel() > 0 else 0.0
+            print(
+                "[diversity] traj_pos"
+                f" smoothing={float(smoothing):.3f}"
+                f" margin={float(margin) if margin is not None else None}"
+                f" valid_frac={valid_frac:.3f}"
+                f" dist(min/mean/max)={raw_min:.4f}/{raw_mean:.4f}/{raw_max:.4f}"
+                f" relu_mean={loss_mean:.4f}"
+                f" relu_pos_frac={loss_pos:.3f}"
+            )
+    return margin_vals.mean()
 
 
 class BehaviorCloning(BaseTrainer):
@@ -68,6 +141,9 @@ class BehaviorCloning(BaseTrainer):
         diversity_weight_position=1.0,
         diversity_weight_orientation=0.5,
         diversity_warmup_steps=500,
+        diversity_margin=2.0,
+        diversity_smoothing=0.0,
+        diversity_debug=False,
     ):
         super().__init__(
             model=model,
@@ -82,6 +158,9 @@ class BehaviorCloning(BaseTrainer):
         self.diversity_weight_position = float(diversity_weight_position)
         self.diversity_weight_orientation = float(diversity_weight_orientation)
         self.diversity_warmup_steps = int(diversity_warmup_steps)
+        self.diversity_margin = float(diversity_margin)
+        self.diversity_smoothing = float(diversity_smoothing)
+        self.diversity_debug = bool(diversity_debug)
 
     def _sample_actions_prior_with_grad(self, model, imgs, obs, labels):
         if all(
@@ -134,8 +213,20 @@ class BehaviorCloning(BaseTrainer):
             if self.diversity_enable:
                 model_core = self.model.module if hasattr(self.model, "module") else self.model
                 sampled_actions = self._sample_actions_prior_with_grad(model_core, imgs, obs, labels)
-                endpoint_position_div = _pairwise_endpoint_position_diversity(sampled_actions, mask)
-                endpoint_orientation_div = _pairwise_endpoint_orientation_diversity(sampled_actions, mask)
+                # endpoint_position_div = _pairwise_endpoint_position_diversity(sampled_actions, mask)
+                endpoint_position_div = _pairwise_trajectory_position_diversity(
+                    sampled_actions,
+                    mask,
+                    margin=self.diversity_margin,
+                    smoothing=self.diversity_smoothing,
+                    debug=self.diversity_debug,
+                )
+                endpoint_orientation_div = _pairwise_endpoint_orientation_diversity(
+                    sampled_actions,
+                    mask,
+                    margin=self.diversity_margin,
+                    smoothing=self.diversity_smoothing,
+                )
                 diversity_combined = (
                     self.diversity_weight_position * endpoint_position_div
                     + self.diversity_weight_orientation * endpoint_orientation_div
