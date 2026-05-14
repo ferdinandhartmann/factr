@@ -1,8 +1,8 @@
 shared:
   dataset_name: fourgoals_2
-  dataset_project_prefix: aifact_
-  buffer_set_name: fourgoals_2_allgauss_noclip_cmdinput_rel
-  run_name: categ_b001_v4k4_ct12_klb08_obs4
+  dataset_project_prefix: f
+  buffer_set_name: ourgoals_2
+  run_name: categ_n_b0005_v8k8
   
   checkpoint_name: latest_ckpt.ckpt
   normalization_mode: apply # options: skip, apply, #

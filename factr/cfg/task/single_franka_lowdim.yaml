@@ -1,11 +1,11 @@
 _target_: factr.task.BCTask
-obs_dim: 36
+obs_dim: 36 # if tracking error included: false: automatically cahnged to 30, if true stays at 36
 include_tracking_error: ${oc.select:include_tracking_error,true}
 ac_dim: 9
 cam_indexes: []
 n_cams: ${len:${task.cam_indexes}}
 stiffness_classes: ${stiffness_classes}
-eval_plot_max_steps: 600
+eval_plot_max_steps: 800
 eval_plot_prediction_stride: 30
 eval_plot_num_samples: 40
 eval_plot_pose_mode: ${eval_plot_pose_mode}
