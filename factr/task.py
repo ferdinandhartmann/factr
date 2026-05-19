@@ -116,6 +116,7 @@ def _build_eval_trajectory_fan_figure(
     rpy_config=None,
     plot_gripper_subplot=False,
     gripper_index=None,
+    prediction_stride=1,
 ):
     if source_time_index is None:
         source_time_index = np.arange(true_action_chunks.shape[0])
@@ -125,7 +126,7 @@ def _build_eval_trajectory_fan_figure(
         pred_action_chunks=pred_action_chunks,
         mask_chunks=mask_chunks,
         source_time_index=np.asarray(source_time_index, dtype=np.int64),
-        prediction_stride=1,
+        prediction_stride=int(prediction_stride),
         measured_pose=measured_pose,
         max_plot_steps=int(max_steps),
         stiffness_label=stiffness_label,
@@ -944,6 +945,7 @@ class BCTask(DefaultTask):
                             rpy_config=self.eval_plot_rpy_config,
                             plot_gripper_subplot=self.eval_plot_include_gripper,
                             gripper_index=self.eval_plot_gripper_index,
+                            prediction_stride=self.eval_plot_prediction_stride,
                         )
                         wandb.log(
                             {f"eval/prior_fan_stiffness_{int(stiffness_label)}": wandb.Image(fig_stiff)},
