@@ -1,0 +1,43 @@
+_target_: factr.task.BCTask
+obs_dim: 25
+include_tracking_error: ${oc.select:include_tracking_error,true}
+ac_dim: 10
+cam_indexes: [2]
+n_cams: 1
+stiffness_classes: ${stiffness_classes}
+eval_plot_max_steps: 800
+eval_plot_prediction_stride: 30
+eval_plot_num_samples: 40
+eval_plot_pose_mode: ${eval_plot_pose_mode}
+eval_plot_include_gripper: true
+eval_plot_gripper_index: 9
+
+# For Sweeping
+sweep_target_min_diversity: 0.02
+sweep_target_min_kl: 0.5
+sweep_diversity_penalty: 2.0
+sweep_kl_penalty: 0.05
+
+train_buffer:
+  _target_: factr.replay_buffer.RobobufReplayBuffer
+  buffer_path: ${buffer_path}
+  transform: ${transform:${train_transform}}
+  n_test_ratio: null
+  ac_chunk: ${ac_chunk}
+  mode: train
+  cam_indexes: ${task.cam_indexes}
+  past_frames: ${add:${img_chunk},-1}
+  ac_dim: ${task.ac_dim}
+  shuffle: True
+
+test_buffer:
+  _target_: factr.replay_buffer.RobobufReplayBuffer
+  buffer_path: ${test_buffer_path}
+  transform: ${transform:${test_transform}}
+  n_test_ratio: null
+  ac_chunk: ${ac_chunk}
+  mode: test
+  cam_indexes: ${task.cam_indexes}
+  past_frames: ${add:${img_chunk},-1}
+  ac_dim: ${task.ac_dim}
+  shuffle: False

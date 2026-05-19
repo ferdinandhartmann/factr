@@ -17,6 +17,7 @@ import torch
 import tqdm
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
+import yaml
 
 import wandb
 from factr import misc, transforms
@@ -49,11 +50,61 @@ def _grad_l2_norm(model) -> float:
     return total**0.5
 
 
-@hydra.main(version_base=None, config_path="cfg", config_name="train_bc_lowdim.yaml")
+@hydra.main(version_base=None, config_path="cfg", config_name="train_bc_droid.yaml")
 def train_bc(cfg: DictConfig):
     run_dir = None
     try:
         resume_model = misc.init_job(cfg)
+
+        use_camera = bool(OmegaConf.select(cfg, "use_camera", default=False))
+        if use_camera:
+            camera_topic = OmegaConf.select(cfg, "camera_topic", default=None)
+            if camera_topic is None:
+                raise ValueError("use_camera=true requires camera_topic to be set in the config.")
+
+            rollout_cfg_path = Path(cfg.buffer_path).parent / "rollout_config.yaml"
+            cam_index = 0
+            if rollout_cfg_path.exists():
+                with open(rollout_cfg_path, "r") as f:
+                    rollout_cfg = yaml.safe_load(f) or {}
+                topics = rollout_cfg.get("obs_config", {}).get("camera_topics", [])
+                if camera_topic not in topics:
+                    raise ValueError(
+                        f"camera_topic '{camera_topic}' not found in {rollout_cfg_path}. Available: {topics}"
+                    )
+                cam_index = int(topics.index(camera_topic))
+                print(f"Available camera_topics: {topics}")
+                print(f"Selected camera_topic={camera_topic}, cam_index={cam_index}")
+
+            task_camera_cfg = OmegaConf.select(cfg, "task_camera", default=None)
+            agent_camera_cfg = OmegaConf.select(cfg, "agent_camera", default=None)
+            trainer_camera_cfg = OmegaConf.select(cfg, "trainer_camera", default=None)
+            if task_camera_cfg is None or agent_camera_cfg is None:
+                raise ValueError("Camera training requires task_camera and agent_camera configs.")
+
+            cfg.task = task_camera_cfg
+            cfg.agent = agent_camera_cfg
+            if trainer_camera_cfg is not None:
+                cfg.trainer = trainer_camera_cfg
+            cfg.task.cam_indexes = [cam_index]
+            cfg.task.n_cams = len(cfg.task.cam_indexes)
+            if hasattr(cfg.task, "train_buffer"):
+                cfg.task.train_buffer.cam_indexes = cfg.task.cam_indexes
+                if hasattr(cfg, "img_chunk"):
+                    cfg.task.train_buffer.past_frames = int(cfg.img_chunk) - 1
+            if hasattr(cfg.task, "test_buffer"):
+                cfg.task.test_buffer.cam_indexes = cfg.task.cam_indexes
+                if hasattr(cfg, "img_chunk"):
+                    cfg.task.test_buffer.past_frames = int(cfg.img_chunk) - 1
+
+            # OmegaConf.resolve(cfg)
+            if hasattr(cfg.task, "train_buffer"):
+                cfg.task.train_buffer.cam_indexes = cfg.task.cam_indexes
+                cfg.task.train_buffer.past_frames = int(cfg.img_chunk) - 1
+
+            if hasattr(cfg.task, "test_buffer"):
+                cfg.task.test_buffer.cam_indexes = cfg.task.cam_indexes
+                cfg.task.test_buffer.past_frames = int(cfg.img_chunk) - 1
 
         # # set random seeds for reproducibility
         # torch.manual_seed(cfg.seed)

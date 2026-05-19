@@ -258,7 +258,11 @@ def build_action_groups(action_dim, action_stats):
         dims = list(range(action_dim))
         return [("Action Pose", dims[0:9]), ("Action Stiffness", dims[9:15])]
     if action_dim >= 9:
-        return [("Action Pose", list(range(9)))]
+        pose_dims = list(range(min(9, action_dim)))
+        extra_dims = list(range(9, action_dim))
+        if extra_dims:
+            return [("Action Pose", pose_dims), ("Action Extra", extra_dims)]
+        return [("Action Pose", pose_dims)]
     return [("Actions", list(range(action_dim)))]
 
 
@@ -589,6 +593,6 @@ def plot_buffer(buf_path, output_dir=None, step=1, rollout_config_path=None, den
 
 
 if __name__ == "__main__":
-    buf_path = "/home/ferdinand/activeinference/factr/process_data/processed_data/fourgoals_2_allgauss_noclip_cmdinput_rel/buf_train.pkl"
+    buf_path = "/home/ferdinand/activeinference/factr/process_data/processed_data/droid_100/buf_test.pkl"
 
     plot_buffer(buf_path, denormalize=False)

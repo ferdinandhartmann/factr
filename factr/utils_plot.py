@@ -123,9 +123,7 @@ def _get_configured_rpy_axis(angles: np.ndarray, cfg: RPYPlotConfig) -> int:
     return axis
 
 
-def get_pi_shift_from_axis_start(
-    angles: np.ndarray, cfg: RPYPlotConfig = DEFAULT_RPY_PLOT_CONFIG
-) -> float:
+def get_pi_shift_from_axis_start(angles: np.ndarray, cfg: RPYPlotConfig = DEFAULT_RPY_PLOT_CONFIG) -> float:
     if not bool(cfg.subtract_pi):
         return 0.0
     axis = _get_configured_rpy_axis(angles, cfg)
@@ -159,9 +157,7 @@ def get_rpy_plot_unit(cfg: RPYPlotConfig = DEFAULT_RPY_PLOT_CONFIG) -> str:
     return unit
 
 
-def convert_rpy_to_plot_unit(
-    angles_rad: np.ndarray, cfg: RPYPlotConfig = DEFAULT_RPY_PLOT_CONFIG
-) -> np.ndarray:
+def convert_rpy_to_plot_unit(angles_rad: np.ndarray, cfg: RPYPlotConfig = DEFAULT_RPY_PLOT_CONFIG) -> np.ndarray:
     unit = get_rpy_plot_unit(cfg)
     if unit == "deg":
         return np.rad2deg(angles_rad).astype(np.float32)
@@ -185,9 +181,7 @@ def _rotation_geodesic_distance_rad(rot_a: np.ndarray, rot_b: np.ndarray) -> flo
     return float(np.arccos(cos_theta))
 
 
-def compute_pose_geodesic_distance(
-    true_pose: np.ndarray, pred_pose: np.ndarray
-) -> np.ndarray:
+def compute_pose_geodesic_distance(true_pose: np.ndarray, pred_pose: np.ndarray) -> np.ndarray:
     if true_pose.ndim != 2 or pred_pose.ndim != 2:
         return np.zeros((0,), dtype=np.float32)
     if true_pose.shape[1] < 9 or pred_pose.shape[1] < 9:
@@ -275,20 +269,14 @@ def build_pose_comparison_figure(
                 shared = axes[0] if len(axes) > 0 else None
                 axes.append(fig.add_subplot(gs[row, col], sharex=shared))
         axes = np.asarray(axes, dtype=object)
-        ax_rpy = fig.add_subplot(
-            gs[n_rows, :], sharex=axes[0] if len(axes) > 0 else None
-        )
+        ax_rpy = fig.add_subplot(gs[n_rows, :], sharex=axes[0] if len(axes) > 0 else None)
         ax_geo = (
-            fig.add_subplot(
-                gs[n_rows + 1, :], sharex=axes[0] if len(axes) > 0 else None
-            )
+            fig.add_subplot(gs[n_rows + 1, :], sharex=axes[0] if len(axes) > 0 else None)
             if plot_geodesic_subplot
             else None
         )
     else:
-        fig, axes = plt.subplots(
-            n_rows, n_cols, figsize=(5 * n_cols, 2.8 * n_rows), sharex=True
-        )
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 2.8 * n_rows), sharex=True)
         axes = np.asarray(axes).reshape(-1)
         ax_rpy = None
         ax_geo = None
@@ -341,9 +329,7 @@ def build_pose_comparison_figure(
         rpy_true = compute_pose_rpy(true_valid[:, :9])
         rpy_pred = compute_pose_rpy(pred_valid[:, :9])
         shift_value = get_pi_shift_from_axis_start(rpy_true, cfg=rpy_config)
-        if rpy_true.shape[0] == len(time_index) and rpy_pred.shape[0] == len(
-            time_index
-        ):
+        if rpy_true.shape[0] == len(time_index) and rpy_pred.shape[0] == len(time_index):
             rpy_true = apply_rpy_axis_shift(rpy_true, shift_value, cfg=rpy_config)
             rpy_pred = apply_rpy_axis_shift(rpy_pred, shift_value, cfg=rpy_config)
             rpy_pred = align_angles_to_reference(rpy_true, rpy_pred)
@@ -375,13 +361,9 @@ def build_pose_comparison_figure(
             if measured_valid is not None and measured_valid.shape[1] >= 9:
                 rpy_measured = compute_pose_rpy(measured_valid[:, :9])
                 if rpy_measured.shape[0] == len(time_index):
-                    rpy_measured = apply_rpy_axis_shift(
-                        rpy_measured, shift_value, cfg=rpy_config
-                    )
+                    rpy_measured = apply_rpy_axis_shift(rpy_measured, shift_value, cfg=rpy_config)
                     rpy_measured = align_angles_to_reference(rpy_true, rpy_measured)
-                    rpy_measured_plot = convert_rpy_to_plot_unit(
-                        rpy_measured, cfg=rpy_config
-                    )
+                    rpy_measured_plot = convert_rpy_to_plot_unit(rpy_measured, cfg=rpy_config)
                     meas_colors = ["#FF8A8A", "#7FD18B", "#8EA8FF"]
                     for angle_idx, angle_name in enumerate(angle_names):
                         ax_rpy.plot(
@@ -398,9 +380,7 @@ def build_pose_comparison_figure(
         rpy_title = f"Computed RPY from pose ({unit}, unwrapped)"
         if bool(rpy_config.subtract_pi):
             axis_names = ["roll", "pitch", "yaw"]
-            axis_idx = int(
-                np.clip(int(rpy_config.subtract_pi_axis), 0, len(axis_names) - 1)
-            )
+            axis_idx = int(np.clip(int(rpy_config.subtract_pi_axis), 0, len(axis_names) - 1))
             if shift_value > 0.0:
                 rpy_title += f", +pi on {axis_names[axis_idx]}"
             elif shift_value < 0.0:
@@ -414,9 +394,7 @@ def build_pose_comparison_figure(
         ax_rpy.legend(loc="upper right", ncol=3, frameon=False, fontsize=8)
 
         if ax_geo is not None:
-            geod_rad = compute_pose_geodesic_distance(
-                true_valid[:, :9], pred_valid[:, :9]
-            )
+            geod_rad = compute_pose_geodesic_distance(true_valid[:, :9], pred_valid[:, :9])
             if geod_rad.shape[0] == len(time_index):
                 ax_geo.plot(
                     time_index,
@@ -429,9 +407,7 @@ def build_pose_comparison_figure(
                 )
 
             if measured_valid is not None and measured_valid.shape[1] >= 9:
-                geod_measured_rad = compute_pose_geodesic_distance(
-                    true_valid[:, :9], measured_valid[:, :9]
-                )
+                geod_measured_rad = compute_pose_geodesic_distance(true_valid[:, :9], measured_valid[:, :9])
                 if geod_measured_rad.shape[0] == len(time_index):
                     ax_geo.plot(
                         time_index,
@@ -460,15 +436,11 @@ def build_pose_comparison_figure(
 
 
 def _prepare_anchor_indices(anchor_steps: int, prediction_stride: int) -> np.ndarray:
-    anchor_idx = np.arange(
-        0, anchor_steps, max(1, int(prediction_stride)), dtype=np.int64
-    )
+    anchor_idx = np.arange(0, anchor_steps, max(1, int(prediction_stride)), dtype=np.int64)
     if anchor_idx.shape[0] == 0:
         return np.asarray([0], dtype=np.int64)
     if anchor_idx[-1] != (anchor_steps - 1):
-        anchor_idx = np.concatenate(
-            [anchor_idx, np.asarray([anchor_steps - 1], dtype=np.int64)]
-        )
+        anchor_idx = np.concatenate([anchor_idx, np.asarray([anchor_steps - 1], dtype=np.int64)])
     return anchor_idx
 
 
@@ -483,11 +455,7 @@ def _compute_x_limits(
         return x_min, x_max
 
     x_min = int(source_time_index[0]) if source_time_index.shape[0] > 0 else 0
-    x_max = (
-        int(source_time_index[-1] + horizon_len - 1)
-        if source_time_index.shape[0] > 0
-        else max(1, horizon_len - 1)
-    )
+    x_max = int(source_time_index[-1] + horizon_len - 1) if source_time_index.shape[0] > 0 else max(1, horizon_len - 1)
     if x_max < x_min:
         x_max = x_min
     return x_min, x_max
@@ -519,9 +487,7 @@ def _reconstruct_true_by_time(
             if time_val < x_min or time_val > x_max:
                 continue
             if time_val not in true_by_time:
-                true_by_time[time_val] = true_action_chunks[t, h, :pose_dim].astype(
-                    np.float32
-                )
+                true_by_time[time_val] = true_action_chunks[t, h, :pose_dim].astype(np.float32)
     return true_by_time
 
 
@@ -550,16 +516,11 @@ def _build_true_rpy_reference(
         )
 
     sorted_times = np.asarray(sorted(true_pose_by_time.keys()), dtype=np.int64)
-    pose_seq = np.stack(
-        [true_pose_by_time[int(time_val)] for time_val in sorted_times], axis=0
-    ).astype(np.float32)
+    pose_seq = np.stack([true_pose_by_time[int(time_val)] for time_val in sorted_times], axis=0).astype(np.float32)
     rpy_seq = compute_pose_rpy(pose_seq)
     shift_value = get_pi_shift_from_axis_start(rpy_seq, cfg=cfg)
     rpy_seq = apply_rpy_axis_shift(rpy_seq, shift_value, cfg=cfg)
-    rpy_by_time = {
-        int(time_val): rpy_seq[idx].astype(np.float32)
-        for idx, time_val in enumerate(sorted_times)
-    }
+    rpy_by_time = {int(time_val): rpy_seq[idx].astype(np.float32) for idx, time_val in enumerate(sorted_times)}
     return sorted_times, rpy_seq, rpy_by_time, shift_value
 
 
@@ -578,6 +539,8 @@ def build_pose_fan_figure(
     plot_ground_truth_reconstructed: bool = False,
     plot_geodesic_subplot: bool = True,
     rpy_config: RPYPlotConfig = DEFAULT_RPY_PLOT_CONFIG,
+    plot_gripper_subplot: bool = False,
+    gripper_index: Optional[int] = None,
 ):
     anchor_steps = int(
         min(
@@ -597,17 +560,19 @@ def build_pose_fan_figure(
     mask_chunks = np.asarray(mask_chunks, dtype=np.float32)[:anchor_steps]
     source_time_index = np.asarray(source_time_index, dtype=np.int64)[:anchor_steps]
     measured_pose_arr = (
-        np.asarray(measured_pose, dtype=np.float32)[:anchor_steps]
-        if measured_pose is not None
-        else None
+        np.asarray(measured_pose, dtype=np.float32)[:anchor_steps] if measured_pose is not None else None
     )
 
+    action_dim = int(min(true_action_chunks.shape[-1], pred_action_chunks.shape[-1], mask_chunks.shape[-1]))
     pose_dim = int(min(true_action_chunks.shape[-1], pred_action_chunks.shape[-1]))
     if measured_pose_arr is not None:
         pose_dim = int(min(pose_dim, measured_pose_arr.shape[-1]))
     if pose_dim <= 0:
         return None
 
+    true_action_chunks_full = true_action_chunks
+    pred_action_chunks_full = pred_action_chunks
+    mask_chunks_full = mask_chunks
     true_action_chunks = true_action_chunks[..., :pose_dim]
     pred_action_chunks = pred_action_chunks[..., :pose_dim]
     mask_chunks = mask_chunks[..., :pose_dim]
@@ -624,10 +589,16 @@ def build_pose_fan_figure(
     n_rows = int(np.ceil(pose_dim / n_cols))
     has_orientation = pose_dim >= 9
 
+    gripper_enabled = bool(plot_gripper_subplot) and gripper_index is not None
+    gripper_idx = int(gripper_index) if gripper_enabled else -1
+    gripper_enabled = gripper_enabled and 0 <= gripper_idx < action_dim
+
     if has_orientation:
-        extra_rows = 2 if plot_geodesic_subplot else 1
-        extra_heights = [1.05, 0.95] if plot_geodesic_subplot else [1.05]
-        fig_height = 3 * n_rows + (5.0 if plot_geodesic_subplot else 4.0)
+        extra_rows = (1 if gripper_enabled else 0) + (2 if plot_geodesic_subplot else 1)
+        extra_heights = ([0.9] if gripper_enabled else []) + ([1.05, 0.95] if plot_geodesic_subplot else [1.05])
+        fig_height = 3 * n_rows + (5.9 if plot_geodesic_subplot else 4.9)
+        if gripper_enabled:
+            fig_height += 1.4
         fig = plt.figure(figsize=(6 * n_cols, fig_height))
         gs = fig.add_gridspec(
             n_rows + extra_rows,
@@ -641,27 +612,37 @@ def build_pose_fan_figure(
                 shared = axes[0] if len(axes) > 0 else None
                 axes.append(fig.add_subplot(gs[row, col], sharex=shared))
         axes = np.asarray(axes, dtype=object)
-        ax_rpy = fig.add_subplot(
-            gs[n_rows, :], sharex=axes[0] if len(axes) > 0 else None
+        gripper_row = n_rows if gripper_enabled else None
+        rpy_row = n_rows + (1 if gripper_enabled else 0)
+        ax_gripper = (
+            fig.add_subplot(gs[gripper_row, :], sharex=axes[0] if len(axes) > 0 else None) if gripper_enabled else None
         )
+        ax_rpy = fig.add_subplot(gs[rpy_row, :], sharex=axes[0] if len(axes) > 0 else None)
         ax_geo = (
-            fig.add_subplot(
-                gs[n_rows + 1, :], sharex=axes[0] if len(axes) > 0 else None
-            )
+            fig.add_subplot(gs[rpy_row + 1, :], sharex=axes[0] if len(axes) > 0 else None)
             if plot_geodesic_subplot
             else None
         )
     else:
-        fig, axes = plt.subplots(
-            n_rows, n_cols, figsize=(6 * n_cols, 3 * n_rows), sharex=True
-        )
-        axes = np.asarray(axes).reshape(-1)
+        if gripper_enabled:
+            fig_height = 3 * n_rows + 1.3
+            fig = plt.figure(figsize=(6 * n_cols, fig_height))
+            gs = fig.add_gridspec(n_rows + 1, n_cols, height_ratios=[1.0] * n_rows + [0.9], hspace=0.32)
+            axes = []
+            for row in range(n_rows):
+                for col in range(n_cols):
+                    shared = axes[0] if len(axes) > 0 else None
+                    axes.append(fig.add_subplot(gs[row, col], sharex=shared))
+            axes = np.asarray(axes, dtype=object)
+            ax_gripper = fig.add_subplot(gs[n_rows, :], sharex=axes[0] if len(axes) > 0 else None)
+        else:
+            fig, axes = plt.subplots(n_rows, n_cols, figsize=(6 * n_cols, 3 * n_rows), sharex=True)
+            axes = np.asarray(axes).reshape(-1)
+            ax_gripper = None
         ax_rpy = None
         ax_geo = None
 
-    x_min, x_max = _compute_x_limits(
-        source_time_index, horizon_len, max_plot_steps=max_plot_steps
-    )
+    x_min, x_max = _compute_x_limits(source_time_index, horizon_len, max_plot_steps=max_plot_steps)
     true_by_time = {}
     if plot_ground_truth_reconstructed:
         true_by_time = _reconstruct_true_by_time(
@@ -695,9 +676,7 @@ def build_pose_fan_figure(
                 )
 
         if plot_ground_truth_reconstructed and len(true_times) > 0:
-            vals = np.asarray(
-                [true_by_time[t][dim] for t in true_times], dtype=np.float32
-            )
+            vals = np.asarray([true_by_time[t][dim] for t in true_times], dtype=np.float32)
             ax.plot(
                 true_times,
                 vals,
@@ -739,11 +718,7 @@ def build_pose_fan_figure(
                     color=c_t,
                     linewidth=0.75,
                     alpha=0.9,
-                    label=(
-                        "prior_samples"
-                        if (anchor_pos == 0 and s_idx == 0 and dim == 0)
-                        else None
-                    ),
+                    label=("prior_samples" if (anchor_pos == 0 and s_idx == 0 and dim == 0) else None),
                 )
 
         ax.set_xlim(x_min, x_max)
@@ -752,6 +727,59 @@ def build_pose_fan_figure(
 
     for ax in axes[pose_dim:]:
         ax.axis("off")
+
+    if gripper_enabled and ax_gripper is not None:
+        gripper_true = true_action_chunks_full[:, :, gripper_idx]
+        gripper_pred = pred_action_chunks_full[:, :, :, gripper_idx]
+        gripper_mask = mask_chunks_full[:, :, gripper_idx]
+
+        if plot_ground_truth_reconstructed:
+            gripper_by_time = _reconstruct_true_by_time(
+                true_action_chunks=true_action_chunks_full,
+                mask_chunks=mask_chunks_full,
+                source_time_index=source_time_index,
+                pose_dim=action_dim,
+                x_min=x_min,
+                x_max=x_max,
+            )
+            if gripper_by_time:
+                gripper_times = sorted(gripper_by_time.keys())
+                gripper_vals = np.asarray([gripper_by_time[t][gripper_idx] for t in gripper_times], dtype=np.float32)
+                ax_gripper.plot(
+                    gripper_times,
+                    gripper_vals,
+                    color="black",
+                    linewidth=1.0,
+                    label="gt gripper",
+                )
+
+        for anchor_pos, t in enumerate(anchor_idx):
+            valid_h = gripper_mask[t] > 0
+            if not np.any(valid_h):
+                continue
+            c_t = anchor_colors[anchor_pos]
+            base_t = int(source_time_index[t])
+            horizon_idx = np.where(valid_h)[0]
+            x_vals = base_t + horizon_idx
+            within = np.logical_and(x_vals >= x_min, x_vals <= x_max)
+            if not np.any(within):
+                continue
+            x_vals = x_vals[within]
+            h_idx = horizon_idx[within]
+            for s_idx in range(n_samples):
+                ax_gripper.plot(
+                    x_vals,
+                    gripper_pred[t, s_idx, h_idx],
+                    color=c_t,
+                    linewidth=0.75,
+                    alpha=0.9,
+                    label=("gripper prior samples" if (anchor_pos == 0 and s_idx == 0) else None),
+                )
+
+        ax_gripper.set_title("gripper")
+        ax_gripper.set_xlim(x_min, x_max)
+        ax_gripper.grid(alpha=0.25)
+        ax_gripper.legend(loc="upper right", ncol=2, frameon=False, fontsize=8)
 
     if has_orientation and ax_rpy is not None:
         true_pose_first = true_action_chunks[:anchor_steps, 0, :9]
@@ -773,28 +801,19 @@ def build_pose_fan_figure(
             shift_value = get_pi_shift_from_axis_start(true_rpy_anchor, cfg=rpy_config)
 
         if true_rpy_anchor.shape[0] == anchor_steps:
-            true_rpy_anchor = apply_rpy_axis_shift(
-                true_rpy_anchor, shift_value, cfg=rpy_config
-            )
+            true_rpy_anchor = apply_rpy_axis_shift(true_rpy_anchor, shift_value, cfg=rpy_config)
             true_rpy_anchor_reference = true_rpy_anchor
             if true_rpy_reference.shape[0] > 0:
                 true_rpy_plot_times = true_rpy_reference_times
-                true_rpy_plot = convert_rpy_to_plot_unit(
-                    true_rpy_reference, cfg=rpy_config
-                )
+                true_rpy_plot = convert_rpy_to_plot_unit(true_rpy_reference, cfg=rpy_config)
                 anchor_ref_vals = [
-                    true_rpy_reference_by_time.get(int(time_val))
-                    for time_val in source_time_index[:anchor_steps]
+                    true_rpy_reference_by_time.get(int(time_val)) for time_val in source_time_index[:anchor_steps]
                 ]
                 if all(val is not None for val in anchor_ref_vals):
-                    true_rpy_anchor_reference = np.stack(
-                        anchor_ref_vals, axis=0
-                    ).astype(np.float32)
+                    true_rpy_anchor_reference = np.stack(anchor_ref_vals, axis=0).astype(np.float32)
             else:
                 true_rpy_plot_times = source_time_index[:anchor_steps]
-                true_rpy_plot = convert_rpy_to_plot_unit(
-                    true_rpy_anchor, cfg=rpy_config
-                )
+                true_rpy_plot = convert_rpy_to_plot_unit(true_rpy_anchor, cfg=rpy_config)
 
             angle_names = ["roll", "pitch", "yaw"]
             gt_colors = ["#8B0000", "#006400", "#00008B"]
@@ -814,12 +833,8 @@ def build_pose_fan_figure(
                 meas_pose_first = measured_pose_arr[:anchor_steps, :9]
                 meas_rpy = compute_pose_rpy(meas_pose_first)
                 if meas_rpy.shape[0] == anchor_steps:
-                    meas_rpy = apply_rpy_axis_shift(
-                        meas_rpy, shift_value, cfg=rpy_config
-                    )
-                    meas_rpy = align_angles_to_reference(
-                        true_rpy_anchor_reference, meas_rpy
-                    )
+                    meas_rpy = apply_rpy_axis_shift(meas_rpy, shift_value, cfg=rpy_config)
+                    meas_rpy = align_angles_to_reference(true_rpy_anchor_reference, meas_rpy)
                     meas_rpy_plot = convert_rpy_to_plot_unit(meas_rpy, cfg=rpy_config)
                     for angle_idx, angle_name in enumerate(angle_names):
                         ax_rpy.plot(
@@ -845,45 +860,24 @@ def build_pose_fan_figure(
                 x_vals = x_vals[within]
                 h_idx = horizon_idx[within]
                 true_chunk_rpy = compute_pose_rpy(true_action_chunks[t, h_idx, :9])
-                true_chunk_rpy = apply_rpy_axis_shift(
-                    true_chunk_rpy, shift_value, cfg=rpy_config
-                )
+                true_chunk_rpy = apply_rpy_axis_shift(true_chunk_rpy, shift_value, cfg=rpy_config)
                 ref_chunk_rpy = None
                 if len(true_rpy_reference_by_time) > 0:
-                    ref_chunk_vals = [
-                        true_rpy_reference_by_time.get(int(time_val))
-                        for time_val in x_vals
-                    ]
+                    ref_chunk_vals = [true_rpy_reference_by_time.get(int(time_val)) for time_val in x_vals]
                     if all(val is not None for val in ref_chunk_vals):
-                        ref_chunk_rpy = np.stack(ref_chunk_vals, axis=0).astype(
-                            np.float32
-                        )
-                        true_chunk_rpy = align_angles_to_reference(
-                            ref_chunk_rpy, true_chunk_rpy
-                        )
-                true_chunk_rpy_plot = convert_rpy_to_plot_unit(
-                    true_chunk_rpy, cfg=rpy_config
-                )
+                        ref_chunk_rpy = np.stack(ref_chunk_vals, axis=0).astype(np.float32)
+                        true_chunk_rpy = align_angles_to_reference(ref_chunk_rpy, true_chunk_rpy)
+                true_chunk_rpy_plot = convert_rpy_to_plot_unit(true_chunk_rpy, cfg=rpy_config)
 
                 c_t = anchor_colors[anchor_pos]
                 for s_idx in range(n_samples):
-                    pred_chunk_rpy = compute_pose_rpy(
-                        pred_action_chunks[t, s_idx, h_idx, :9]
-                    )
-                    pred_chunk_rpy = apply_rpy_axis_shift(
-                        pred_chunk_rpy, shift_value, cfg=rpy_config
-                    )
+                    pred_chunk_rpy = compute_pose_rpy(pred_action_chunks[t, s_idx, h_idx, :9])
+                    pred_chunk_rpy = apply_rpy_axis_shift(pred_chunk_rpy, shift_value, cfg=rpy_config)
                     if ref_chunk_rpy is not None:
-                        pred_chunk_rpy = align_angles_to_reference(
-                            ref_chunk_rpy, pred_chunk_rpy
-                        )
+                        pred_chunk_rpy = align_angles_to_reference(ref_chunk_rpy, pred_chunk_rpy)
                     else:
-                        pred_chunk_rpy = align_angles_to_reference(
-                            true_chunk_rpy, pred_chunk_rpy
-                        )
-                    pred_chunk_rpy_plot = convert_rpy_to_plot_unit(
-                        pred_chunk_rpy, cfg=rpy_config
-                    )
+                        pred_chunk_rpy = align_angles_to_reference(true_chunk_rpy, pred_chunk_rpy)
+                    pred_chunk_rpy_plot = convert_rpy_to_plot_unit(pred_chunk_rpy, cfg=rpy_config)
                     for angle_idx in range(3):
                         ax_rpy.plot(
                             x_vals,
@@ -893,9 +887,7 @@ def build_pose_fan_figure(
                             alpha=0.8,
                             linestyle="-",
                             label=(
-                                "rpy prior samples"
-                                if (anchor_pos == 0 and s_idx == 0 and angle_idx == 0)
-                                else None
+                                "rpy prior samples" if (anchor_pos == 0 and s_idx == 0 and angle_idx == 0) else None
                             ),
                         )
                     if s_idx == 0:
@@ -914,9 +906,7 @@ def build_pose_fan_figure(
         rpy_title = f"RPY Fan ({unit})"
         if bool(rpy_config.subtract_pi):
             axis_names = ["roll", "pitch", "yaw"]
-            axis_idx = int(
-                np.clip(int(rpy_config.subtract_pi_axis), 0, len(axis_names) - 1)
-            )
+            axis_idx = int(np.clip(int(rpy_config.subtract_pi_axis), 0, len(axis_names) - 1))
             if shift_value > 0.0:
                 rpy_title += f", +pi on {axis_names[axis_idx]}"
             elif shift_value < 0.0:
@@ -931,9 +921,7 @@ def build_pose_fan_figure(
 
         if ax_geo is not None:
             if measured_pose_arr is not None and measured_pose_arr.shape[1] >= 9:
-                geod_meas_rad = compute_pose_geodesic_distance(
-                    true_pose_first, measured_pose_arr[:anchor_steps, :9]
-                )
+                geod_meas_rad = compute_pose_geodesic_distance(true_pose_first, measured_pose_arr[:anchor_steps, :9])
                 if geod_meas_rad.shape[0] == anchor_steps:
                     ax_geo.plot(
                         source_time_index[:anchor_steps],
@@ -961,9 +949,7 @@ def build_pose_fan_figure(
                 c_t = anchor_colors[anchor_pos]
                 for s_idx in range(n_samples):
                     pred_chunk_pose = pred_action_chunks[t, s_idx, h_idx, :9]
-                    geod_deg = np.rad2deg(
-                        compute_pose_geodesic_distance(true_chunk_pose, pred_chunk_pose)
-                    )
+                    geod_deg = np.rad2deg(compute_pose_geodesic_distance(true_chunk_pose, pred_chunk_pose))
                     ax_geo.plot(
                         x_vals,
                         geod_deg,
@@ -971,11 +957,7 @@ def build_pose_fan_figure(
                         linewidth=1.0,
                         alpha=0.9,
                         linestyle="-",
-                        label=(
-                            "geodesic prior samples"
-                            if (anchor_pos == 0 and s_idx == 0)
-                            else None
-                        ),
+                        label=("geodesic prior samples" if (anchor_pos == 0 and s_idx == 0) else None),
                     )
 
             ax_geo.axhline(
@@ -995,9 +977,7 @@ def build_pose_fan_figure(
 
     handles, labels = axes[0].get_legend_handles_labels()
     if handles:
-        fig.legend(
-            handles, labels, loc="upper center", ncol=3, bbox_to_anchor=(0.5, 0.92)
-        )
+        fig.legend(handles, labels, loc="upper center", ncol=3, bbox_to_anchor=(0.5, 0.92))
 
     if title is None:
         if stiffness_label is not None or global_step is not None:
@@ -1012,15 +992,11 @@ def build_pose_fan_figure(
             "ignore",
             message="This figure includes Axes that are not compatible with tight_layout.*",
         )
-        fig.tight_layout(
-            rect=[0.02, 0.03, 0.98, 0.905 if not has_orientation else 0.935]
-        )
+        fig.tight_layout(rect=[0.02, 0.03, 0.98, 0.905 if not has_orientation else 0.935])
     return fig
 
 
-def _draw_pose_frame_3d(
-    ax, pose9: np.ndarray, axis_len: float, alpha: float, lw: float
-) -> None:
+def _draw_pose_frame_3d(ax, pose9: np.ndarray, axis_len: float, alpha: float, lw: float) -> None:
     pos = np.asarray(pose9[:3], dtype=np.float32)
     rot6 = np.asarray(pose9[3:9], dtype=np.float32)
     rot = rot6d_to_matrix(rot6)
@@ -1037,9 +1013,7 @@ def _draw_pose_frame_3d(
         )
 
 
-def _draw_pose_frame_dimmed_3d(
-    ax, pose9: np.ndarray, axis_len: float, alpha: float, lw: float, dim: float
-) -> None:
+def _draw_pose_frame_dimmed_3d(ax, pose9: np.ndarray, axis_len: float, alpha: float, lw: float, dim: float) -> None:
     pos = np.asarray(pose9[:3], dtype=np.float32)
     rot6 = np.asarray(pose9[3:9], dtype=np.float32)
     rot = rot6d_to_matrix(rot6)
@@ -1165,22 +1139,14 @@ def build_pose_3d_figure(
     if anchor_steps < 1:
         return None
 
-    measured_pose = np.asarray(measured_pose, dtype=np.float32)[
-        :anchor_steps, :pose_dim
-    ]
+    measured_pose = np.asarray(measured_pose, dtype=np.float32)[:anchor_steps, :pose_dim]
     true_pose = np.asarray(true_pose, dtype=np.float32)[:anchor_steps, :pose_dim]
     pred_pose = np.asarray(pred_pose, dtype=np.float32)[:anchor_steps, :pose_dim]
-    sampled_pose_chunks = np.asarray(sampled_pose_chunks, dtype=np.float32)[
-        :anchor_steps, :, :, :pose_dim
-    ]
+    sampled_pose_chunks = np.asarray(sampled_pose_chunks, dtype=np.float32)[:anchor_steps, :, :, :pose_dim]
     if true_action_chunks is not None:
-        true_action_chunks = np.asarray(true_action_chunks, dtype=np.float32)[
-            :anchor_steps, :, :pose_dim
-        ]
+        true_action_chunks = np.asarray(true_action_chunks, dtype=np.float32)[:anchor_steps, :, :pose_dim]
     if mask_chunks is not None:
-        mask_chunks = np.asarray(mask_chunks, dtype=np.float32)[
-            :anchor_steps, :, :pose_dim
-        ]
+        mask_chunks = np.asarray(mask_chunks, dtype=np.float32)[:anchor_steps, :, :pose_dim]
     if source_time_index is not None:
         source_time_index = np.asarray(source_time_index, dtype=np.int64)[:anchor_steps]
 
@@ -1192,9 +1158,7 @@ def build_pose_3d_figure(
         and source_time_index is not None
     ):
         horizon_len = int(true_action_chunks.shape[1])
-        x_min, x_max = _compute_x_limits(
-            source_time_index, horizon_len, max_plot_steps=None
-        )
+        x_min, x_max = _compute_x_limits(source_time_index, horizon_len, max_plot_steps=None)
         true_by_time = _reconstruct_true_by_time(
             true_action_chunks=true_action_chunks,
             mask_chunks=mask_chunks,
@@ -1205,9 +1169,7 @@ def build_pose_3d_figure(
         )
         if len(true_by_time) > 0:
             sorted_times = sorted(true_by_time.keys())
-            gt_pose_line = np.stack(
-                [true_by_time[int(t)] for t in sorted_times], axis=0
-            ).astype(np.float32)
+            gt_pose_line = np.stack([true_by_time[int(t)] for t in sorted_times], axis=0).astype(np.float32)
 
     fig = plt.figure(figsize=(18, 15) if show_plot else (10, 8))
     ax = fig.add_subplot(111, projection="3d")
@@ -1295,7 +1257,7 @@ def build_pose_3d_figure(
     #     diag = float(np.linalg.norm(extent))
     #     axis_len = max(0.01, 0.03 * diag)
     # else:
-        # axis_len = 0.02
+    # axis_len = 0.02
     axis_len = 0.02
 
     anchor_idx = _prepare_anchor_indices(anchor_steps, prediction_stride)
@@ -1335,11 +1297,7 @@ def build_pose_3d_figure(
                 color=c_t,
                 linewidth=0.75,
                 alpha=0.7,
-                label=(
-                    f"{action_source}_samples"
-                    if (anchor_pos == 0 and s_idx == 0)
-                    else None
-                ),
+                label=(f"{action_source}_samples" if (anchor_pos == 0 and s_idx == 0) else None),
             )
             # Draw frames at the start and end of the predictions
             _draw_pose_frame_3d(
@@ -1389,9 +1347,7 @@ def build_pose_3d_figure(
     ax.set_xlabel("x")
     ax.set_ylabel("y")
     ax.set_zlabel("z")
-    ax.set_title(
-        f"3D EE Pose Frames: measured vs ground truth vs sampled {action_source}s"
-    )
+    ax.set_title(f"3D EE Pose Frames: measured vs ground truth vs sampled {action_source}s")
     ax.view_init(elev=float(view_elev), azim=float(view_azim))
     _set_axes_equal_3d(ax)
     ax.legend(loc="upper left")
@@ -1427,10 +1383,7 @@ def build_obs_prediction_figure(
 
     if pred_sample is not None:
         pred_sample_arr = np.asarray(pred_sample, dtype=np.float32)
-        if (
-            pred_sample_arr.shape[0] != true_obs.shape[0]
-            or pred_sample_arr.shape[1] < n_dims
-        ):
+        if pred_sample_arr.shape[0] != true_obs.shape[0] or pred_sample_arr.shape[1] < n_dims:
             pred_sample_arr = None
     else:
         pred_sample_arr = None
@@ -1446,25 +1399,17 @@ def build_obs_prediction_figure(
 
     if has_orientation:
         fig = plt.figure(figsize=(5 * n_cols, 2.8 * n_rows + 5.2))
-        gs = fig.add_gridspec(
-            n_rows + 2, n_cols, height_ratios=[1.0] * n_rows + [1.15, 0.95], hspace=0.35
-        )
+        gs = fig.add_gridspec(n_rows + 2, n_cols, height_ratios=[1.0] * n_rows + [1.15, 0.95], hspace=0.35)
         axes = []
         for row in range(n_rows):
             for col in range(n_cols):
                 shared = axes[0] if len(axes) > 0 else None
                 axes.append(fig.add_subplot(gs[row, col], sharex=shared))
         axes = np.asarray(axes, dtype=object)
-        ax_rpy = fig.add_subplot(
-            gs[n_rows, :], sharex=axes[0] if len(axes) > 0 else None
-        )
-        ax_geo = fig.add_subplot(
-            gs[n_rows + 1, :], sharex=axes[0] if len(axes) > 0 else None
-        )
+        ax_rpy = fig.add_subplot(gs[n_rows, :], sharex=axes[0] if len(axes) > 0 else None)
+        ax_geo = fig.add_subplot(gs[n_rows + 1, :], sharex=axes[0] if len(axes) > 0 else None)
     else:
-        fig, axes = plt.subplots(
-            n_rows, n_cols, figsize=(5 * n_cols, 2.8 * n_rows), sharex=True
-        )
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 2.8 * n_rows), sharex=True)
         axes = np.asarray(axes).reshape(-1)
         ax_rpy = None
         ax_geo = None
@@ -1557,9 +1502,7 @@ def build_obs_prediction_figure(
         rpy_title = f"Computed RPY from pose ({unit}, unwrapped)"
         if bool(rpy_config.subtract_pi):
             axis_names = ["roll", "pitch", "yaw"]
-            axis_idx = int(
-                np.clip(int(rpy_config.subtract_pi_axis), 0, len(axis_names) - 1)
-            )
+            axis_idx = int(np.clip(int(rpy_config.subtract_pi_axis), 0, len(axis_names) - 1))
             if shift_value > 0.0:
                 rpy_title += f", +pi on {axis_names[axis_idx]}"
             elif shift_value < 0.0:
@@ -1637,16 +1580,12 @@ def _extract_gaussian_entry_arrays(entry: Any) -> Tuple[np.ndarray, np.ndarray]:
         return np.asarray(mean, dtype=np.float32), np.asarray(std, dtype=np.float32)
 
     if isinstance(entry, (tuple, list)) and len(entry) >= 2:
-        return np.asarray(entry[0], dtype=np.float32), np.asarray(
-            entry[1], dtype=np.float32
-        )
+        return np.asarray(entry[0], dtype=np.float32), np.asarray(entry[1], dtype=np.float32)
 
     raise TypeError("Unsupported Gaussian entry format. Expected dict or tuple/list.")
 
 
-def extract_gaussian_prior_posterior(
-    dists_data: Dict[str, Any]
-) -> Tuple[np.ndarray, np.ndarray]:
+def extract_gaussian_prior_posterior(dists_data: Dict[str, Any]) -> Tuple[np.ndarray, np.ndarray]:
     if "Prior" not in dists_data or "Posterior" not in dists_data:
         raise KeyError("dists_data must include 'Prior' and 'Posterior'.")
 
@@ -1672,35 +1611,25 @@ def _extract_categorical_probs_entry(entry: Any) -> np.ndarray:
         elif "logits" in entry:
             arr = _softmax_last(np.asarray(entry["logits"], dtype=np.float32))
         else:
-            raise KeyError(
-                "Categorical entry dict must include probs/probabilities/logits."
-            )
+            raise KeyError("Categorical entry dict must include probs/probabilities/logits.")
     elif isinstance(entry, (tuple, list)):
         if len(entry) < 1:
             raise ValueError("Categorical tuple/list entry is empty.")
         arr = np.asarray(entry[0], dtype=np.float32)
     else:
-        raise TypeError(
-            "Unsupported categorical entry format. Expected dict or tuple/list."
-        )
+        raise TypeError("Unsupported categorical entry format. Expected dict or tuple/list.")
 
     if arr.ndim != 3:
-        raise ValueError(
-            f"Expected categorical array shape (T, num_variables, num_categories), got {arr.shape}."
-        )
+        raise ValueError(f"Expected categorical array shape (T, num_variables, num_categories), got {arr.shape}.")
 
-    is_prob_like = bool(
-        np.all(arr >= -1e-6) and np.mean(np.abs(np.sum(arr, axis=-1) - 1.0)) < 1e-3
-    )
+    is_prob_like = bool(np.all(arr >= -1e-6) and np.mean(np.abs(np.sum(arr, axis=-1) - 1.0)) < 1e-3)
     probs = arr if is_prob_like else _softmax_last(arr)
     probs = np.clip(probs, 1e-8, 1.0)
     probs = probs / np.clip(np.sum(probs, axis=-1, keepdims=True), 1e-8, None)
     return probs.astype(np.float32)
 
 
-def extract_categorical_prior_posterior_probs(
-    dists_data: Dict[str, Any]
-) -> Tuple[np.ndarray, np.ndarray]:
+def extract_categorical_prior_posterior_probs(dists_data: Dict[str, Any]) -> Tuple[np.ndarray, np.ndarray]:
     if "Prior" not in dists_data or "Posterior" not in dists_data:
         raise KeyError("dists_data must include 'Prior' and 'Posterior'.")
 
@@ -1731,9 +1660,7 @@ def build_z_gaussian_variance_with_frames_figure(
     prior_mean_var = np.mean(prior_var, axis=1)
 
     fig = plt.figure(figsize=(20, 10))
-    gs = fig.add_gridspec(
-        2, max(1, num_imgs), height_ratios=[1.5, 1.0], hspace=0.08, wspace=0.1
-    )
+    gs = fig.add_gridspec(2, max(1, num_imgs), height_ratios=[1.5, 1.0], hspace=0.08, wspace=0.1)
 
     ax_main = fig.add_subplot(gs[0, :])
     for dim in range(z_dim):
@@ -1755,12 +1682,8 @@ def build_z_gaussian_variance_with_frames_figure(
                 label="Individual (Prior)",
             )
         else:
-            ax_main.plot(
-                time_steps, post_var[:, dim], color="red", alpha=0.3, linewidth=0.5
-            )
-            ax_main.plot(
-                time_steps, prior_var[:, dim], color="blue", alpha=0.3, linewidth=0.5
-            )
+            ax_main.plot(time_steps, post_var[:, dim], color="red", alpha=0.3, linewidth=0.5)
+            ax_main.plot(time_steps, prior_var[:, dim], color="blue", alpha=0.3, linewidth=0.5)
 
     ax_main.plot(
         time_steps,
@@ -1816,17 +1739,13 @@ def build_z_categorical_distribution_with_frames_figure(
     target_steps = [int(step) for step in target_steps]
     num_imgs = len(target_steps)
 
-    prior_entropy = -np.sum(
-        prior_probs * np.log(np.clip(prior_probs, 1e-8, 1.0)), axis=-1
-    )
+    prior_entropy = -np.sum(prior_probs * np.log(np.clip(prior_probs, 1e-8, 1.0)), axis=-1)
     post_entropy = -np.sum(post_probs * np.log(np.clip(post_probs, 1e-8, 1.0)), axis=-1)
     prior_flat = prior_probs.reshape(time_len, num_vars * num_cats)
     post_flat = post_probs.reshape(time_len, num_vars * num_cats)
 
     fig = plt.figure(figsize=(22, 12))
-    gs = fig.add_gridspec(
-        3, max(1, num_imgs), height_ratios=[1.0, 1.0, 0.9], hspace=0.22, wspace=0.1
-    )
+    gs = fig.add_gridspec(3, max(1, num_imgs), height_ratios=[1.0, 1.0, 0.9], hspace=0.22, wspace=0.1)
 
     ax_prior = fig.add_subplot(gs[0, :])
     ax_post = fig.add_subplot(gs[1, :], sharex=ax_prior)
@@ -1853,9 +1772,7 @@ def build_z_categorical_distribution_with_frames_figure(
     for ax in (ax_prior, ax_post):
         for step in target_steps:
             if 0 <= step < time_len:
-                ax.axvline(
-                    x=step, color="white", linestyle="--", alpha=0.45, linewidth=0.8
-                )
+                ax.axvline(x=step, color="white", linestyle="--", alpha=0.45, linewidth=0.8)
         for var_idx in range(1, num_vars):
             ax.axhline(
                 y=var_idx * num_cats - 0.5,
@@ -1870,9 +1787,7 @@ def build_z_categorical_distribution_with_frames_figure(
     ax_prior.set_title(
         f"Prior categorical probabilities | vars={num_vars}, cats={num_cats}, mean entropy={float(np.mean(prior_entropy)):.3f}"
     )
-    ax_post.set_title(
-        f"Posterior categorical probabilities | mean entropy={float(np.mean(post_entropy)):.3f}"
-    )
+    ax_post.set_title(f"Posterior categorical probabilities | mean entropy={float(np.mean(post_entropy)):.3f}")
     ax_post.set_xlabel("Timestep")
 
     fig.colorbar(im_prior, ax=ax_prior, fraction=0.02, pad=0.01, label="probability")

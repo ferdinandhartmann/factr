@@ -114,6 +114,8 @@ def _build_eval_trajectory_fan_figure(
     global_step=None,
     plot_geodesic_subplot=True,
     rpy_config=None,
+    plot_gripper_subplot=False,
+    gripper_index=None,
 ):
     if source_time_index is None:
         source_time_index = np.arange(true_action_chunks.shape[0])
@@ -131,6 +133,8 @@ def _build_eval_trajectory_fan_figure(
         plot_ground_truth_reconstructed=True,
         plot_geodesic_subplot=plot_geodesic_subplot,
         rpy_config=rpy_cfg,
+        plot_gripper_subplot=plot_gripper_subplot,
+        gripper_index=gripper_index,
     )
 
 
@@ -392,6 +396,8 @@ class DefaultTask:
         eval_plot_rpy_subtract_pi_axis: int = 0,
         eval_plot_rpy_plot_unit: str = "deg",
         eval_plot_geodesic_subplot: bool = False,
+        eval_plot_include_gripper: bool = False,
+        eval_plot_gripper_index: int = -1,
         eval_plot_axis_limits=None,
         eval_plot_goal_frames=None,
         eval_plot_pose_mode: str = "absolute",
@@ -423,6 +429,8 @@ class DefaultTask:
         self.eval_plot_view_elev = float(eval_plot_view_elev)
         self.eval_plot_view_azim = float(eval_plot_view_azim)
         self.eval_plot_geodesic_subplot = bool(eval_plot_geodesic_subplot)
+        self.eval_plot_include_gripper = bool(eval_plot_include_gripper)
+        self.eval_plot_gripper_index = int(eval_plot_gripper_index)
         self.eval_plot_axis_limits = eval_plot_axis_limits
         self.eval_plot_goal_frames = eval_plot_goal_frames
         self.eval_plot_pose_mode = str(eval_plot_pose_mode)
@@ -899,6 +907,8 @@ class BCTask(DefaultTask):
                                     global_step=global_step,
                                     plot_geodesic_subplot=self.eval_plot_geodesic_subplot,
                                     rpy_config=self.eval_plot_rpy_config,
+                                    plot_gripper_subplot=self.eval_plot_include_gripper,
+                                    gripper_index=self.eval_plot_gripper_index,
                                 )
                                 wandb.log(
                                     {f"eval/prior_fan_stiffness_{int(stiffness_label)}": wandb.Image(fig_stiff)},
@@ -949,6 +959,8 @@ class BCTask(DefaultTask):
                                 global_step=global_step,
                                 plot_geodesic_subplot=self.eval_plot_geodesic_subplot,
                                 rpy_config=self.eval_plot_rpy_config,
+                                plot_gripper_subplot=self.eval_plot_include_gripper,
+                                gripper_index=self.eval_plot_gripper_index,
                             )
                             wandb.log(
                                 {f"eval/prior_fan_stiffness_{int(stiffness_label)}": wandb.Image(fig_stiff)},

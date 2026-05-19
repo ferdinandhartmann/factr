@@ -187,7 +187,7 @@ class RobobufReplayBuffer(ReplayBuffer):
         self.buffer_path = buffer_path
         buf = _cached_load(buffer_path)
 
-        n_test_trans = int(len(buf) * n_test_ratio)
+        n_test_trans = int(len(buf) * n_test_ratio) if n_test_ratio is not None else 0
 
         norm_file = os.path.join(os.path.dirname(buffer_path), "ac_norm.json")
         if os.path.exists(norm_file):
@@ -198,8 +198,9 @@ class RobobufReplayBuffer(ReplayBuffer):
 
         index_list = list(range(len(buf)))
         # split data according to mode
-        index_list = index_list[:-n_test_trans] if mode == "train" else index_list[-n_test_trans:]
-
+        if n_test_trans > 0:
+            index_list = index_list[:-n_test_trans] if mode == "train" else index_list[-n_test_trans:]
+        
         # get and shuffle list of buf indices
         if shuffle:
             rng.shuffle(index_list)

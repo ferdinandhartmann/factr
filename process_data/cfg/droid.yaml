@@ -1,0 +1,38 @@
+input_path: /home/ferdinand/activeinference/factr/process_data/data_to_process/droid_100/1.0.0
+output_path: /home/ferdinand/activeinference/factr/process_data/processed_data/droid_100
+
+downsample: False
+data_frequency: 50.0
+target_downsampling_freq: 50.0
+
+cameras_topics:
+  - observation/exterior_image_1_left
+  - observation/exterior_image_2_left
+  - observation/wrist_image_left
+
+obs_topics:
+  - observation/cartesian_position
+  - observation/gripper_position
+  - action_dict/cartesian_velocity
+  - action_dict/cartesian_position
+
+action_config:
+  action_dict/cartesian_position: 9
+  action_dict/gripper_position: 1
+
+# Pose delta for cartesian action (relative to previous step).
+action_pose_mode: relative
+action_pose_topic: action_dict/cartesian_position
+
+# Convert RPY (roll, pitch, yaw) to 6D rotation for selected topics.
+rpy_topics:
+  - observation/cartesian_position
+  - action_dict/cartesian_position
+
+# Optional train/test split at buffer creation time (episode-level random split).
+train_test_split:
+  enabled: true
+  train_ratio: 0.90
+  seed: 45
+  train_buffer_name: buf_train
+  test_buffer_name: buf_test

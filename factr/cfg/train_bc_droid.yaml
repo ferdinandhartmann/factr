@@ -1,0 +1,75 @@
+defaults:
+  - agent: transformer_droid
+  - agent@agent_camera: transformer_vit
+  - task: single_franka_droid
+  - task@task_camera: single_franka_droid_camera
+  - trainer: adamw_cos_lowdim
+  - trainer@trainer_camera: mae_cos_sched
+  - _self_
+
+hydra:
+  run:
+    dir: /home/ferdinand/activeinference/factr/checkpoints/${dataset_project_prefix}${dataset_name}/${exp_name}
+  job:
+    env_set:
+      CUDA_VISIBLE_DEVICES: "2"
+
+dataset_project_prefix: aifact_
+dataset_name: droid_100
+use_camera: false
+camera_topic: observation/wrist_image_left
+stiffness_classes: 1
+include_tracking_error: false # if false, atuomatically reduces obs_dim -6
+
+buffer_path: /home/ferdinand/activeinference/factr/process_data/processed_data/${dataset_name}/buf_train.pkl
+test_buffer_path: /home/ferdinand/activeinference/factr/process_data/processed_data/${dataset_name}/buf_test.pkl
+
+exp_name: test_3
+
+batch_size: 180
+num_workers: 8
+lr: 0.00035
+max_iterations: 15000
+schedule_freq: 1
+devices: 1
+seed: 42
+resume: false
+
+ac_chunk: 30
+obs_window: 4
+img_chunk: 1
+action_chunk_mode: relative_timesteps  # Choices: absolute, relative_timesteps, relative_chunks
+eval_plot_pose_mode: relative_timesteps  # Choices: absolute, relative_timesteps, relative_chunks
+
+train_transform: medium
+test_transform: preproc
+
+curriculum:
+  space: pixel
+  operator: blur
+  scheduler: linear
+  start_scale: 0
+  stop_scale: 0
+  max_step: ${max_iterations}
+
+train_log_freq: 100
+eval_freq: 500
+eval_freq_plot: 2500  # Must be multiple of eval_freq
+# save_freq: 2500
+
+diversity_enable: false
+diversity_num_samples: 30
+diversity_weight: 0.4
+diversity_weight_position: 1.0
+diversity_weight_orientation: 0.0
+diversity_warmup_steps: 500
+diversity_margin: 0.7
+diversity_smoothing: 0.15
+diversity_debug: false
+
+wandb:
+  name: ${exp_name}
+  project: ${dataset_project_prefix}${dataset_name}
+  group: bc
+  debug: False
+  entity: None
