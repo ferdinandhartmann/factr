@@ -337,6 +337,39 @@ def _compute_sample_diversity(sampled_actions: torch.Tensor, mask: torch.Tensor)
     return float(pairwise_vals.mean().item())
 
 
+def _compute_goal_distance_sum(sampled_actions: torch.Tensor, goal_frames) -> float:
+    """Sum, over goals, of the minimum endpoint distance across sampled trajectories.
+
+    Args:
+        sampled_actions: Tensor of shape (B, S, T, D) containing denormalized pose chunks.
+        goal_frames: Sequence of dicts with a 9D pose entry. Only XYZ is used here.
+    """
+    if sampled_actions.ndim != 4 or not goal_frames:
+        return float("nan")
+
+    if sampled_actions.shape[-1] < 3:
+        return float("nan")
+
+    goal_positions = []
+    for goal in goal_frames:
+        pose = goal.get("pose", None) if isinstance(goal, dict) else None
+        if pose is None:
+            continue
+        pose_arr = np.asarray(pose, dtype=np.float32).reshape(-1)
+        if pose_arr.shape[0] < 3:
+            continue
+        goal_positions.append(torch.as_tensor(pose_arr[:3], device=sampled_actions.device, dtype=sampled_actions.dtype))
+
+    if len(goal_positions) == 0:
+        return float("nan")
+
+    goals = torch.stack(goal_positions, dim=0)  # (G, 3)
+    endpoints = sampled_actions[:, :, -1, :3]  # (B, S, 3)
+    distances = torch.linalg.norm(endpoints.unsqueeze(2) - goals.unsqueeze(0).unsqueeze(0), dim=-1)  # (B, S, G)
+    min_distances = distances.min(dim=1).values  # (B, G)
+    return float(min_distances.sum(dim=-1).mean().item())
+
+
 class DefaultTask:
     def __init__(
         self,
@@ -482,6 +515,7 @@ class BCTask(DefaultTask):
         sample_diversity_vals = []
         sample_endpoint_diversity_vals = []
         sample_end_direction_diversity_vals = []
+        goal_distance_sum_vals = []
         l2_per_joint_all = []
         chunk_mse_all = []
         accuracy_list = []
@@ -567,6 +601,9 @@ class BCTask(DefaultTask):
                     dtype=sampled_eval_actions.dtype,
                     device=sampled_eval_actions.device,
                 )
+                goal_distance_sum = _compute_goal_distance_sum(sampled_eval_actions_denorm, self.eval_plot_goal_frames)
+                if np.isfinite(goal_distance_sum):
+                    goal_distance_sum_vals.append(goal_distance_sum)
                 sample_end_direction_diversity = _compute_end_direction_diversity(sampled_eval_actions_denorm, mask)
                 if np.isfinite(sample_end_direction_diversity):
                     sample_end_direction_diversity_vals.append(sample_end_direction_diversity)
@@ -641,6 +678,7 @@ class BCTask(DefaultTask):
         mean_sample_end_direction_diversity = (
             np.mean(sample_end_direction_diversity_vals) if sample_end_direction_diversity_vals else float("nan")
         )
+        mean_goal_distance_sum = np.mean(goal_distance_sum_vals) if goal_distance_sum_vals else float("nan")
         diversity_weights = {
             "sample": 1.0,
             "endpoint": 1.0,
@@ -692,6 +730,7 @@ class BCTask(DefaultTask):
             f"prior_std: {mean_prior_std:.4f}\tpost_std: {mean_posterior_std:.4f}\t"
             f"prior_H: {mean_prior_entropy:.4f}\tpost_H: {mean_posterior_entropy:.4f}\t"
             f"sample_div: {mean_sample_diversity:.4f}\tsweep_score: {sweep_score:.4f}\t"
+            f"goal_min_sum: {mean_goal_distance_sum:.4f}\t"
             f"sample_endpoint_div: {mean_sample_endpoint_diversity:.4f}\t"
             f"sample_end_direction_div: {mean_sample_end_direction_diversity:.4f}\t"
             f"sample_end_direction_div: {mean_sample_end_direction_diversity:.4f}\t"
@@ -710,6 +749,7 @@ class BCTask(DefaultTask):
             log_dict = {
                 "eval/sample_diversity_combined": mean_sample_diversity_combined,
                 "eval/sample_diversity": mean_sample_diversity,
+                "eval/goal_min_dist_sum": mean_goal_distance_sum,
                 "eval/prior_l1": mean_prior_l1,
                 "eval/prior_entropy": mean_prior_entropy,
                 "eval/posterior_l1": mean_val_loss,
@@ -723,6 +763,7 @@ class BCTask(DefaultTask):
                         "eval/posterior_std_mean": mean_posterior_std,
                     }
                     if getattr(model, "latent_distribution", None) != "categorical"
+                    and not getattr(model, "fixed_prior", False)
                     else {}
                 ),
                 "eval/sample_end_direction_diversity": mean_sample_end_direction_diversity,

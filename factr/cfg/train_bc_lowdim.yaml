@@ -19,7 +19,7 @@ include_tracking_error: false # if false, atuomatically reduces obs_dim -6
 buffer_path: /home/ferdinand/activeinference/factr/process_data/processed_data/${dataset_name}/buf_train.pkl
 test_buffer_path: /home/ferdinand/activeinference/factr/process_data/processed_data/${dataset_name}/buf_test.pkl
 
-exp_name: gauss_b005_v4k4_ct12_klb05_obs4_fp_teest
+exp_name: vg_b005_v4k4_ct1_klb5_obs4_nocls
 
 batch_size: 180
 num_workers: 8

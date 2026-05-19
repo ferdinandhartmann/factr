@@ -11,6 +11,8 @@ rsync -avzP --inplace --nocompression otake@192.168.1.172:/home/otake/factr_ws/r
 rsync -avP otake@192.168.1.172:/home/otake/factr_ws/raw_data/{fourgoals_1_stiff,fourgoals_1_medium,fourgoals_1_soft} .
 ```
 
+rsync -avzP ferdinand@192.168.1.44:/home/ferdinand/activeinference/franka-gpu-server/droid_100 .
+
 ### Check Stiffness Labels of train.buf (Available ones and count)
 
 ```bash
