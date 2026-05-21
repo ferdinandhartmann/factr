@@ -185,6 +185,7 @@ def main(cfg: DictConfig):
     rpy_topics = set(cfg.get("rpy_topics") or [])
     action_pose_mode = str(cfg.get("action_pose_mode", "absolute"))
     action_pose_topic = cfg.get("action_pose_topic", "action_dict/cartesian_position")
+    action_gripper_topic = cfg.get("action_gripper_topic", "action_dict/gripper_position")
     split_cfg = _parse_split_cfg(cfg)
 
     if not obs_topics:
@@ -221,6 +222,7 @@ def main(cfg: DictConfig):
         actions = []
         cameras = {idx: [] for idx in range(len(cameras_topics))}
         prev_action_pose = None
+        prev_action_gripper = None
 
         for step_data in _iter_episode_steps(episode_steps):
             obs_parts = []
@@ -238,16 +240,20 @@ def main(cfg: DictConfig):
                 if value is None:
                     raise KeyError(f"Missing action topic {topic}")
                 act_vec = _as_flat_array(value)
+                raw_act_vec = act_vec.copy()
                 if action_pose_mode == "relative" and topic == action_pose_topic:
+                    # Match process_data.py: full pose delta (pos + rot) in relative mode.
                     if prev_action_pose is None:
-                        delta_pos = np.zeros_like(act_vec[:3])
+                        act_vec = np.zeros_like(act_vec)
                     else:
-                        delta_pos = act_vec[:3] - prev_action_pose[:3]
-                    prev_action_pose = act_vec.copy()
-                    if act_vec.size >= 6:
-                        act_vec = np.concatenate([delta_pos, act_vec[3:]], axis=0)
+                        act_vec = act_vec - prev_action_pose
+                    prev_action_pose = raw_act_vec
+                if action_pose_mode == "relative" and topic == action_gripper_topic:
+                    if prev_action_gripper is None:
+                        act_vec = np.zeros_like(act_vec)
                     else:
-                        act_vec = np.concatenate([delta_pos], axis=0)
+                        act_vec = act_vec - prev_action_gripper
+                    prev_action_gripper = raw_act_vec
                 action_parts.append(_maybe_convert_rpy(act_vec, topic in rpy_topics))
             actions.append(np.concatenate(action_parts, axis=0))
 

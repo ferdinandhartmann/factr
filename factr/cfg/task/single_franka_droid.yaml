@@ -2,15 +2,15 @@ _target_: factr.task.BCTask
 obs_dim: 25 # if tracking error included: false: automatically cahnged to 30, if true stays at 36
 include_tracking_error: ${oc.select:include_tracking_error,true}
 ac_dim: 10
-cam_indexes: [0]
-n_cams: 1
+cam_indexes: []
+n_cams: ${len:${task.cam_indexes}}
 stiffness_classes: ${stiffness_classes}
-eval_plot_max_steps: 100
-eval_plot_prediction_stride: 20
-eval_plot_num_samples: 30
+eval_plot_max_steps: 800
+eval_plot_prediction_stride: 30
+eval_plot_num_samples: 40
 eval_plot_pose_mode: ${eval_plot_pose_mode}
 eval_plot_include_gripper: true
-eval_plot_gripper_index: 9 # (from 0)
+eval_plot_gripper_index: 9
 
 # For Sweeping
 sweep_target_min_diversity: 0.02

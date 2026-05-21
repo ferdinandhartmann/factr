@@ -1,5 +1,5 @@
 input_path: /home/ferdinand/activeinference/factr/process_data/data_to_process/droid_100/1.0.0
-output_path: /home/ferdinand/activeinference/factr/process_data/processed_data/droid_100
+output_path: /home/ferdinand/activeinference/factr/process_data/processed_data/droid_100_abs
 
 downsample: False
 data_frequency: 50.0
@@ -21,7 +21,7 @@ action_config:
   action_dict/gripper_position: 1
 
 # Pose delta for cartesian action (relative to previous step).
-action_pose_mode: relative
+action_pose_mode: absolute  # absolute: raw pose_command, relative: pose_command[t]-pose_command[t-1] with t0=zeros
 action_pose_topic: action_dict/cartesian_position
 
 # Convert RPY (roll, pitch, yaw) to 6D rotation for selected topics.

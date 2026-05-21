@@ -15,8 +15,8 @@ hydra:
       CUDA_VISIBLE_DEVICES: "2"
 
 dataset_project_prefix: aifact_
-dataset_name: droid_100
-use_camera: false
+dataset_name: droid_100_abs
+use_camera: true
 camera_topic: observation/wrist_image_left
 stiffness_classes: 1
 include_tracking_error: false # if false, atuomatically reduces obs_dim -6
@@ -24,12 +24,12 @@ include_tracking_error: false # if false, atuomatically reduces obs_dim -6
 buffer_path: /home/ferdinand/activeinference/factr/process_data/processed_data/${dataset_name}/buf_train.pkl
 test_buffer_path: /home/ferdinand/activeinference/factr/process_data/processed_data/${dataset_name}/buf_test.pkl
 
-exp_name: test_3
+exp_name: test_9_cam_3
 
-batch_size: 180
+batch_size: 128
 num_workers: 8
 lr: 0.00035
-max_iterations: 15000
+max_iterations: 10000
 schedule_freq: 1
 devices: 1
 seed: 42
@@ -38,8 +38,8 @@ resume: false
 ac_chunk: 30
 obs_window: 4
 img_chunk: 1
-action_chunk_mode: relative_timesteps  # Choices: absolute, relative_timesteps, relative_chunks
-eval_plot_pose_mode: relative_timesteps  # Choices: absolute, relative_timesteps, relative_chunks
+action_chunk_mode: absolute  # Choices: absolute, relative_timesteps, relative_chunks
+eval_plot_pose_mode: absolute  # Choices: absolute, relative_timesteps, relative_chunks
 
 train_transform: medium
 test_transform: preproc
@@ -54,7 +54,7 @@ curriculum:
 
 train_log_freq: 100
 eval_freq: 500
-eval_freq_plot: 2500  # Must be multiple of eval_freq
+eval_freq_plot: 2000  # Must be multiple of eval_freq
 # save_freq: 2500
 
 diversity_enable: false

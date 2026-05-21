@@ -5,7 +5,7 @@
 
 
 _target_: factr.models.vit.load_vit
-restore_path: ''
+restore_path: '/home/ferdinand/activeinference/factr/visual_features/vit_base/SOUP_1M_DH.pth'
 
 model:
   _target_: factr.models.vit.vit_base_patch16
