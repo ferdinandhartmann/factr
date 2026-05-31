@@ -11,7 +11,9 @@ except Exception:  # pragma: no cover - optional dependency
     yaml = None
 
 # Folder containing .pkl files
-PKL_FOLDER = Path("~/activeinference/factr/process_data/data_to_process/fourgoals_2/data").expanduser()
+PKL_FOLDER = Path("~/activeinference/factr/process_data/data_to_process/fourgoals_2_soft/data").expanduser()
+
+# Files need to be renamed to end with "_stiff.pkl" or "_soft.pkl" for this script to process them.
 
 # Configuration variables (replaces command-line arguments)
 OUTPUT: str = "stiffness_damping_assignments.json"
@@ -23,8 +25,11 @@ OUTPUT_TOPIC = "/cartesian_impedance_gains"
 # FIXED_STIFFNESS: List[float] = [1600.0, 1600.0, 1600.0, 50.0, 50.0, 50.0] # stiff stiffness
 # FIXED_DAMPING: List[float] = [40.0, 40.0, 40.0, 4.5, 4.5, 4.5]
 
-FIXED_STIFFNESS: List[float] = [1000.0, 1000.0, 1000.0, 30.0, 30.0, 30.0] # high2
-FIXED_DAMPING: List[float] = [25.0, 25.0, 25.0, 2.5, 2.5, 2.5]
+# FIXED_STIFFNESS: List[float] = [1000.0, 1000.0, 1000.0, 30.0, 30.0, 30.0]  # high2
+# FIXED_DAMPING: List[float] = [25.0, 25.0, 25.0, 2.5, 2.5, 2.5]
+
+# FIXED_STIFFNESS: List[float] = [1000.0, 1000.0, 1000.0, 30.0, 30.0, 30.0]  # high2 + more damping (fourgoals_4_stiff)
+# FIXED_DAMPING: List[float] = [120.0, 120.0, 120.0, 2.5, 2.5, 2.5]
 
 # FIXED_STIFFNESS: List[float] = [300.0, 300.0, 300.0, 15.0, 15.0, 15.0]  # medium stiffness
 # FIXED_DAMPING: List[float] = [17.0, 17.0, 17.0, 1.5, 1.5, 1.5]
@@ -32,8 +37,8 @@ FIXED_DAMPING: List[float] = [25.0, 25.0, 25.0, 2.5, 2.5, 2.5]
 # FIXED_STIFFNESS: List[float] = [50.0, 50.0, 50.0, 4.0, 4.0, 4.0]  # soft stiffness
 # FIXED_DAMPING: List[float] = [4.0, 4.0, 4.0, 0.3, 0.3, 0.3]
 
-# FIXED_STIFFNESS: List[float] = [50.0, 50.0, 50.0, 3.0, 3.0, 3.0]  # soft 2
-# FIXED_DAMPING: List[float] = [4.0, 4.0, 4.0, 0.3, 0.3, 0.3]
+FIXED_STIFFNESS: List[float] = [50.0, 50.0, 50.0, 3.0, 3.0, 3.0]  # soft 2 (maybe fourgoals_2_soft)
+FIXED_DAMPING: List[float] = [4.0, 4.0, 4.0, 0.3, 0.3, 0.3]
 
 # Whether to update data files in place
 UPDATE_FILES: bool = True
@@ -42,6 +47,7 @@ UPDATE_FILES: bool = True
 SKIP_IF_MISSING: bool = False
 
 # Only process PKL files that end with one of these suffixes.
+# Use an empty tuple to process every .pkl file in PKL_FOLDER.
 TARGET_FILE_SUFFIXES: Tuple[str, ...] = ("_stiff.pkl", "_soft.pkl")
 
 
@@ -184,10 +190,24 @@ def main() -> None:
     if not folder.exists() or not folder.is_dir():
         raise SystemExit(f"Folder not found: {folder}")
 
-    target_pkl_paths = [p for p in sorted(folder.glob("*.pkl")) if p.name.endswith(TARGET_FILE_SUFFIXES)]
+    all_pkl_paths = sorted(folder.glob("*.pkl"))
+    if TARGET_FILE_SUFFIXES:
+        target_pkl_paths = [p for p in all_pkl_paths if p.name.endswith(TARGET_FILE_SUFFIXES)]
+    else:
+        target_pkl_paths = all_pkl_paths
+
+    print(f"Found {len(target_pkl_paths)} target .pkl files in {folder}")
+    if not target_pkl_paths:
+        print(
+            "WARNING: No .pkl files matched TARGET_FILE_SUFFIXES. "
+            "No files were changed and no assignments file was saved."
+        )
+        return
 
     results = []
+    successful_updates = 0
     for pkl_path in target_pkl_paths:
+        print(f"Processing {pkl_path.name} ...")
         try:
             pkl_data = _load_pkl(pkl_path)
             updated_counts: Dict[str, int] = {}
@@ -208,6 +228,12 @@ def main() -> None:
                         _save_structured_file(structured_path, structured_data)
                         updated_counts[structured_path.suffix.lstrip(".") + "_entries"] = structured_count
 
+            if updated_counts and any(count > 0 for count in updated_counts.values()):
+                successful_updates += 1
+                print(f"  success: added/updated {updated_counts}")
+            else:
+                print("  warning: no gain entries were added or updated")
+
             results.append(
                 {
                     "file": pkl_path.name,
@@ -215,13 +241,19 @@ def main() -> None:
                 }
             )
         except Exception as exc:
+            print(f"  error: {exc}")
             results.append({"file": pkl_path.name, "error": str(exc)})
+
+    if successful_updates == 0:
+        print("WARNING: No files were successfully updated. Assignments file was not saved.")
+        return
 
     output_path = folder / OUTPUT
     with output_path.open("w") as f:
         json.dump(results, f, indent=2)
 
     print(f"Saved gain assignments to {output_path}")
+    print(f"Successfully updated {successful_updates}/{len(target_pkl_paths)} files.")
 
 
 if __name__ == "__main__":

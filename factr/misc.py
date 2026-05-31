@@ -65,7 +65,11 @@ def create_wandb_run(wandb_cfg, job_config, run_id=None):
     try:
         job_id = HydraConfig().get().job.num
         override_dirname = HydraConfig().get().job.override_dirname
-        name = f"{wandb_cfg.sweep_name_prefix}-{job_id}"
+        explicit_name = getattr(wandb_cfg, "name", None)
+        if explicit_name:
+            name = str(explicit_name)
+        else:
+            name = f"{wandb_cfg.sweep_name_prefix}-{job_id}"
         notes = f"{override_dirname}"
     except:
         name, notes = wandb_cfg.name, None

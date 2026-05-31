@@ -117,6 +117,17 @@ def _compute_gaussian_stats(list_of_arrays, feature_slice):
     return mean, std
 
 
+def _compute_pose_gaussian_stats(list_of_arrays, feature_slice, shared_std=False):
+    mean, std = _compute_gaussian_stats(list_of_arrays, feature_slice)
+    if shared_std:
+        data = np.concatenate([arr[:, feature_slice] for arr in list_of_arrays], axis=0)
+        shared = float(np.nanstd(data))
+        if shared == 0:
+            shared = 1e-17
+        std = np.full_like(std, shared)
+    return mean, std
+
+
 def _apply_minmax(list_of_arrays, feature_slice, mins, maxs):
     mins = np.asarray(mins, dtype=float)
     maxs = np.asarray(maxs, dtype=float)
@@ -226,10 +237,14 @@ def normalize_states_groupwise(all_states_for_norm, state_obs_topics, state_topi
 
     pos_slice = slice(pose_slice.start, pose_slice.start + 3)
     ori_slice = slice(pose_slice.start + 3, pose_slice.start + 9)
+    pose_norm_mode = str(cfg.get("pose_normalization_mode", "per_dim"))
+    if pose_norm_mode not in {"per_dim", "group_shared"}:
+        raise ValueError(f"pose_normalization_mode must be 'per_dim' or 'group_shared', got {pose_norm_mode}.")
+    shared_pose_std = pose_norm_mode == "group_shared"
 
     stats = {"mode": "grouped", "state_dim": state_dim, "groups": []}
 
-    pos_mean, pos_std = _compute_gaussian_stats(all_states_for_norm, pos_slice)
+    pos_mean, pos_std = _compute_pose_gaussian_stats(all_states_for_norm, pos_slice, shared_std=shared_pose_std)
     _apply_gaussian(all_states_for_norm, pos_slice, pos_mean, pos_std)
     pose_clip = cfg.get("pose_clip", None)
     pose_clip = None if pose_clip is None else float(pose_clip)
@@ -248,7 +263,9 @@ def normalize_states_groupwise(all_states_for_norm, state_obs_topics, state_topi
         pos_group["clip"] = float(pose_clip_value)
     stats["groups"].append(pos_group)
 
-    orientation_mean, orientation_std = _compute_gaussian_stats(all_states_for_norm, ori_slice)
+    orientation_mean, orientation_std = _compute_pose_gaussian_stats(
+        all_states_for_norm, ori_slice, shared_std=shared_pose_std
+    )
     _apply_gaussian(all_states_for_norm, ori_slice, orientation_mean, orientation_std)
     stats["groups"].append(
         {
@@ -262,7 +279,16 @@ def normalize_states_groupwise(all_states_for_norm, state_obs_topics, state_topi
     )
 
     ### added command to input
-    cmd_mean, cmd_std = _compute_gaussian_stats(all_states_for_norm, cmd_slice)
+    cmd_pos_slice = slice(cmd_slice.start, cmd_slice.start + 3)
+    cmd_ori_slice = slice(cmd_slice.start + 3, cmd_slice.start + 9)
+    cmd_pos_mean, cmd_pos_std = _compute_pose_gaussian_stats(
+        all_states_for_norm, cmd_pos_slice, shared_std=shared_pose_std
+    )
+    cmd_ori_mean, cmd_ori_std = _compute_pose_gaussian_stats(
+        all_states_for_norm, cmd_ori_slice, shared_std=shared_pose_std
+    )
+    cmd_mean = np.concatenate([cmd_pos_mean, cmd_ori_mean], axis=0)
+    cmd_std = np.concatenate([cmd_pos_std, cmd_ori_std], axis=0)
     _apply_gaussian(all_states_for_norm, cmd_slice, cmd_mean, cmd_std)
     cmd_group = {
         "name": "ee_pose_commanded",
@@ -387,10 +413,14 @@ def normalize_actions_groupwise(all_actions_for_norm, cfg):
 
     pos_slice = slice(0, 3)
     ori_slice = slice(3, 9)
+    pose_norm_mode = str(cfg.get("pose_normalization_mode", "per_dim"))
+    if pose_norm_mode not in {"per_dim", "group_shared"}:
+        raise ValueError(f"pose_normalization_mode must be 'per_dim' or 'group_shared', got {pose_norm_mode}.")
+    shared_pose_std = pose_norm_mode == "group_shared"
 
     stats = {"mode": "grouped", "action_dim": action_dim, "groups": []}
 
-    pos_mean, pos_std = _compute_gaussian_stats(all_actions_for_norm, pos_slice)
+    pos_mean, pos_std = _compute_pose_gaussian_stats(all_actions_for_norm, pos_slice, shared_std=shared_pose_std)
     _apply_gaussian(all_actions_for_norm, pos_slice, pos_mean, pos_std)
     pose_clip = cfg.get("pose_clip", None)
     pose_clip = None if pose_clip is None else float(pose_clip)
@@ -409,7 +439,9 @@ def normalize_actions_groupwise(all_actions_for_norm, cfg):
         pos_group["clip"] = float(pose_clip_value)
     stats["groups"].append(pos_group)
 
-    orientation_mean, orientation_std = _compute_gaussian_stats(all_actions_for_norm, ori_slice)
+    orientation_mean, orientation_std = _compute_pose_gaussian_stats(
+        all_actions_for_norm, ori_slice, shared_std=shared_pose_std
+    )
     _apply_gaussian(all_actions_for_norm, ori_slice, orientation_mean, orientation_std)
     stats["groups"].append(
         {
@@ -479,6 +511,28 @@ def _parse_split_cfg(cfg):
     }
 
 
+def _resolve_input_folders(cfg):
+    """Accept one input folder or a YAML list of folders."""
+    input_paths = cfg.get("input_paths", None)
+    if input_paths is None:
+        input_paths = cfg.input_path
+
+    if isinstance(input_paths, (DictConfig, ListConfig)):
+        input_paths = OmegaConf.to_container(input_paths, resolve=True)
+
+    if isinstance(input_paths, (str, Path)):
+        input_paths = [input_paths]
+
+    if not isinstance(input_paths, (list, tuple)) or len(input_paths) == 0:
+        raise ValueError("Set input_path to a folder, or input_paths/input_path to a non-empty list of folders.")
+
+    folders = [Path(path) for path in input_paths]
+    missing = [str(folder) for folder in folders if not folder.is_dir()]
+    if missing:
+        raise FileNotFoundError(f"Input folder(s) not found: {missing}")
+    return folders
+
+
 def _split_episode_indices(num_episodes, train_ratio, seed):
     if num_episodes < 2:
         raise ValueError("Need at least 2 episodes to create train/test buffers.")
@@ -497,7 +551,6 @@ def _split_episode_indices(num_episodes, train_ratio, seed):
 
 @hydra.main(version_base=None, config_path="cfg", config_name="default")
 def main(cfg: DictConfig):
-    input_path = cfg.input_path
     output_path = cfg.output_path
     downsample = cfg.get("downsample", False)
     data_frequency = cfg.get("data_frequency", 50.0)
@@ -520,7 +573,7 @@ def main(cfg: DictConfig):
     assert len(action_topics) > 0, "Require action topics"
     assert target_downsampling_freq > 0, "Require positive target frequency"
 
-    data_folder = Path(input_path)
+    data_folders = _resolve_input_folders(cfg)
     output_dir = Path(output_path)
     output_dir.mkdir(exist_ok=True, parents=True)
 
@@ -592,11 +645,23 @@ def main(cfg: DictConfig):
                 return idx
         return len(stiffness_norm_thresholds) + 1
 
-    all_episodes = sorted(
-        [f for f in data_folder.iterdir() if f.name.startswith("ep_") and f.name.endswith(".pkl")], key=extract_ep_index
-    )
+    all_episodes = []
+    for folder_index, data_folder in enumerate(data_folders):
+        folder_episodes = sorted(
+            [f for f in data_folder.iterdir() if f.name.startswith("ep_") and f.name.endswith(".pkl")],
+            key=extract_ep_index,
+        )
+        # Keep YAML folder order stable, while preserving episode order inside each folder.
+        all_episodes.extend((folder_index, episode_pkl) for episode_pkl in folder_episodes)
 
-    print(f"These episodes will be processed in this order: {[str(p.name) for p in all_episodes]}")
+    if len(all_episodes) == 0:
+        raise FileNotFoundError(f"No ep_*.pkl files found in input folder(s): {[str(p) for p in data_folders]}")
+
+    def episode_label(folder_index, episode_pkl):
+        return f"{data_folders[folder_index].parent.name}/{episode_pkl.stem}"
+
+    print(f"Input folders: {[str(p) for p in data_folders]}")
+    print(f"These episodes will be processed in this order: {[episode_label(i, p) for i, p in all_episodes]}")
 
     trajectories = []
     processed_episode_names = []
@@ -607,10 +672,10 @@ def main(cfg: DictConfig):
 
     state_topic_dims = None
 
-    for episode_pkl in pbar:
+    for folder_index, episode_pkl in pbar:
         with open(episode_pkl, "rb") as f:
             traj_data = pickle.load(f)
-        processed_episode_names.append(str(episode_pkl.stem))
+        processed_episode_names.append(episode_label(folder_index, episode_pkl))
         traj_data, avg_freq = sync_data_slowest(traj_data, all_topics)
         pbar.set_postfix({"avg_freq": f"{avg_freq:.1f} Hz"})
 
@@ -849,6 +914,9 @@ def main(cfg: DictConfig):
             "norm_thresholds": stiffness_norm_thresholds,
         }
     processing_config = {
+        "input_paths": [str(path) for path in data_folders],
+        "pose_normalization_mode": str(cfg.get("pose_normalization_mode", "per_dim")),
+        "action_pose_mode": action_pose_mode,
         "downsample": downsample,
         "data_frequency": data_frequency,
         "target_downsampling_freq": target_downsampling_freq,

@@ -8,6 +8,7 @@ import matplotlib
 import numpy as np
 import pytorch_lightning as pl
 import torch
+from typing import Optional
 from torch.utils.data import DataLoader, IterableDataset
 
 import wandb
@@ -337,17 +338,31 @@ def _compute_sample_diversity(sampled_actions: torch.Tensor, mask: torch.Tensor)
     return float(pairwise_vals.mean().item())
 
 
-def _compute_goal_distance_sum(sampled_actions: torch.Tensor, goal_frames) -> float:
+def _compute_goal_distance_sum(
+    sampled_actions: torch.Tensor,
+    obs: torch.Tensor,
+    goal_frames,
+    pose_mode: str,
+    include_tracking_error: bool,
+) -> float:
     """Sum, over goals, of the minimum endpoint distance across sampled trajectories.
 
     Args:
         sampled_actions: Tensor of shape (B, S, T, D) containing denormalized pose chunks.
+        obs: Tensor of shape (B, W, obs_dim) containing denormalized observations.
         goal_frames: Sequence of dicts with a 9D pose entry. Only XYZ is used here.
+        pose_mode: Action pose mode used to convert chunks into absolute pose.
+        include_tracking_error: Whether obs contains the 6D tracking-error slice.
     """
-    if sampled_actions.ndim != 4 or not goal_frames:
+    if sampled_actions.ndim != 4 or obs.ndim != 3 or not goal_frames:
         return float("nan")
 
-    if sampled_actions.shape[-1] < 3:
+    if sampled_actions.shape[-1] < 3 or obs.shape[-1] < 30:
+        return float("nan")
+
+    cmd_start = 27 if include_tracking_error else 21
+    cmd_stop = cmd_start + sampled_actions.shape[-1]
+    if obs.shape[-1] < cmd_stop:
         return float("nan")
 
     goal_positions = []
@@ -358,16 +373,87 @@ def _compute_goal_distance_sum(sampled_actions: torch.Tensor, goal_frames) -> fl
         pose_arr = np.asarray(pose, dtype=np.float32).reshape(-1)
         if pose_arr.shape[0] < 3:
             continue
-        goal_positions.append(torch.as_tensor(pose_arr[:3], device=sampled_actions.device, dtype=sampled_actions.dtype))
+        goal_positions.append(
+            torch.as_tensor(pose_arr[:3], device=sampled_actions.device, dtype=sampled_actions.dtype)
+        )
 
     if len(goal_positions) == 0:
         return float("nan")
 
+    # Convert relative timestep/chunk actions to absolute commanded poses before goal distances.
+    sampled_np = sampled_actions.detach().cpu().numpy()
+    current_cmd_np = obs[:, -1, cmd_start:cmd_stop].detach().cpu().numpy()
+    sampled_abs_np = pose_chunks_for_plot(sampled_np, current_cmd_np[:, None, :], pose_mode)
+
     goals = torch.stack(goal_positions, dim=0)  # (G, 3)
-    endpoints = sampled_actions[:, :, -1, :3]  # (B, S, 3)
+    endpoints = torch.as_tensor(
+        sampled_abs_np[:, :, -1, :3],
+        device=sampled_actions.device,
+        dtype=sampled_actions.dtype,
+    )  # (B, S, 3)
     distances = torch.linalg.norm(endpoints.unsqueeze(2) - goals.unsqueeze(0).unsqueeze(0), dim=-1)  # (B, S, G)
     min_distances = distances.min(dim=1).values  # (B, G)
     return float(min_distances.sum(dim=-1).mean().item())
+
+
+def _compute_dist_to_opt_traj(
+    sampled_actions: torch.Tensor,
+    obs: torch.Tensor,
+    goal_frames,
+    pose_mode: str,
+    include_tracking_error: bool,
+) -> float:
+    """Endpoint excess distance to the four straight-line goal endpoints.
+
+    Args:
+        sampled_actions: Tensor of shape (B, S, T, D) containing denormalized pose chunks.
+        obs: Tensor of shape (B, W, obs_dim) containing denormalized observations.
+        goal_frames: Sequence of dicts with a 9D pose entry. Only XYZ is used here.
+        pose_mode: Action pose mode used to convert chunks into absolute pose.
+        include_tracking_error: Whether obs contains the 6D tracking-error slice.
+    """
+    if sampled_actions.ndim != 4 or obs.ndim != 3 or not goal_frames:
+        return float("nan")
+    if sampled_actions.shape[-1] < 3 or obs.shape[-1] < 30:
+        return float("nan")
+
+    cmd_start = 27 if include_tracking_error else 21
+    cmd_stop = cmd_start + sampled_actions.shape[-1]
+    if obs.shape[-1] < cmd_stop:
+        return float("nan")
+
+    goal_positions = []
+    for goal in goal_frames:
+        pose = goal.get("pose", None) if isinstance(goal, dict) else None
+        if pose is None:
+            continue
+        pose_arr = np.asarray(pose, dtype=np.float32).reshape(-1)
+        if pose_arr.shape[0] < 3:
+            continue
+        goal_positions.append(pose_arr[:3])
+
+    if len(goal_positions) == 0:
+        return float("nan")
+
+    # Convert relative/absolute sampled chunks into absolute commanded pose before measuring goal coverage.
+    sampled_np = sampled_actions.detach().cpu().numpy()
+    current_cmd_np = obs[:, -1, cmd_start:cmd_stop].detach().cpu().numpy()
+    sampled_abs_np = pose_chunks_for_plot(sampled_np, current_cmd_np[:, None, :], pose_mode)
+
+    endpoints = torch.as_tensor(
+        sampled_abs_np[:, :, -1, :3],
+        device=sampled_actions.device,
+        dtype=sampled_actions.dtype,
+    )  # (B, S, 3)
+    goals = torch.as_tensor(
+        np.stack(goal_positions, axis=0),
+        device=sampled_actions.device,
+        dtype=sampled_actions.dtype,
+    )  # (G, 3)
+
+    distances = torch.linalg.norm(endpoints.unsqueeze(2) - goals.unsqueeze(0).unsqueeze(0), dim=-1)  # (B, S, G)
+    min_distances = distances.min(dim=1).values  # (B, G)
+    return float(min_distances.mean(dim=-1).mean().item())
 
 
 class DefaultTask:
@@ -395,7 +481,7 @@ class DefaultTask:
         eval_plot_axis_limits=None,
         eval_plot_goal_frames=None,
         eval_plot_pose_mode: str = "absolute",
-        include_tracking_error: bool | None = None,
+        include_tracking_error: Optional[bool] = None,
         sweep_target_min_diversity: float = 0.02,
         sweep_target_min_kl: float = 0.5,
         sweep_diversity_penalty: float = 2.0,
@@ -426,6 +512,7 @@ class DefaultTask:
         self.eval_plot_axis_limits = eval_plot_axis_limits
         self.eval_plot_goal_frames = eval_plot_goal_frames
         self.eval_plot_pose_mode = str(eval_plot_pose_mode)
+        self.include_tracking_error = bool(include_tracking_error) if include_tracking_error is not None else True
         self.eval_plot_rpy_config = RPYPlotConfig(
             subtract_pi=bool(eval_plot_rpy_subtract_pi),
             subtract_pi_axis=int(eval_plot_rpy_subtract_pi_axis),
@@ -516,6 +603,7 @@ class BCTask(DefaultTask):
         sample_endpoint_diversity_vals = []
         sample_end_direction_diversity_vals = []
         goal_distance_sum_vals = []
+        dist_to_opt_traj_vals = []
         l2_per_joint_all = []
         chunk_mse_all = []
         accuracy_list = []
@@ -601,22 +689,30 @@ class BCTask(DefaultTask):
                     dtype=sampled_eval_actions.dtype,
                     device=sampled_eval_actions.device,
                 )
-                goal_distance_sum = _compute_goal_distance_sum(sampled_eval_actions_denorm, self.eval_plot_goal_frames)
-                if np.isfinite(goal_distance_sum):
-                    goal_distance_sum_vals.append(goal_distance_sum)
-                sample_end_direction_diversity = _compute_end_direction_diversity(sampled_eval_actions_denorm, mask)
-                if np.isfinite(sample_end_direction_diversity):
-                    sample_end_direction_diversity_vals.append(sample_end_direction_diversity)
-                sampled_eval_actions_denorm = _apply_grouped_transform(
-                    sampled_eval_actions.detach().cpu().numpy(),
-                    self._eval_plot_action_stats,
+                obs_denorm = _apply_grouped_transform(
+                    obs.detach().cpu().numpy(),
+                    self._eval_plot_state_stats,
                     inverse=True,
                 )
-                sampled_eval_actions_denorm = torch.as_tensor(
-                    sampled_eval_actions_denorm,
-                    dtype=sampled_eval_actions.dtype,
-                    device=sampled_eval_actions.device,
+                obs_denorm = torch.as_tensor(obs_denorm, dtype=obs.dtype, device=obs.device)
+                goal_distance_sum = _compute_goal_distance_sum(
+                    sampled_actions=sampled_eval_actions_denorm,
+                    obs=obs_denorm,
+                    goal_frames=self.eval_plot_goal_frames,
+                    pose_mode=self.eval_plot_pose_mode,
+                    include_tracking_error=self.include_tracking_error,
                 )
+                if np.isfinite(goal_distance_sum):
+                    goal_distance_sum_vals.append(goal_distance_sum)
+                dist_to_opt_traj = _compute_dist_to_opt_traj(
+                    sampled_actions=sampled_eval_actions_denorm,
+                    obs=obs_denorm,
+                    goal_frames=self.eval_plot_goal_frames,
+                    pose_mode=self.eval_plot_pose_mode,
+                    include_tracking_error=self.include_tracking_error,
+                )
+                if np.isfinite(dist_to_opt_traj):
+                    dist_to_opt_traj_vals.append(dist_to_opt_traj)
                 sample_end_direction_diversity = _compute_end_direction_diversity(sampled_eval_actions_denorm, mask)
                 if np.isfinite(sample_end_direction_diversity):
                     sample_end_direction_diversity_vals.append(sample_end_direction_diversity)
@@ -679,6 +775,7 @@ class BCTask(DefaultTask):
             np.mean(sample_end_direction_diversity_vals) if sample_end_direction_diversity_vals else float("nan")
         )
         mean_goal_distance_sum = np.mean(goal_distance_sum_vals) if goal_distance_sum_vals else float("nan")
+        mean_dist_to_opt_traj = np.mean(dist_to_opt_traj_vals) if dist_to_opt_traj_vals else float("nan")
         diversity_weights = {
             "sample": 1.0,
             "endpoint": 1.0,
@@ -731,8 +828,8 @@ class BCTask(DefaultTask):
             f"prior_H: {mean_prior_entropy:.4f}\tpost_H: {mean_posterior_entropy:.4f}\t"
             f"sample_div: {mean_sample_diversity:.4f}\tsweep_score: {sweep_score:.4f}\t"
             f"goal_min_sum: {mean_goal_distance_sum:.4f}\t"
+            f"dist_to_opt_traj: {mean_dist_to_opt_traj:.4f}\t"
             f"sample_endpoint_div: {mean_sample_endpoint_diversity:.4f}\t"
-            f"sample_end_direction_div: {mean_sample_end_direction_diversity:.4f}\t"
             f"sample_end_direction_div: {mean_sample_end_direction_diversity:.4f}\t"
             f"plot_steps: {len(selected_all_candidates)}\tplot_stride: {self.eval_plot_prediction_stride}\t"
             f"plot_samples: {self.eval_plot_num_samples}\tplot_label_counts: {plot_label_counts_str}"
@@ -750,6 +847,7 @@ class BCTask(DefaultTask):
                 "eval/sample_diversity_combined": mean_sample_diversity_combined,
                 "eval/sample_diversity": mean_sample_diversity,
                 "eval/goal_min_dist_sum": mean_goal_distance_sum,
+                "eval/dist_to_opt_traj": mean_dist_to_opt_traj,
                 "eval/prior_l1": mean_prior_l1,
                 "eval/prior_entropy": mean_prior_entropy,
                 "eval/posterior_l1": mean_val_loss,

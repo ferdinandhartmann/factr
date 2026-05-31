@@ -3,12 +3,12 @@
 ## Environment Setup
 ```bash
 conda env create -f env.yaml
-conda activate factr
+conda activate factr12
 ```
 
 ## When moving folder and the factr library doesnt work anymore:
 ```bash
-python -m pip uninstall -y factr
+python -m pip uninstall -y factr12
 python -m pip install -e .
 ```
 

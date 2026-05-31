@@ -12,88 +12,40 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     yaml = None
 
+###### Assigns goal based on list or last pose to closest preset goal.
 
 ROBOT_STATE_TOPIC = "/franka_robot_state_broadcaster/robot_state"
 
-# Folder containing .pkl files
-PKL_FOLDER = Path("~/activeinference/factr/process_data/data_to_process/fourgoals_2/data").expanduser()
+PKL_FOLDER = Path("~/activeinference/factr/process_data/data_to_process/fourgoals_2_soft/data").expanduser()
 
-# Configuration variables (replaces command-line arguments)
-# Set these at the top of the file to change behavior instead of using CLI args
+# Choose how each episode goal is assigned:
+# - "last_pose": use the final ee_pose and choose the closest preset goal.
+# - "list": use GOALS_LIST in sorted .pkl filename order.
+GOAL_ASSIGNMENT_MODE: str = "list"
+
 PRESET_PATH: Optional[Path] = None
 OUTPUT: str = "goal_assignments.json"
 TOP_K: int = 1
 W_POS: float = 1.0
 W_ROT: float = 1.0
 
-# Whether to update data files in place
+
 UPDATE_FILES: bool = True
 
-# Optional manual goal assignment for files ending with "_stiff.pkl".
-# If provided, goals are assigned in sorted filename order for stiff files.
+# Optional manual goal assignment in sorted .pkl filename order.
 # Example: ["goal_1", "goal_3", "goal_2"] or [1, 3, 2]
-STIFF_GOALS_LIST: Optional[List[Any]] = [
-    1,
-    4,
-    1,
-    3,
-    1,
-    4,
-    1,
-    4,
-    3,
-    2,
-    3,
-    1,
-    2,
-    1,
-    2,
-    4,
-    3,
-    4,
-    4,
-    1,
-    2,
-    1,
-    4,
-    3,
-    1,
-    4,
-    1,
-    3,
-    4,
-    4,
-    3,
-    2,
-    4,
-    4,
-    1,
-    3,
-    1,
-    1,
-    2,
-    3,
-    1,
-    3,
-    3,
-    2,
-    3,
-    1,
-    3,
-    2,
-    2,
-    2,
-    3,
-    3,
-    4,
-    1,
-    3,
-    2,
-    2,
-    2,
-    2,
-    2,
-]
+
+# fourgoals_2_stiff
+# GOALS_LIST: Optional[List[Any]] = [1,4,1,3,1,4,1,4,3,2,3,1,2,1,2,4,3,4,4,1,2,1,4,3,1,4,1,3,4,4,3,2,4,4,1,3,1,1,2,3,1,3,3,2,3,1,3,2,2,2,3,3,4,1,3,2,2,2,2,2]
+
+# fourgoals_2_soft
+# GOALS_LIST: Optional[List[Any]] = [3,1,3,1,2,2,4,4,3,3,1,2,2,3,2,1,1,1,4,4,3,1,1,4,3,4,4,4,1,3,3,1,1,3,2,4,1,1,2,4,2,1,1,4,3,4,3,3,3,4,2,1,4,3,4,2,2,2,4,1]
+
+# fourgoals_3_stiff
+# GOALS_LIST: Optional[List[Any]] = [3,1,4,1,4,2,2,4,4,4,3,3,3,3,1,2,4,1,1,4,1,2,3,3,2,1,1,4,2,1,4,2,4,1,2,1,3,2,2,2,3,3,3,1,4]
+
+# fourgoals_4_stiff
+# GOALS_LIST: Optional[List[int]] = [3,1,1,1,4,3,3,2,3,2,4,2,2,1,3,4,1,1,2,2,1,4,4,4,3,1,3,4,3,1,1,2,4,3,3,3,2,1,3,4,2,4,3,2,1,2,2,4,4,1,2,1,2,3,1,3,4,2,4,4]
 
 
 def _rot6d_to_rotmat(rot6d: List[float]) -> np.ndarray:
@@ -212,27 +164,36 @@ def _format_goal_name(goal_name: Any) -> str:
     return str(goal_name)
 
 
-def _is_stiff_file(path: Path) -> bool:
-    return path.name.endswith("_stiff.pkl")
-
-
-def _goal_from_stiff_list(
-    path: Path, stiff_file_order: List[Path], stiff_goals_list: Optional[List[Any]]
-) -> Optional[Any]:
-    if not _is_stiff_file(path):
-        return None
-    if stiff_goals_list is None:
+def _goal_from_ordered_list(path: Path, file_order: List[Path], goals_list: Optional[List[Any]]) -> Optional[Any]:
+    if goals_list is None:
         return None
     try:
-        idx = stiff_file_order.index(path)
+        idx = file_order.index(path)
     except ValueError as exc:
-        raise ValueError(f"Stiff file not found in stiff ordering: {path.name}") from exc
-    if idx >= len(stiff_goals_list):
+        raise ValueError(f"File not found in sorted pkl ordering: {path.name}") from exc
+    if idx >= len(goals_list):
         raise ValueError(
-            f"STIFF_GOALS_LIST has {len(stiff_goals_list)} entries but needs at least {len(stiff_file_order)} "
-            f"for stiff files. Missing assignment for {path.name}."
+            f"GOALS_LIST has {len(goals_list)} entries but needs at least {len(file_order)} "
+            f"for pkl files. Missing assignment for {path.name}."
         )
-    return stiff_goals_list[idx]
+    return goals_list[idx]
+
+
+def _choose_goal_assignment(
+    mode: str,
+    pkl_path: Path,
+    pkl_order: List[Path],
+    goals_list: Optional[List[Any]],
+    closest: List[Dict[str, Any]],
+) -> Any:
+    if mode == "list":
+        goal_index = _goal_from_ordered_list(pkl_path, pkl_order, goals_list)
+        if goal_index is None:
+            raise ValueError("GOAL_ASSIGNMENT_MODE is 'list' but GOALS_LIST is None")
+        return goal_index
+    if mode == "last_pose":
+        return closest[0]["index"]
+    raise ValueError("GOAL_ASSIGNMENT_MODE must be 'last_pose' or 'list'")
 
 
 def _inject_goal_entries_after_steps(data_list: List[Any], goal_name: str) -> int:
@@ -365,7 +326,8 @@ def main() -> None:
     w_pos = W_POS
     w_rot = W_ROT
     update_files = UPDATE_FILES
-    stiff_goals_list = STIFF_GOALS_LIST
+    assignment_mode = GOAL_ASSIGNMENT_MODE
+    goals_list = GOALS_LIST
 
     folder = PKL_FOLDER
     if not folder.exists() or not folder.is_dir():
@@ -383,10 +345,18 @@ def main() -> None:
         preset_9d.append({"index": p["index"], "pose": np.array(pose_9d, dtype=np.float64)})
 
     all_pkl_paths = sorted(folder.glob("*.pkl"))
-    stiff_file_order = [p for p in all_pkl_paths if _is_stiff_file(p)]
+    print(f"Found {len(all_pkl_paths)} target .pkl files in {folder}")
+    if not all_pkl_paths:
+        print("WARNING: No .pkl files found. No files were changed and no assignments file was saved.")
+        return
+
+    if assignment_mode == "list" and goals_list is not None and len(goals_list) != len(all_pkl_paths):
+        raise SystemExit(f"GOALS_LIST has {len(goals_list)} entries, but {len(all_pkl_paths)} .pkl files were found.")
 
     results = []
+    successful_updates = 0
     for pkl_path in all_pkl_paths:
+        print(f"Processing {pkl_path.name} ...")
         try:
             pkl_data = _load_pkl(pkl_path)
             ee_pose = _get_last_ee_pose(pkl_data)
@@ -399,12 +369,17 @@ def main() -> None:
 
             distances.sort(key=lambda x: x["distance"])
             closest = distances[: max(1, top_k)]
-            manual_goal = _goal_from_stiff_list(pkl_path, stiff_file_order, stiff_goals_list)
-            if manual_goal is not None:
-                goal_index = manual_goal
-                closest = [{"index": manual_goal, "distance": None, "source": "manual_stiff_list"}]
+            goal_index = _choose_goal_assignment(
+                assignment_mode,
+                pkl_path,
+                all_pkl_paths,
+                goals_list,
+                closest,
+            )
+            if assignment_mode == "list":
+                closest = [{"index": goal_index, "distance": None, "source": "list"}]
             else:
-                goal_index = closest[0]["index"]
+                closest[0]["source"] = "last_pose"
             updated_counts = {}
 
             if update_files:
@@ -420,6 +395,14 @@ def main() -> None:
                         _save_structured_file(structured_path, structured_data)
                         updated_counts[structured_path.suffix.lstrip(".") + "_entries"] = structured_count
 
+            if updated_counts and any(count > 0 for count in updated_counts.values()):
+                successful_updates += 1
+                print(f"  success: assigned goal {_format_goal_name(goal_index)} with {updated_counts}")
+            elif update_files:
+                print(f"  warning: assigned goal {_format_goal_name(goal_index)}, but no goal entries were added")
+            else:
+                print(f"  dry-run: assigned goal {_format_goal_name(goal_index)}")
+
             results.append(
                 {
                     "file": pkl_path.name,
@@ -429,7 +412,12 @@ def main() -> None:
                 }
             )
         except Exception as exc:
+            print(f"  error: {exc}")
             results.append({"file": pkl_path.name, "error": str(exc)})
+
+    if update_files and successful_updates == 0:
+        print("WARNING: No files were successfully updated. Assignments file was not saved.")
+        return
 
     # Compute summary counts: primary assigned goal (closest[0]) per file
     summary_counts: Dict[str, int] = {}
@@ -437,7 +425,8 @@ def main() -> None:
         if "closest_goal" in r and isinstance(r["closest_goal"], list) and len(r["closest_goal"]) > 0:
             index = r["closest_goal"][0].get("index")
             if index is not None:
-                summary_counts[index] = summary_counts.get(index, 0) + 1
+                goal_name = _format_goal_name(index)
+                summary_counts[goal_name] = summary_counts.get(goal_name, 0) + 1
 
     # Append summary to results and save
     results.append({"summary": summary_counts})
@@ -448,6 +437,8 @@ def main() -> None:
 
     # Print the summary to stdout
     print(f"Saved assignments to {output_path}")
+    if update_files:
+        print(f"Successfully updated {successful_updates}/{len(all_pkl_paths)} files.")
     print("Summary counts per goal:")
     for name, cnt in summary_counts.items():
         print(f"  {name}: {cnt}")

@@ -34,13 +34,13 @@ def normalize_sweep_goal(raw_goal: str) -> str:
     raise ValueError(f"Unsupported SWEEP_GOAL={raw_goal!r}. Use 'minimize' or 'maximize'.")
 
 
-PROJECT = os.environ.get("WANDB_PROJECT", "aifact_sweep_finaleval_2")
+PROJECT = os.environ.get("WANDB_PROJECT", "aifact_sweep_finaleval_10")
 ENTITY = os.environ.get("WANDB_ENTITY", "")
 SWEEP_METRIC = os.environ.get("SWEEP_METRIC", "eval/goal_min_dist_sum")
 SWEEP_GOAL = normalize_sweep_goal(os.environ.get("SWEEP_GOAL", "minimize"))
 
-GPU_IDS = tuple(int(item.strip()) for item in os.environ.get("GPU_IDS", "0,2").split(",") if item.strip())
-AGENTS_PER_GPU = int(os.environ.get("AGENTS_PER_GPU", "2"))
+GPU_IDS = tuple(int(item.strip()) for item in os.environ.get("GPU_IDS", "0,1,2").split(",") if item.strip())
+AGENTS_PER_GPU = int(os.environ.get("AGENTS_PER_GPU", "3"))
 AGENT_MAX_RUNS_PER_WORKER = os.environ.get("AGENT_MAX_RUNS_PER_WORKER", "").strip()
 
 GRID_MAX_STEPS = int(os.environ.get("GRID_MAX_STEPS", "10000"))
@@ -57,6 +57,7 @@ class StageConfig:
     sweep_name: str
     max_steps: int
     latent_distribution: str
+    dataset_tag: str
     dataset_name: str
     pose_mode: str
     d_z_values: Tuple[int, ...] = ()
@@ -64,9 +65,13 @@ class StageConfig:
 
 
 DATASET_CONFIGS: Tuple[Tuple[str, str, str], ...] = (
-    ("abs", "fourgoals_2_allgauss_noclip_cmdinput", "absolute"),
-    ("rel", "fourgoals_2_allgauss_noclip_cmdinput_rel", "relative_timesteps"),
+    ("fg2abs", "fourgoals_2_allgauss_noclip_cmdinput", "absolute"),
+    ("fg2rel", "fourgoals_2_allgauss_noclip_cmdinput_rel", "relative_timesteps"),
+    # Per-dimension normalized dataset variants.
+    ("fg23abs", "fourgoals_23_allgauss_noclip_cmdinput_abs_perdim", "absolute"),
+    ("fg23rel", "fourgoals_23_allgauss_noclip_cmdinput_rel_perdim", "relative_timesteps"),
 )
+
 
 GAUSSIAN_STAGES: Tuple[StageConfig, ...] = tuple(
     StageConfig(
@@ -74,6 +79,7 @@ GAUSSIAN_STAGES: Tuple[StageConfig, ...] = tuple(
         sweep_name=f"factr-lowdim-gaussian-grid-prior-{tag}",
         max_steps=GRID_MAX_STEPS,
         latent_distribution="gaussian",
+        dataset_tag=tag,
         dataset_name=dataset_name,
         pose_mode=pose_mode,
         d_z_values=(4, 8, 16),
@@ -82,7 +88,7 @@ GAUSSIAN_STAGES: Tuple[StageConfig, ...] = tuple(
 )
 
 CATEGORICAL_COMBOS: Tuple[Tuple[int, int, int], ...] = (
-    (2, 2, 4),
+    # (2, 2, 4),
     (4, 2, 8),
     (4, 4, 16),
 )
@@ -146,10 +152,11 @@ def _base_parameters(stage: StageConfig) -> Dict[str, Any]:
     params: Dict[str, Any] = {
         "max_iterations": {"value": int(stage.max_steps)},
         "seed": {"value": 42},
+        "sweep_pose_tag": {"value": stage.dataset_tag},
         "dataset_name": {"value": stage.dataset_name},
         "action_chunk_mode": {"value": stage.pose_mode},
         "eval_plot_pose_mode": {"value": stage.pose_mode},
-        "obs_window": {"values": [1, 2, 4, 12]},
+        "obs_window": {"values": [4]},
         "agent.fixed_prior": {"values": [True, False]},
         "agent.beta": {"values": [0.001, 0.005, 0.01]},
     }
@@ -192,7 +199,7 @@ def build_sweep_config(stage: StageConfig) -> Tuple[Dict[str, Any], int]:
             f"hydra.run.dir={hydra_dir}",
             f"wandb.project={PROJECT}",
             f"wandb.group=sweep_{stage.name}",
-            "exp_name=ld_${agent.latent_distribution}_dz${agent.d_z}_beta${agent.beta}_obs${obs_window}_prior${agent.fixed_prior}_${dataset_name}",
+            "exp_name=ld_${agent.latent_distribution}_dz${agent.d_z}_beta${agent.beta}_obs${obs_window}_prior${agent.fixed_prior}_${sweep_pose_tag}",
             "${args_no_hyphens}",
         ],
         "parameters": parameters,
@@ -495,6 +502,7 @@ def main() -> None:
             sweep_name=f"factr-lowdim-categorical-{num_vars}x{num_cats}-grid-prior-{tag}",
             max_steps=GRID_MAX_STEPS,
             latent_distribution="categorical",
+            dataset_tag=tag,
             dataset_name=dataset_name,
             pose_mode=pose_mode,
             categorical_combo=(num_vars, num_cats, d_z),
@@ -506,12 +514,20 @@ def main() -> None:
     RESULTS_ROOT.mkdir(parents=True, exist_ok=True)
     install_signal_handlers()
 
+    # Every dataset config is expanded into gaussian and categorical sweep stages.
     stages = [*gaussian_stages, *categorical_stages]
+    print(f"Planned {len(stages)} sweep stages across {len(DATASET_CONFIGS)} datasets:")
+    for stage in stages:
+        print(
+            f"  {stage.name}: latent={stage.latent_distribution} "
+            f"dataset={stage.dataset_name} pose={stage.pose_mode}"
+        )
+
     try:
         for stage in stages:
             run_stage(stage)
         write_overall_best_summary(stages)
-        print("Two-stage article-style sweep finished.")
+        print("Lowdim article-style sweep finished.")
     finally:
         cleanup_processes()
 

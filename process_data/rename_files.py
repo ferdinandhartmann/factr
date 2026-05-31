@@ -2,10 +2,10 @@ import os
 import re
 from pathlib import Path
 
-folder = Path("/home/ferdinand/activeinference/factr/process_data/data_to_process/20251107/data")
-prefix = "data_log_"  # current prefix of the files
+folder = Path("/home/ferdinand/activeinference/factr/process_data/data_to_process/fourgoals_3_stiff/data")
+prefix = "ep_"  # current prefix of the files
 exts = [".pkl"]
-pad = 1  # how many digits: ep_01, ep_02, ...
+pad = 2  # how many digits: ep_01, ep_02, ...
 
 
 # --- 1️⃣ find all episode numbers ---

@@ -1,6 +1,9 @@
 
-input_path: /home/ferdinand/activeinference/factr/process_data/data_to_process/fourgoals_12/data
-output_path: /home/ferdinand/activeinference/factr/process_data/processed_data/fourgoals_12_allgauss_noclip_cmdinput_rel
+input_paths:
+  - /home/ferdinand/activeinference/factr/process_data/data_to_process/fourgoals_2_soft/data
+  # - /home/ferdinand/activeinference/factr/process_data/data_to_process/fourgoals_2_stiff/data
+  - /home/ferdinand/activeinference/factr/process_data/data_to_process/fourgoals_4_stiff/data
+output_path: /home/ferdinand/activeinference/factr/process_data/processed_data/fourgoals_2soft4_allgauss_noclip_cmdinput_abs_perdim
 
 downsample: False
 data_frequency: 50.0
@@ -19,6 +22,13 @@ obs_topics:
 # Normalization
 # Explicit pose topic for grouped normalization (must be present in `obs_topics`)
 pose_topic: /franka_robot_state_broadcaster/robot_state
+# Pose normalization only changes 9D pose-like features:
+# measured EE pose, commanded pose in observations, and commanded pose actions.
+# per_dim: every pose dim gets its own std.
+# group_shared: xyz share one position std, and rot6d dims share one rotation std.
+# Other features still use their own normalization: velocity, tracking error, wrench, goals, stiffness labels.
+pose_normalization_mode: per_dim
+
 pose_clip: 0.0           # set 0 to disable clipping (for observations and actions)
 velocity_clip: 0.0       # set 0 to disable clipping
 tracking_error_clip: 0.0 # set 0 to disable clipping (after Gaussian normalization)
@@ -27,7 +37,7 @@ wrench_clip: 0.0         # set 0 to disable clipping
 action_config:
   # Commanded EE pose: 9D = [x,y,z] + 6D rotation representation
   /cartesian_impedance_controller/pose_command: 9
-action_pose_mode: relative  # absolute: raw pose_command, relative: pose_command[t]-pose_command[t-1] with t0=zeros
+action_pose_mode: absolute  # absolute: raw pose_command, relative: pose_command[t]-pose_command[t-1] with t0=zeros
 
 # Stiffness class extraction for observation (class=1: (low stiffness)) 
 stiffness_label_topic: /cartesian_impedance_gains
