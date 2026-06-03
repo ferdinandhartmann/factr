@@ -329,11 +329,10 @@ class LowdimStiffnessCVAEAgent(nn.Module):
             if labels.shape[0] != batch_size:
                 expected = f"({batch_size},) or ({batch_size}, {self.stiffness_classes})"
                 raise ValueError(f"Expected class labels with shape {expected}, got {tuple(class_labels.shape)}.")
-        # Scalars may be saved as 1..C in buffers or passed as 0..C-1; both become one-hot here.
-        if torch.min(labels) >= 1:
-            labels = labels - 1
-        labels = labels.clamp(min=0, max=self.stiffness_classes - 1)
-        return F.one_hot(labels, num_classes=self.stiffness_classes).to(dtype=dtype)
+        # Scalar stiffness labels are 1-based at the data/API boundary, then shifted for one-hot.
+        if torch.any((labels < 1) | (labels > self.stiffness_classes)):
+            raise ValueError(f"Expected 1-based stiffness labels in [1, {self.stiffness_classes}].")
+        return F.one_hot(labels - 1, num_classes=self.stiffness_classes).to(dtype=dtype)
 
     def _prepare_obs(self, obs):
         if obs.ndim != 3:

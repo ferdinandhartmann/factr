@@ -14,7 +14,7 @@ hydra:
 dataset_project_prefix: aifact_
 dataset_name: fourgoals_24_allgauss_noclip_cmdinput_rel_perdim #fourgoals_2_allgauss_noclip_cmdinput_rel
 sweep_pose_tag: rel
-# Stiffness conditioning accepts scalar labels (1..C or 0..C-1) and direct one-hot vectors (B, C).
+# Stiffness conditioning accepts 1-based scalar labels (1..C) or direct one-hot vectors (B, C).
 stiffness_classes: 2
 include_tracking_error: false # if false, atuomatically reduces obs_dim -6
 
