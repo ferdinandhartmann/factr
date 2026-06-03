@@ -6,21 +6,22 @@ defaults:
 
 hydra:
   run:
-    dir: /home/ferdinand/activeinference/factr/checkpoints/${dataset_project_prefix}${dataset_name}/${exp_name}
+    dir: /home/ferdinand/activeinference/factr/checkpoints/${dataset_project_prefix}fourgoals_24_allgauss_noclip_cmdinput_rel_perdim/${exp_name}
   job:
     env_set:
       CUDA_VISIBLE_DEVICES: "2"
 
 dataset_project_prefix: aifact_
-dataset_name: fourgoals_23_allgauss_noclip_cmdinput_rel_perdim #fourgoals_2_allgauss_noclip_cmdinput_rel
+dataset_name: fourgoals_24_allgauss_noclip_cmdinput_rel_perdim #fourgoals_2_allgauss_noclip_cmdinput_rel
 sweep_pose_tag: rel
+# Stiffness conditioning accepts scalar labels (1..C or 0..C-1) and direct one-hot vectors (B, C).
 stiffness_classes: 2
 include_tracking_error: false # if false, atuomatically reduces obs_dim -6
 
 buffer_path: /home/ferdinand/activeinference/factr/process_data/processed_data/${dataset_name}/buf_train.pkl
 test_buffer_path: /home/ferdinand/activeinference/factr/process_data/processed_data/${dataset_name}/buf_test.pkl
 
-exp_name: c_fp_b001_v4k4_ct1_klb5_obs4_65
+exp_name: c_fp_b002_v4k4_ct1_klb5_obs4
 
 batch_size: 180
 num_workers: 4
@@ -31,7 +32,7 @@ devices: 1
 seed: 42
 resume: false
 
-ac_chunk: 65
+ac_chunk: 60
 obs_window: 4
 action_chunk_mode: relative_timesteps  # Choices: absolute, relative_timesteps, relative_chunks
 eval_plot_pose_mode: relative_timesteps  # Choices: absolute, relative_timesteps, relative_chunks
@@ -56,7 +57,7 @@ diversity_debug: false
 
 wandb:
   name: ${exp_name}
-  project: ${dataset_project_prefix}${dataset_name}
+  project: ${dataset_project_prefix}fourgoals_24_allgauss_noclip_cmdinput_rel_perdim
   group: bc
   debug: False
   entity: None

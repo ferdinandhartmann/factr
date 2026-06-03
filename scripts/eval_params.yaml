@@ -1,8 +1,8 @@
 shared:
-  dataset_name: fourgoals_2
-  dataset_project_prefix: f
-  buffer_set_name: ourgoals_2
-  run_name: categ_n_b0005_v8k8
+  dataset_name: fourgoals_24_allgauss_noclip_cmdinput_rel_perdim
+  dataset_project_prefix: aifact_
+  buffer_set_name: auto
+  run_name: c_fp_b004_v4k2_ct1_klb5_obs4_65
   
   checkpoint_name: latest_ckpt.ckpt
   normalization_mode: apply # options: skip, apply, #
@@ -14,6 +14,25 @@ shared:
   list_episodes_only: false
   
   episode_lists:
+    aifact_fourgoals_24_allgauss_noclip_cmdinput_rel_perdim:
+      # - fourgoals_2_soft/ep_06_soft
+      # - fourgoals_2_soft/ep_25_soft
+      # - fourgoals_2_soft/ep_29_soft
+      # - fourgoals_2_soft/ep_34_soft
+      # - fourgoals_2_soft/ep_36_soft
+      # - fourgoals_2_soft/ep_38_soft
+      # - fourgoals_2_soft/ep_41_soft
+      # - fourgoals_2_soft/ep_42_soft
+      # - fourgoals_2_soft/ep_45_soft
+      # - fourgoals_2_stiff/ep_08_stiff
+      # - fourgoals_2_stiff/ep_21_stiff
+      # - fourgoals_2_stiff/ep_25_stiff
+      # - fourgoals_2_stiff/ep_29_stiff
+      # - fourgoals_2_stiff/ep_55_stiff
+      # - fourgoals_4_stiff/ep_34_stiff
+      - fourgoals_4_stiff/ep_44_stiff
+      # - fourgoals_4_stiff/ep_48_stiff
+      # - fourgoals_4_stiff/ep_57_stiff
     aifact_fourgoals_2:
       # - ep_03_soft
       # - ep_13_stiff
@@ -114,7 +133,7 @@ shared:
 eval_single_episode_lowdim:
   num_samples: 30
   action_source: prior # options: prior, posterior
-  prediction_stride: 40
+  prediction_stride: 50
   view_elev: 24
   view_azim: -60
   show_plot: false # shows also 3d plot
@@ -135,9 +154,9 @@ eval_single_episode_lowdim:
     - name: goal 2
       pose: [0.524, 0.226, 0.381, 1.000, 0.013, 0.025, 0.013, -1.000, 0.004]
     - name: goal 3
-      pose: [0.591, -0.336, -0.038, 0.907, -0.421, 0.037, -0.421, -0.907, 0.006]
-    - name: goal 4
       pose: [0.439, -0.239, -0.043, 0.905, -0.425, 0.023, -0.426, -0.904, 0.028]
+    - name: goal 4
+      pose: [0.591, -0.336, -0.038, 0.907, -0.421, 0.037, -0.421, -0.907, 0.006]
 
 eval_z_distr:
   save_dir_override: null

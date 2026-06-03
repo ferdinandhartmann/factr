@@ -42,9 +42,10 @@ def _materialize_globals(config_path: Path):
     cfg = _load_script_config(config_path)
     dataset_name = cfg["dataset_name"]
     dataset_project_prefix = cfg["dataset_project_prefix"]
-    buffer_set_name = cfg["buffer_set_name"]
+    buffer_set_name = str(cfg["buffer_set_name"])
     run_name = cfg["run_name"]
-    key = f"{dataset_project_prefix}{buffer_set_name}"
+    project_name = dataset_name if buffer_set_name.strip().lower() == "auto" else buffer_set_name
+    key = f"{dataset_project_prefix}{project_name}"
     episode_list = list(cfg["episode_lists"].get(key, []))
 
     return {
@@ -139,15 +140,97 @@ def _load_rollout_config(rollout_config_path: Path):
         return yaml.safe_load(f)
 
 
-def _get_split_label(rollout_cfg: Dict, episode_name: str) -> str:
+def _normalize_rollout_episode_id(episode_id: str) -> str:
+    episode_id = str(episode_id).strip()
+    if episode_id.endswith(".pkl"):
+        episode_id = episode_id[:-4]
+    return episode_id.strip("/")
+
+
+def _get_split_label(rollout_cfg: Dict, episode_id: str) -> str:
+    episode_id = _normalize_rollout_episode_id(episode_id)
+    episode_stem = episode_id.rsplit("/", 1)[-1]
     split_cfg = rollout_cfg.get("split_config", {}) if isinstance(rollout_cfg, dict) else {}
-    train_eps = set(split_cfg.get("train_episodes", []) or [])
-    test_eps = set(split_cfg.get("test_episodes", []) or [])
-    if episode_name in test_eps:
+    train_eps = {_normalize_rollout_episode_id(ep) for ep in split_cfg.get("train_episodes", []) or []}
+    test_eps = {_normalize_rollout_episode_id(ep) for ep in split_cfg.get("test_episodes", []) or []}
+    if episode_id in test_eps or episode_stem in test_eps:
         return "test"
-    if episode_name in train_eps:
+    if episode_id in train_eps or episode_stem in train_eps:
         return "train"
     return "unknown"
+
+
+def _get_required_split_episodes(rollout_cfg: Dict, split_name: str) -> List[str]:
+    split_cfg = rollout_cfg.get("split_config", {}) if isinstance(rollout_cfg, dict) else {}
+    episodes = split_cfg.get(f"{split_name}_episodes", []) or []
+    if not episodes:
+        raise ValueError(
+            "Auto episode selection requires rollout_config.yaml split_config "
+            f"with non-empty {split_name}_episodes."
+        )
+    return [_normalize_rollout_episode_id(ep) for ep in episodes]
+
+
+def _build_rollout_raw_dirs(rollout_cfg: Dict, fallback_raw_episode_dir: Path) -> Dict[str, Path]:
+    processing_cfg = rollout_cfg.get("processing_config", {}) if isinstance(rollout_cfg, dict) else {}
+    input_paths = processing_cfg.get("input_paths", []) or []
+    raw_dirs: Dict[str, Path] = {}
+
+    for raw_path in input_paths:
+        data_dir = Path(raw_path).expanduser()
+        dataset_dir = data_dir.parent if data_dir.name == "data" else data_dir
+        key = dataset_dir.name
+        raw_dirs[key] = data_dir
+
+    if not raw_dirs and fallback_raw_episode_dir is not None:
+        data_dir = Path(fallback_raw_episode_dir)
+        dataset_dir = data_dir.parent if data_dir.name == "data" else data_dir
+        raw_dirs[dataset_dir.name] = data_dir
+
+    return raw_dirs
+
+
+def _list_rollout_episode_files(raw_dirs: Dict[str, Path]) -> List[Tuple[str, Path]]:
+    episodes: List[Tuple[str, Path]] = []
+    for dataset_name, data_dir in sorted(raw_dirs.items()):
+        if not data_dir.exists():
+            raise FileNotFoundError(f"Raw dataset folder from rollout_config not found: {data_dir}")
+        for path in _list_episode_files(data_dir):
+            episodes.append((f"{dataset_name}/{path.stem}", path))
+    return sorted(episodes, key=lambda item: (item[0].rsplit("/", 1)[0], _extract_ep_index(item[1])))
+
+
+def _resolve_rollout_episode(episode_id: str, raw_dirs: Dict[str, Path]) -> Tuple[str, Path]:
+    episode_id = _normalize_rollout_episode_id(episode_id)
+    if "/" in episode_id:
+        dataset_name, episode_stem = episode_id.rsplit("/", 1)
+        if dataset_name not in raw_dirs:
+            known = ", ".join(sorted(raw_dirs.keys()))
+            raise FileNotFoundError(f"Dataset '{dataset_name}' not found in rollout input_paths. Known datasets: {known}")
+        path = raw_dirs[dataset_name] / f"{episode_stem}.pkl"
+        if not path.exists():
+            raise FileNotFoundError(f"Episode not found: {path}")
+        return f"{dataset_name}/{episode_stem}", path
+
+    matches = []
+    for dataset_name, data_dir in raw_dirs.items():
+        path = data_dir / f"{episode_id}.pkl"
+        if path.exists():
+            matches.append((f"{dataset_name}/{episode_id}", path))
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        found = ", ".join(ep_id for ep_id, _ in matches)
+        raise ValueError(f"Episode name '{episode_id}' is ambiguous across rollout datasets: {found}")
+    raise FileNotFoundError(f"Episode '{episode_id}' not found in rollout input_paths.")
+
+
+def _resolve_rollout_episodes(episode_ids: List[str], raw_dirs: Dict[str, Path]) -> List[Tuple[str, Path]]:
+    return [_resolve_rollout_episode(ep, raw_dirs) for ep in episode_ids]
+
+
+def _plot_file_stem(episode_id: str) -> str:
+    return _normalize_rollout_episode_id(episode_id).replace("/", "_")
 
 
 def _resolve_train_buffer_path(rollout_cfg: Dict, buffer_path: Path) -> Path:
@@ -428,6 +511,25 @@ def _load_raw_episode_to_arrays(episode_file: Path, rollout_cfg) -> Dict:
     return {"states": states, "actions": actions, "episode_label": int(episode_label), "num_steps": int(num_steps)}
 
 
+def _load_raw_background_trajectories(episode_items: List[Tuple[str, Path]], rollout_cfg: Dict) -> List[np.ndarray]:
+    background = []
+    for episode_id, episode_path in episode_items:
+        try:
+            raw_ep = _load_raw_episode_to_arrays(episode_path, rollout_cfg)
+        except Exception as exc:
+            print(f"Skipping background episode {episode_id}: {exc}")
+            continue
+
+        # Raw pose-command episodes are already in the plotting frame; keep only
+        # pose dimensions for the faint train-set background overlay.
+        actions = np.asarray(raw_ep["actions"], dtype=np.float32)
+        if actions.ndim != 2 or actions.shape[0] == 0:
+            continue
+        pose_dim = min(9, actions.shape[-1])
+        background.append(actions[:, :pose_dim])
+    return background
+
+
 def _build_eval_samples_from_raw_episode(states, actions, episode_label: int, obs_window: int, ac_chunk: int, action_index_offset: int):
     if states.ndim != 2 or actions.ndim != 2:
         raise ValueError(f"Expected 2D states/actions, got states={states.shape} actions={actions.shape}")
@@ -606,7 +708,9 @@ def main():
         plot_pose_mode = "relative_timesteps" if action_chunk_mode == "relative_timesteps" else "absolute"
     print(f"Eval config | action_chunk_mode={action_chunk_mode} eval_plot_pose_mode={plot_pose_mode}")
     buffer_path = Path(cfg.test_buffer_path)
-    rollout_config_path = (buffer_path.parent / "rollout_config.yaml")
+    rollout_config_path = run_dir / "rollout_config.yaml"
+    if not rollout_config_path.exists():
+        rollout_config_path = buffer_path.parent / "rollout_config.yaml"
     rollout_cfg = _load_rollout_config(rollout_config_path)
     state_stats = rollout_cfg.get("norm_stats", {}).get("state", None)
     action_stats = rollout_cfg.get("norm_stats", {}).get("action", None)
@@ -615,26 +719,38 @@ def main():
     if not buffer_path.exists():
         raise FileNotFoundError(f"buffer not found: {buffer_path}")
 
-    # print(f"Using buffer: {buffer_path}")
-    # print(f"Using rollout config: {rollout_config_path}")
-    # print(f"Using run dir: {run_dir}")
+    auto_buffer_set = str(BUFFER_SET_NAME).strip().lower() == "auto"
+    raw_dirs = _build_rollout_raw_dirs(rollout_cfg, raw_episode_dir)
+    if not raw_dirs:
+        raise ValueError("No raw dataset folders found. Expected rollout_config.processing_config.input_paths.")
+    all_episode_items = _list_rollout_episode_files(raw_dirs)
 
-    if not raw_episode_dir.exists():
-        raise FileNotFoundError(f"RAW_EPISODE_DIR not found: {raw_episode_dir}")
-    episode_files = _list_episode_files(raw_episode_dir)
     if list_episodes_only:
-        print(f"Available raw episodes in: {raw_episode_dir}")
-        for i, p in enumerate(episode_files):
-            print(f"  [{i:03d}] {p.name}")
+        if auto_buffer_set:
+            print(f"Test episodes from rollout split: {rollout_config_path}")
+            for i, ep_id in enumerate(_get_required_split_episodes(rollout_cfg, "test")):
+                _, ep_path = _resolve_rollout_episode(ep_id, raw_dirs)
+                print(f"  [{i:03d}] {ep_id} -> {ep_path}")
+        else:
+            print("Available raw episodes from rollout input folders:")
+            for i, (ep_id, ep_path) in enumerate(all_episode_items):
+                print(f"  [{i:03d}] {ep_id} -> {ep_path}")
         return
 
     if USE_EPISODE_LIST and episode_list:
-        selected = []
-        for name in episode_list:
-            fname = name if name.endswith(".pkl") else f"{name}.pkl"
-            selected.append(_select_episode_file(episode_files, fname, episode_index))
+        selected = _resolve_rollout_episodes([str(name) for name in episode_list], raw_dirs)
+    elif auto_buffer_set:
+        selected = _resolve_rollout_episodes(_get_required_split_episodes(rollout_cfg, "test"), raw_dirs)
     else:
-        selected = [_select_episode_file(episode_files, episode_file_name, episode_index)]
+        if not raw_episode_dir.exists():
+            raise FileNotFoundError(f"RAW_EPISODE_DIR not found: {raw_episode_dir}")
+        episode_files = _list_episode_files(raw_episode_dir)
+        selected_path = _select_episode_file(episode_files, episode_file_name, episode_index)
+        selected = [(_normalize_rollout_episode_id(selected_path.stem), selected_path)]
+
+    print(f"Using run dir: {run_dir}")
+    print(f"Using rollout config: {rollout_config_path}")
+    print(f"Selected evaluation episodes: {len(selected)}")
 
     train_background = None
     if ENABLE_TRAIN_BACKGROUND:
@@ -644,9 +760,12 @@ def main():
             print(f"Loaded train background trajectories: {len(train_background)} | {train_buf_path}")
         else:
             print(f"Train buffer not found for background: {train_buf_path}")
+            train_items = _resolve_rollout_episodes(_get_required_split_episodes(rollout_cfg, "train"), raw_dirs)
+            train_background = _load_raw_background_trajectories(train_items, rollout_cfg)
+            print(f"Loaded train background trajectories from raw split: {len(train_background)}")
 
-    for episode_file in selected:
-        print(f"Selected episode file: {episode_file}")
+    for episode_id, episode_file in selected:
+        print(f"Selected episode file: {episode_id} -> {episode_file}")
 
         raw_ep = _load_raw_episode_to_arrays(episode_file, rollout_cfg)
         raw_actions = raw_ep["actions"]
@@ -726,7 +845,8 @@ def main():
         mask_first = mask_arr[:, 0, :pose_dim]
 
         episode_name = episode_file.stem
-        split_label = _get_split_label(rollout_cfg, episode_name)
+        output_stem = _plot_file_stem(episode_id)
+        split_label = _get_split_label(rollout_cfg, episode_id)
         out_suffix = "episode_eval_test" if split_label == "test" else "episode_eval_train"
         if out_dir_override is None:
             out_dir = run_dir.parent / out_suffix
@@ -756,7 +876,7 @@ def main():
         #     mask=mask_first,
         #     title=f"Episode {episode_file.name} | Ground Truth vs {action_source_title} Prediction vs Measured Pose",
         # )
-        # pose_path = out_dir / f"{episode_file.stem}_pred_firststeps.png"
+        # pose_path = out_dir / f"{output_stem}_pred_firststeps.png"
         # fig_pose.savefig(pose_path, dpi=300, bbox_inches="tight")
         # print(f"Saved: {pose_path}")
         # plt.close(fig_pose)
@@ -771,9 +891,9 @@ def main():
             action_source=action_source,
             background_actions=(train_background if (ENABLE_TRAIN_BACKGROUND and train_background) and (not TRAIN_BACKGROUND_ONLY_MEDIUM or "medium" in episode_name) else None),
         )
-        fan_path = out_dir / f"{episode_file.stem}_predictions.png"
+        fan_path = out_dir / f"{output_stem}_predictions.png"
         fig_fan.savefig(fan_path, dpi=300, bbox_inches="tight")
-        print(f"Saved: {fan_path}")
+        print(f"✅ Saved: {fan_path}")
 
         if pose_dim >= 9:
             fig_3d = build_pose_3d_figure(
@@ -793,9 +913,9 @@ def main():
                 view_azim=float(VIEW_AZIM),
                 show_plot=SHOW_PLOT,
             )
-            plot3d_path = out_dir / f"{episode_file.stem}_predictions_3d.png"
+            plot3d_path = out_dir / f"{output_stem}_predictions_3d.png"
             fig_3d.savefig(plot3d_path, dpi=300, bbox_inches="tight")
-            print(f"Saved: {plot3d_path}")
+            print(f"✅ Saved: {plot3d_path}")
         else:
             print("Skipping 3D frame plot: pose_dim < 9.")
 

@@ -230,7 +230,8 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         self.vel_encoder = make_group_encoder(6)
         self.wrench_encoder = make_group_encoder(6)
         self.track_encoder = make_group_encoder(6) if self.include_tracking_error else None
-        self.stiffness_embed = nn.Embedding(self.stiffness_classes, token_dim)
+        # Stiffness enters the transformer as an explicit one-hot conditioning token.
+        self.stiffness_encoder = nn.Linear(self.stiffness_classes, token_dim, bias=False)
         self.cmd_encoder = make_group_encoder(9)  ###
 
         encoder_layer = nn.TransformerEncoderLayer(
@@ -312,17 +313,27 @@ class LowdimStiffnessCVAEAgent(nn.Module):
     def ac_chunk(self):
         return self._ac_chunk
 
-    def _normalize_labels(self, class_labels, batch_size, device):
+    def _labels_to_one_hot(self, class_labels, batch_size, device, dtype):
         if class_labels is None:
+            # Default to stiffness class 1 when older call sites do not pass labels.
             labels = torch.ones(batch_size, device=device, dtype=torch.long)
         else:
-            labels = class_labels.to(device=device).long().view(-1)
+            labels = class_labels.to(device=device)
+            if labels.ndim == 1 and batch_size == 1 and labels.shape[0] == self.stiffness_classes:
+                # Single-sample inference may pass one stiffness vector without a batch dim.
+                return labels.unsqueeze(0).to(dtype=dtype)
+            if labels.ndim == 2 and labels.shape == (batch_size, self.stiffness_classes):
+                # Accept already encoded batched stiffness labels directly, e.g. [[1, 0, 0], ...].
+                return labels.to(dtype=dtype)
+            labels = labels.long().view(-1)
             if labels.shape[0] != batch_size:
-                raise ValueError(f"Expected {batch_size} class labels, got {labels.shape[0]}.")
+                expected = f"({batch_size},) or ({batch_size}, {self.stiffness_classes})"
+                raise ValueError(f"Expected class labels with shape {expected}, got {tuple(class_labels.shape)}.")
+        # Scalars may be saved as 1..C in buffers or passed as 0..C-1; both become one-hot here.
         if torch.min(labels) >= 1:
             labels = labels - 1
         labels = labels.clamp(min=0, max=self.stiffness_classes - 1)
-        return labels
+        return F.one_hot(labels, num_classes=self.stiffness_classes).to(dtype=dtype)
 
     def _prepare_obs(self, obs):
         if obs.ndim != 3:
@@ -336,7 +347,12 @@ class LowdimStiffnessCVAEAgent(nn.Module):
 
     def _build_context_tokens(self, obs, class_labels):
         batch_size = self._prepare_obs(obs)
-        labels = self._normalize_labels(class_labels, batch_size=batch_size, device=obs.device)
+        stiffness_one_hot = self._labels_to_one_hot(
+            class_labels,
+            batch_size=batch_size,
+            device=obs.device,
+            dtype=obs.dtype,
+        )
 
         pose = obs[:, :, self.state_slices["pose"]].reshape(batch_size, -1)
         vel = obs[:, :, self.state_slices["velocity"]].reshape(batch_size, -1)
@@ -346,7 +362,7 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         pose_token = self.pose_encoder(pose)
         vel_token = self.vel_encoder(vel)
         wrench_token = self.wrench_encoder(wrench)
-        stiffness_token = self.stiffness_embed(labels)  ### Stiffness token
+        stiffness_token = self.stiffness_encoder(stiffness_one_hot)  ### Stiffness token from one-hot labels
         cmd_token = self.cmd_encoder(cmd)  ### Command token
         token_list = []
         if self.use_cls_token:

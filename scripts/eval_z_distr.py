@@ -69,9 +69,10 @@ def _materialize_globals(config_path: Path):
     cfg = _load_script_config(config_path)
     dataset_name = cfg["dataset_name"]
     dataset_project_prefix = cfg["dataset_project_prefix"]
-    buffer_set_name = cfg["buffer_set_name"]
+    buffer_set_name = str(cfg["buffer_set_name"])
     run_name = cfg["run_name"]
-    key = f"{dataset_project_prefix}{buffer_set_name}"
+    project_name = dataset_name if buffer_set_name.strip().lower() == "auto" else buffer_set_name
+    key = f"{dataset_project_prefix}{project_name}"
     episode_list = list(cfg["episode_lists"].get(key, []))
 
     return {
@@ -111,7 +112,8 @@ def parse_args():
 
 
 def resolve_paths(project_root: Path, model_name: str, checkpoint: str, rollout_config_arg: Optional[str]) -> Tuple[Path, Path, Path]:
-    checkpoints_dir = project_root / "checkpoints" / BUFFER_SET_NAME / model_name
+    project_name = DATASET_NAME if str(BUFFER_SET_NAME).strip().lower() == "auto" else BUFFER_SET_NAME
+    checkpoints_dir = project_root / "checkpoints" / project_name / model_name
     if not checkpoints_dir.exists():
         raise FileNotFoundError(f"Model directory not found: {checkpoints_dir}")
 
@@ -560,7 +562,7 @@ def visualize_z_statistics_gaussian(dists_data: Dict, save_dir: Path, ep_name: s
     save_path = save_dir / f"{ep_name}_z_distr.png"
     plt.savefig(save_path, dpi=150)
     plt.close()
-    print(f"Saved: {save_path}")
+    print(f"✅ Saved: {save_path}")
 
 
 def visualize_z_statistics_categorical(dists_data: Dict, save_dir: Path, ep_name: str):
@@ -617,8 +619,8 @@ def visualize_z_statistics_categorical(dists_data: Dict, save_dir: Path, ep_name
     fig_e.savefig(entropy_path, dpi=150)
     plt.close(fig_e)
 
-    print(f"Saved: {save_path}")
-    print(f"Saved: {entropy_path}")
+    print(f"✅ Saved: {save_path}")
+    print(f"✅ Saved: {entropy_path}")
 
 
 def _gaussian_pdf(x: np.ndarray, mu: float, std: float) -> np.ndarray:
@@ -716,7 +718,7 @@ def visualize_distributions_video_gaussian(
             writer.grab_frame()
 
     plt.close(fig)
-    print(f"Saved: {save_path}")
+    print(f"✅ Saved: {save_path}")
 
 
 def visualize_distributions_video_categorical(dists_data: Dict, save_path: Path, ep_name: str, fps: int = 15, dpi: int = 80, frame_stride: int = 1):
@@ -772,7 +774,7 @@ def visualize_distributions_video_categorical(dists_data: Dict, save_path: Path,
             writer.grab_frame()
 
     plt.close(fig)
-    print(f"Saved: {save_path}")
+    print(f"✅ Saved: {save_path}")
 
 
 def discover_episode_files(data_root: Path, requested: Optional[List[str]]) -> List[Path]:
@@ -801,6 +803,75 @@ def discover_single_episode_file(data_root: Path, episode_file_name: str) -> Lis
     if not p.exists():
         raise FileNotFoundError(f"Episode not found: {p}")
     return [p]
+
+
+def normalize_rollout_episode_id(episode_id: str) -> str:
+    episode_id = str(episode_id).strip()
+    if episode_id.endswith(".pkl"):
+        episode_id = episode_id[:-4]
+    return episode_id.strip("/")
+
+
+def get_required_split_episodes(rollout_cfg: Dict, split_name: str) -> List[str]:
+    split_cfg = rollout_cfg.get("split_config", {}) if isinstance(rollout_cfg, dict) else {}
+    episodes = split_cfg.get(f"{split_name}_episodes", []) or []
+    if not episodes:
+        raise ValueError(
+            "Auto episode selection requires rollout_config.yaml split_config "
+            f"with non-empty {split_name}_episodes."
+        )
+    return [normalize_rollout_episode_id(ep) for ep in episodes]
+
+
+def build_rollout_raw_dirs(rollout_cfg: Dict, fallback_data_root: Path) -> Dict[str, Path]:
+    processing_cfg = rollout_cfg.get("processing_config", {}) if isinstance(rollout_cfg, dict) else {}
+    input_paths = processing_cfg.get("input_paths", []) or []
+    raw_dirs: Dict[str, Path] = {}
+
+    for raw_path in input_paths:
+        data_dir = Path(raw_path).expanduser()
+        dataset_dir = data_dir.parent if data_dir.name == "data" else data_dir
+        raw_dirs[dataset_dir.name] = data_dir
+
+    if not raw_dirs and fallback_data_root is not None:
+        data_dir = Path(fallback_data_root)
+        dataset_dir = data_dir.parent if data_dir.name == "data" else data_dir
+        raw_dirs[dataset_dir.name] = data_dir
+
+    return raw_dirs
+
+
+def resolve_rollout_episode(episode_id: str, raw_dirs: Dict[str, Path]) -> Tuple[str, Path]:
+    episode_id = normalize_rollout_episode_id(episode_id)
+    if "/" in episode_id:
+        dataset_name, episode_stem = episode_id.rsplit("/", 1)
+        if dataset_name not in raw_dirs:
+            known = ", ".join(sorted(raw_dirs.keys()))
+            raise FileNotFoundError(f"Dataset '{dataset_name}' not found in rollout input_paths. Known datasets: {known}")
+        path = raw_dirs[dataset_name] / f"{episode_stem}.pkl"
+        if not path.exists():
+            raise FileNotFoundError(f"Episode not found: {path}")
+        return f"{dataset_name}/{episode_stem}", path
+
+    matches = []
+    for dataset_name, data_dir in raw_dirs.items():
+        path = data_dir / f"{episode_id}.pkl"
+        if path.exists():
+            matches.append((f"{dataset_name}/{episode_id}", path))
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        found = ", ".join(ep_id for ep_id, _ in matches)
+        raise ValueError(f"Episode name '{episode_id}' is ambiguous across rollout datasets: {found}")
+    raise FileNotFoundError(f"Episode '{episode_id}' not found in rollout input_paths.")
+
+
+def resolve_rollout_episodes(episode_ids: List[str], raw_dirs: Dict[str, Path]) -> List[Tuple[str, Path]]:
+    return [resolve_rollout_episode(ep, raw_dirs) for ep in episode_ids]
+
+
+def plot_file_stem(episode_id: str) -> str:
+    return normalize_rollout_episode_id(episode_id).replace("/", "_")
 
 
 def render_episode_outputs(
@@ -864,9 +935,6 @@ def main():
         else:
             raise FileNotFoundError(f"rollout_config.yaml not found near RUN_DIR: {run_dir}")
 
-    if not data_root.exists():
-        raise FileNotFoundError(f"data_root not found: {data_root}")
-
     model_name = run_dir.parent.name
     if SAVE_DIR_OVERRIDE is None:
         save_dir = run_dir.parent / "eval_z"
@@ -881,17 +949,28 @@ def main():
     obs_window = int(getattr(policy, "obs_window", 8))
     ac_chunk = int(getattr(policy, "ac_chunk", 30))
 
-    if USE_EPISODE_LIST:
-        requested_eps = [str(x) for x in EPISODE_LIST]
-        episode_files = discover_episode_files(data_root, requested_eps)
+    auto_buffer_set = str(BUFFER_SET_NAME).strip().lower() == "auto"
+    raw_dirs = build_rollout_raw_dirs(rollout_cfg, data_root)
+    if not raw_dirs:
+        raise ValueError("No raw dataset folders found. Expected rollout_config.processing_config.input_paths.")
+
+    if USE_EPISODE_LIST and EPISODE_LIST:
+        episode_items = resolve_rollout_episodes([str(x) for x in EPISODE_LIST], raw_dirs)
+    elif auto_buffer_set:
+        episode_items = resolve_rollout_episodes(get_required_split_episodes(rollout_cfg, "test"), raw_dirs)
     else:
+        if not data_root.exists():
+            raise FileNotFoundError(f"data_root not found: {data_root}")
         episode_files = discover_single_episode_file(data_root, str(EPISODE_FILE_NAME))
+        episode_items = [(normalize_rollout_episode_id(path.stem), path) for path in episode_files]
 
-    print(f"Episodes: {len(episode_files)} | obs_window={obs_window} | ac_chunk={ac_chunk}")
+    print(f"Using run dir: {run_dir}")
+    print(f"Using rollout config: {rollout_cfg_path}")
+    print(f"Episodes: {len(episode_items)} | obs_window={obs_window} | ac_chunk={ac_chunk}")
 
-    use_parallel = len(episode_files) > 1 and (SAVE_STATIC_PLOTS or SAVE_VIDEO)
+    use_parallel = len(episode_items) > 1 and (SAVE_STATIC_PLOTS or SAVE_VIDEO)
     if MAX_PARALLEL_EPISODES == 0:
-        max_workers = min(len(episode_files), max(1, (os.cpu_count() or 2) - 1))
+        max_workers = min(len(episode_items), max(1, (os.cpu_count() or 2) - 1))
     else:
         max_workers = max(1, int(MAX_PARALLEL_EPISODES))
     if not use_parallel:
@@ -902,9 +981,9 @@ def main():
 
     render_jobs = []
 
-    for ep_path in tqdm(episode_files, desc="Episodes"):
-        ep_name = ep_path.stem
-        print(f"\nProcessing {ep_name}")
+    for ep_id, ep_path in tqdm(episode_items, desc="Episodes"):
+        ep_name = plot_file_stem(ep_id)
+        print(f"\nProcessing {ep_id} -> {ep_path}")
 
         try:
             states, actions, classes = load_episode_arrays(ep_path, rollout_cfg)
