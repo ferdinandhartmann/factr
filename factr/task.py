@@ -4,11 +4,12 @@
 # LICENSE file in the root directory of this source tree.
 
 
+from typing import Optional
+
 import matplotlib
 import numpy as np
 import pytorch_lightning as pl
 import torch
-from typing import Optional
 from torch.utils.data import DataLoader, IterableDataset
 
 import wandb
@@ -338,6 +339,62 @@ def _compute_sample_diversity(sampled_actions: torch.Tensor, mask: torch.Tensor)
     return float(pairwise_vals.mean().item())
 
 
+def _compute_traj_variance(
+    sampled_abs_trajs: torch.Tensor,
+    mask: torch.Tensor,
+    w_start: float = 0.0,
+    w_end: float = 1.0,
+) -> float:
+    """Weighted sample variance over absolute sampled trajectories.
+
+    Args:
+        sampled_abs_trajs: Tensor of shape (B, S, T, D)
+        mask: Tensor of shape (B, T, D)
+        w_start: Weight at the first future step.
+        w_end: Weight at the final future step.
+    """
+    if sampled_abs_trajs.ndim != 4 or mask.ndim != 3:
+        return float("nan")
+    if sampled_abs_trajs.shape[0] != mask.shape[0] or sampled_abs_trajs.shape[2] != mask.shape[1]:
+        return float("nan")
+
+    _, num_samples, horizon, dim = sampled_abs_trajs.shape
+    if num_samples < 1 or horizon < 1 or dim < 1:
+        return float("nan")
+
+    dim_mask = mask[:, :, :dim].to(device=sampled_abs_trajs.device, dtype=sampled_abs_trajs.dtype)
+    if dim_mask.shape[-1] != dim:
+        return float("nan")
+
+    # Variance uses the population denominator N from the sampled prior trajectories.
+    mean_traj = sampled_abs_trajs.mean(dim=1, keepdim=True)
+    sq_dist = ((sampled_abs_trajs - mean_traj).pow(2) * dim_mask.unsqueeze(1)).sum(dim=-1)
+    step_variance = sq_dist.mean(dim=1)  # (B, T)
+
+    weights = torch.linspace(
+        float(w_start),
+        float(w_end),
+        steps=horizon,
+        device=sampled_abs_trajs.device,
+        dtype=sampled_abs_trajs.dtype,
+    )
+    step_valid = (dim_mask.sum(dim=-1) > 0).to(dtype=sampled_abs_trajs.dtype)
+    weighted_mask = step_valid * weights.unsqueeze(0)
+
+    # With a single step and w_start=0, keep the metric defined instead of dividing by zero.
+    zero_weight_rows = weighted_mask.sum(dim=1, keepdim=True) <= 0
+    if torch.any(zero_weight_rows):
+        weighted_mask = torch.where(zero_weight_rows, step_valid, weighted_mask)
+
+    denom = weighted_mask.sum(dim=1).clamp(min=torch.finfo(sampled_abs_trajs.dtype).eps)
+    per_anchor_variance = (step_variance * weighted_mask).sum(dim=1) / denom
+    valid_anchor = step_valid.sum(dim=1) > 0
+    if not torch.any(valid_anchor):
+        return float("nan")
+
+    return float(per_anchor_variance[valid_anchor].mean().item())
+
+
 def _compute_goal_distance_sum(
     sampled_actions: torch.Tensor,
     obs: torch.Tensor,
@@ -481,6 +538,8 @@ class DefaultTask:
         eval_plot_axis_limits=None,
         eval_plot_goal_frames=None,
         eval_plot_pose_mode: str = "absolute",
+        eval_traj_variance_w_start: float = 0.0,
+        eval_traj_variance_w_end: float = 1.0,
         include_tracking_error: Optional[bool] = None,
         sweep_target_min_diversity: float = 0.02,
         sweep_target_min_kl: float = 0.5,
@@ -512,6 +571,8 @@ class DefaultTask:
         self.eval_plot_axis_limits = eval_plot_axis_limits
         self.eval_plot_goal_frames = eval_plot_goal_frames
         self.eval_plot_pose_mode = str(eval_plot_pose_mode)
+        self.eval_traj_variance_w_start = float(eval_traj_variance_w_start)
+        self.eval_traj_variance_w_end = float(eval_traj_variance_w_end)
         self.include_tracking_error = bool(include_tracking_error) if include_tracking_error is not None else True
         self.eval_plot_rpy_config = RPYPlotConfig(
             subtract_pi=bool(eval_plot_rpy_subtract_pi),
@@ -602,6 +663,7 @@ class BCTask(DefaultTask):
         sample_diversity_vals = []
         sample_endpoint_diversity_vals = []
         sample_end_direction_diversity_vals = []
+        traj_variance_vals = []
         goal_distance_sum_vals = []
         dist_to_opt_traj_vals = []
         l2_per_joint_all = []
@@ -695,6 +757,31 @@ class BCTask(DefaultTask):
                     inverse=True,
                 )
                 obs_denorm = torch.as_tensor(obs_denorm, dtype=obs.dtype, device=obs.device)
+
+                cmd_start = 27 if self.include_tracking_error else 21
+                cmd_stop = cmd_start + sampled_eval_actions_denorm.shape[-1]
+                if obs_denorm.shape[-1] >= cmd_stop:
+                    # Convert denormalized chunks into absolute pose trajectories before measuring uncertainty.
+                    current_cmd_pose = obs_denorm[:, -1, cmd_start:cmd_stop].detach().cpu().numpy()
+                    sampled_abs_trajs = pose_chunks_for_plot(
+                        sampled_eval_actions_denorm.detach().cpu().numpy(),
+                        current_cmd_pose[:, None, :],
+                        self.eval_plot_pose_mode,
+                    )
+                    sampled_abs_trajs = torch.as_tensor(
+                        sampled_abs_trajs,
+                        dtype=sampled_eval_actions_denorm.dtype,
+                        device=sampled_eval_actions_denorm.device,
+                    )
+                    traj_variance = _compute_traj_variance(
+                        sampled_abs_trajs,
+                        mask,
+                        w_start=self.eval_traj_variance_w_start,
+                        w_end=self.eval_traj_variance_w_end,
+                    )
+                    if np.isfinite(traj_variance):
+                        traj_variance_vals.append(traj_variance)
+
                 goal_distance_sum = _compute_goal_distance_sum(
                     sampled_actions=sampled_eval_actions_denorm,
                     obs=obs_denorm,
@@ -774,6 +861,7 @@ class BCTask(DefaultTask):
         mean_sample_end_direction_diversity = (
             np.mean(sample_end_direction_diversity_vals) if sample_end_direction_diversity_vals else float("nan")
         )
+        mean_traj_variance = np.mean(traj_variance_vals) if traj_variance_vals else float("nan")
         mean_goal_distance_sum = np.mean(goal_distance_sum_vals) if goal_distance_sum_vals else float("nan")
         mean_dist_to_opt_traj = np.mean(dist_to_opt_traj_vals) if dist_to_opt_traj_vals else float("nan")
         diversity_weights = {
@@ -831,6 +919,7 @@ class BCTask(DefaultTask):
             f"dist_to_opt_traj: {mean_dist_to_opt_traj:.4f}\t"
             f"sample_endpoint_div: {mean_sample_endpoint_diversity:.4f}\t"
             f"sample_end_direction_div: {mean_sample_end_direction_diversity:.4f}\t"
+            f"traj_var_abs: {mean_traj_variance:.4f}\t"
             f"plot_steps: {len(selected_all_candidates)}\tplot_stride: {self.eval_plot_prediction_stride}\t"
             f"plot_samples: {self.eval_plot_num_samples}\tplot_label_counts: {plot_label_counts_str}"
         )
@@ -865,6 +954,7 @@ class BCTask(DefaultTask):
                     else {}
                 ),
                 "eval/sample_end_direction_diversity": mean_sample_end_direction_diversity,
+                "eval/traj_variance": mean_traj_variance,
                 # "eval/prior_l2": ac_l2,
                 # "eval/sweep_score": sweep_score,
             }

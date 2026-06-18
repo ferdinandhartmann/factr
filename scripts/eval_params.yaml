@@ -2,7 +2,7 @@ shared:
   dataset_name: fourgoals_24_allgauss_noclip_cmdinput_rel_perdim
   dataset_project_prefix: aifact_
   buffer_set_name: auto
-  run_name: c_fp_b004_v4k2_ct1_klb5_obs4_65
+  run_name: c_fp_b002_v4k4_ct1_klb5_obs4
   
   checkpoint_name: latest_ckpt.ckpt
   normalization_mode: apply # options: skip, apply, #
@@ -18,7 +18,7 @@ shared:
       # - fourgoals_2_soft/ep_06_soft
       # - fourgoals_2_soft/ep_25_soft
       # - fourgoals_2_soft/ep_29_soft
-      # - fourgoals_2_soft/ep_34_soft
+      - fourgoals_2_soft/ep_34_soft
       # - fourgoals_2_soft/ep_36_soft
       # - fourgoals_2_soft/ep_38_soft
       # - fourgoals_2_soft/ep_41_soft
@@ -31,7 +31,7 @@ shared:
       # - fourgoals_2_stiff/ep_55_stiff
       # - fourgoals_4_stiff/ep_34_stiff
       - fourgoals_4_stiff/ep_44_stiff
-      # - fourgoals_4_stiff/ep_48_stiff
+      - fourgoals_4_stiff/ep_48_stiff
       # - fourgoals_4_stiff/ep_57_stiff
     aifact_fourgoals_2:
       # - ep_03_soft

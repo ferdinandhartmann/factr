@@ -9,6 +9,8 @@ eval_plot_max_steps: 800
 eval_plot_prediction_stride: 30
 eval_plot_num_samples: 30
 eval_plot_pose_mode: ${eval_plot_pose_mode}
+eval_traj_variance_w_start: 0.0
+eval_traj_variance_w_end: 1.0
 
 # For Sweeping
 sweep_target_min_diversity: 0.02
