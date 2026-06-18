@@ -1,9 +1,8 @@
 
 input_paths:
-  - /home/ferdinand/activeinference/factr/process_data/data_to_process/fourgoals_2_soft/data
-  - /home/ferdinand/activeinference/factr/process_data/data_to_process/fourgoals_2_stiff/data
-  - /home/ferdinand/activeinference/factr/process_data/data_to_process/fourgoals_4_stiff/data
-output_path: /home/ferdinand/activeinference/factr/process_data/processed_data/fourgoals_24_allgauss_noclip_cmdinput_rel_perdim
+  - /home/ferdinand/activeinference/factr/process_data/data_to_process/boxlift_1_follow/data
+  - /home/ferdinand/activeinference/factr/process_data/data_to_process/boxlift_1_lead/data
+output_path: /home/ferdinand/activeinference/factr/process_data/processed_data/boxlift_1_abs_groupshared_full
 
 downsample: False
 data_frequency: 50.0
@@ -12,12 +11,16 @@ target_downsampling_freq: 25.0
 cameras_topics:
 #   - /realsense/im
 
+# process_data.py falls back between matching impedance/admittance controller topics per episode.
 obs_topics:
   - /franka_robot_state_broadcaster/robot_state
   - /cartesian_impedance_controller/ee_velocity
+  # - /cartesian_admittance_controller/ee_velocity
   - /franka_robot_state_broadcaster/external_wrench_in_stiffness_frame
   - /cartesian_impedance_controller/tracking_error
-  - /cartesian_impedance_controller/pose_command # added to see if predictions are with less jumps
+  - /cartesian_impedance_controller/pose_command
+  # - /cartesian_admittance_controller/tracking_error
+  # - /cartesian_admittance_controller/pose_command
 
 # Normalization
 # Explicit pose topic for grouped normalization (must be present in `obs_topics`)
@@ -27,7 +30,7 @@ pose_topic: /franka_robot_state_broadcaster/robot_state
 # per_dim: every pose dim gets its own std.
 # group_shared: xyz share one position std, and rot6d dims share one rotation std.
 # Other features still use their own normalization: velocity, tracking error, wrench, goals, stiffness labels.
-pose_normalization_mode: per_dim
+pose_normalization_mode: group_shared
 
 pose_clip: 0.0           # set 0 to disable clipping (for observations and actions)
 velocity_clip: 0.0       # set 0 to disable clipping
@@ -36,21 +39,26 @@ wrench_clip: 0.0         # set 0 to disable clipping
 
 action_config:
   # Commanded EE pose: 9D = [x,y,z] + 6D rotation representation
+  # If this impedance topic is missing, the matching admittance pose_command topic is used.
   /cartesian_impedance_controller/pose_command: 9
-action_pose_mode: relative  # absolute: raw pose_command, relative: pose_command[t]-pose_command[t-1] with t0=zeros
+  # /cartesian_admittance_controller/pose_command: 9
+action_pose_mode: absolute  # absolute : raw pose_command, relative: pose_command[t]-pose_command[t-1] with t0=zeros
 
 # Stiffness class extraction for observation (class=1: (low stiffness)) 
 stiffness_label_topic: /cartesian_impedance_gains
 stiffness_label_key: stiffness
 stiffness_norm_thresholds: [500] # If empty, only 1 class
 
-goal_topic: 
-  - /goal
+# Required goal label topic
+goal_topic: /goal
+# Optional scalar labels stored separately in robobuf obs as obs["arrangement"] and obs["mode"]. Set either value to null to skip that label.
+arrangement_topic: /arrangement
+mode_topic: /mode
 
 # Optional train/test split at buffer creation time (episode-level random split).
 # When enabled: writes two files in `output_path`, e.g. `buf_train.pkl` and `buf_test.pkl`.
 train_test_split:
-  enabled: true
+  enabled: false
   train_ratio: 0.90
   seed: 45
   train_buffer_name: buf_train

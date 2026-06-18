@@ -311,6 +311,7 @@ class RobobufReplayBufferLowdim(ReplayBuffer):
         include_goals=False,
         action_chunk_mode="absolute",
         stiffness_classes=3,
+        override_stiffness_with_mode=False,
         shuffle=True,
     ):
         assert mode in ("train", "test"), "Mode must be train/test"
@@ -327,6 +328,7 @@ class RobobufReplayBufferLowdim(ReplayBuffer):
         self.include_goals = bool(include_goals)
         self.action_chunk_mode = str(action_chunk_mode)
         self.stiffness_classes = int(stiffness_classes)
+        self.override_stiffness_with_mode = bool(override_stiffness_with_mode)
         self._tracking_slice = slice(21, 27)
         if not self.include_tracking_error and self.obs_dim >= 36:
             self.obs_dim -= 6
@@ -414,9 +416,25 @@ class RobobufReplayBufferLowdim(ReplayBuffer):
 
     def _infer_episode_stiffness_labels(self, episodes):
         labels = []
-        for episode in episodes:
+        for ep_idx, episode in enumerate(episodes):
             first_step = episode[0]
             obs_dict = _obs_to_dict(first_step.obs)
+
+            if self.override_stiffness_with_mode:
+                if "mode" not in obs_dict:
+                    raise ValueError(
+                        "override_stiffness_with_mode=True requires obs['mode'] in every episode; "
+                        f"missing from episode {ep_idx}."
+                    )
+                # Dataset mode is binary 0/1; the model-facing stiffness labels stay 1-based.
+                mode_value = int(np.asarray(obs_dict["mode"]).reshape(-1)[0])
+                if mode_value not in (0, 1):
+                    raise ValueError(
+                        "override_stiffness_with_mode=True expects binary obs['mode'] values 0 or 1; "
+                        f"got {mode_value} in episode {ep_idx}."
+                    )
+                labels.append(mode_value + 1)
+                continue
 
             raw_label = None
             for key in ("stiffness_label", "stiffness_class", "stiffness"):

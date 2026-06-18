@@ -71,6 +71,14 @@ def _resolve_pose_topic(state_obs_topics, topic_slices, cfg):
     return None
 
 
+def _resolve_first_available_topic(topic_slices, candidates, label):
+    for topic in candidates:
+        if topic in topic_slices:
+            return topic
+    print(f"⚠️ Could not find {label} topic. Tried: {candidates}")
+    return None
+
+
 def _parse_workspace_limits(cfg):
     workspace_limits = cfg.get("workspace_limits", None)
     if workspace_limits is None:
@@ -204,10 +212,31 @@ def normalize_states_groupwise(all_states_for_norm, state_obs_topics, state_topi
     topic_slices, state_dim = _build_topic_slices(state_obs_topics, state_topic_dims)
 
     pose_topic = _resolve_pose_topic(state_obs_topics, topic_slices, cfg)
-    vel_topic = "/cartesian_impedance_controller/ee_velocity"
-    track_topic = "/cartesian_impedance_controller/tracking_error"
+    vel_topic = _resolve_first_available_topic(
+        topic_slices,
+        [
+            "/cartesian_impedance_controller/ee_velocity",
+            "/cartesian_admittance_controller/ee_velocity",
+        ],
+        "EE velocity",
+    )
+    track_topic = _resolve_first_available_topic(
+        topic_slices,
+        [
+            "/cartesian_impedance_controller/tracking_error",
+            "/cartesian_admittance_controller/tracking_error",
+        ],
+        "tracking error",
+    )
     wrench_topic = "/franka_robot_state_broadcaster/external_wrench_in_stiffness_frame"
-    cmd_topic = "/cartesian_impedance_controller/pose_command"
+    cmd_topic = _resolve_first_available_topic(
+        topic_slices,
+        [
+            "/cartesian_impedance_controller/pose_command",
+            "/cartesian_admittance_controller/pose_command",
+        ],
+        "commanded pose",
+    )
 
     required_topics = [pose_topic, vel_topic, track_topic, wrench_topic, cmd_topic]
     missing_topics = [t for t in required_topics if t is None or t not in topic_slices]
@@ -533,6 +562,51 @@ def _resolve_input_folders(cfg):
     return folders
 
 
+def _as_topic_list(value, field_name):
+    """Accept one topic string, a YAML list of topics, or an empty/null value."""
+    if value is None:
+        return []
+    if isinstance(value, (DictConfig, ListConfig)):
+        value = OmegaConf.to_container(value, resolve=True)
+    if isinstance(value, str):
+        value = value.strip()
+        return [value] if value else []
+    if isinstance(value, (list, tuple)):
+        return [str(topic).strip() for topic in value if str(topic).strip()]
+    raise ValueError(f"{field_name} must be a topic string or a list of topic strings, got {type(value).__name__}.")
+
+
+CONTROLLER_TOPIC_FALLBACKS = {
+    "/cartesian_impedance_controller/ee_velocity": ["/cartesian_admittance_controller/ee_velocity"],
+    "/cartesian_impedance_controller/tracking_error": ["/cartesian_admittance_controller/tracking_error"],
+    "/cartesian_impedance_controller/pose_command": ["/cartesian_admittance_controller/pose_command"],
+    "/cartesian_admittance_controller/ee_velocity": ["/cartesian_impedance_controller/ee_velocity"],
+    "/cartesian_admittance_controller/tracking_error": ["/cartesian_impedance_controller/tracking_error"],
+    "/cartesian_admittance_controller/pose_command": ["/cartesian_impedance_controller/pose_command"],
+}
+
+
+def _apply_topic_fallbacks(traj_data, required_topics):
+    """Alias equivalent controller topics into the configured names for one episode."""
+    data = traj_data.get("data", {})
+    timestamps = traj_data.get("timestamps", {})
+    used_fallbacks = []
+
+    for expected_topic in required_topics:
+        if expected_topic in data and expected_topic in timestamps:
+            continue
+
+        for fallback_topic in CONTROLLER_TOPIC_FALLBACKS.get(expected_topic, []):
+            if fallback_topic in data and fallback_topic in timestamps:
+                # Keep the config topic as the canonical key so feature order stays stable.
+                data[expected_topic] = data[fallback_topic]
+                timestamps[expected_topic] = timestamps[fallback_topic]
+                used_fallbacks.append((expected_topic, fallback_topic))
+                break
+
+    return used_fallbacks
+
+
 def _split_episode_indices(num_episodes, train_ratio, seed):
     if num_episodes < 2:
         raise ValueError("Need at least 2 episodes to create train/test buffers.")
@@ -557,8 +631,14 @@ def main(cfg: DictConfig):
     target_downsampling_freq = cfg.get("target_downsampling_freq", 50.0)
 
     # rgb_obs_topics = list(cfg.cameras_topics)
-    state_obs_topics = list(cfg.obs_topics)
-    goal_topics = list(cfg.get("goal_topic", []))
+    state_obs_topics = _as_topic_list(cfg.obs_topics, "obs_topics")
+    goal_topics = _as_topic_list(cfg.get("goal_topic", []), "goal_topic")
+    arrangement_topic = cfg.get("arrangement_topic", None)
+    mode_topic = cfg.get("mode_topic", None)
+    label_topics = list(goal_topics)
+    for topic in (arrangement_topic, mode_topic):
+        if topic and topic not in label_topics:
+            label_topics.append(topic)
     action_config = dict(cfg.action_config)
     action_topics = list(action_config.keys())
     action_pose_mode = str(cfg.get("action_pose_mode", "absolute"))
@@ -579,14 +659,17 @@ def main(cfg: DictConfig):
 
     # initialize topics
     # all_topics = state_obs_topics + rgb_obs_topics + action_topics
-    all_topics = list(dict.fromkeys(state_obs_topics + action_topics + goal_topics))
+    all_topics = list(dict.fromkeys(state_obs_topics + action_topics + label_topics))
     if stiffness_label_topic and stiffness_label_topic not in all_topics:
         all_topics.append(stiffness_label_topic)
 
     state_topic_specs = {
         "/cartesian_impedance_controller/ee_velocity": {"keys": ["ee_velocity"], "dim": 6, "fallback": "data"},
+        "/cartesian_admittance_controller/ee_velocity": {"keys": ["ee_velocity"], "dim": 6, "fallback": "data"},
         "/cartesian_impedance_controller/pose_command": {"keys": ["ee_pose_commanded"], "dim": 9, "fallback": None},
+        "/cartesian_admittance_controller/pose_command": {"keys": ["ee_pose_commanded"], "dim": 9, "fallback": None},
         "/cartesian_impedance_controller/tracking_error": {"keys": ["tracking_error"], "dim": 6, "fallback": "data"},
+        "/cartesian_admittance_controller/tracking_error": {"keys": ["tracking_error"], "dim": 6, "fallback": "data"},
         "/franka_robot_state_broadcaster/external_wrench_in_stiffness_frame": {
             "keys": ["external_wrench"],
             "dim": 6,
@@ -596,6 +679,8 @@ def main(cfg: DictConfig):
 
     goal_topic_specs = {
         "/goal": {"keys": ["goal"], "dim": 1, "fallback": None},
+        "/arrangement": {"keys": ["arrangement", "arrangement_id"], "dim": 1, "fallback": None},
+        "/mode": {"keys": ["mode"], "dim": 1, "fallback": None},
     }
 
     def extract_fixed_vector(msg, keys, dim, fallback_key=None):
@@ -669,6 +754,7 @@ def main(cfg: DictConfig):
     all_states_for_norm = []
     all_actions = []
     pbar = tqdm(all_episodes)
+    topic_fallback_counts = {}
 
     state_topic_dims = None
 
@@ -676,6 +762,10 @@ def main(cfg: DictConfig):
         with open(episode_pkl, "rb") as f:
             traj_data = pickle.load(f)
         processed_episode_names.append(episode_label(folder_index, episode_pkl))
+        used_fallbacks = _apply_topic_fallbacks(traj_data, all_topics)
+        for expected_topic, fallback_topic in used_fallbacks:
+            key = (expected_topic, fallback_topic)
+            topic_fallback_counts[key] = topic_fallback_counts.get(key, 0) + 1
         traj_data, avg_freq = sync_data_slowest(traj_data, all_topics)
         pbar.set_postfix({"avg_freq": f"{avg_freq:.1f} Hz"})
 
@@ -748,16 +838,37 @@ def main(cfg: DictConfig):
         # Concatenate all topics along feature dimension
         traj["states"] = np.concatenate(state_arrays, axis=-1)
 
-        # Extract goals separately (not part of states)
+        # Extract goal labels separately; arrangement/mode stay outside obs["goals"].
         goals_arrays = []
         for topic in goal_topics:
             spec = goal_topic_specs.get(topic, {"keys": ["goal"], "dim": 1, "fallback": None})
+            if topic not in traj_data:
+                raise KeyError(f"Configured goal topic {topic} missing after sync for {episode_pkl.name}")
             topic_vectors = [
                 extract_fixed_vector(msg, spec["keys"], spec["dim"], spec["fallback"]) for msg in traj_data[topic]
             ]
             goals_arrays.append(np.stack(topic_vectors, axis=0))
         if goals_arrays:
             traj["goals"] = np.concatenate(goals_arrays, axis=-1)
+
+        if arrangement_topic:
+            spec = goal_topic_specs.get(arrangement_topic, {"keys": ["arrangement"], "dim": 1, "fallback": None})
+            if arrangement_topic not in traj_data:
+                raise KeyError(f"Configured arrangement topic {arrangement_topic} missing after sync for {episode_pkl.name}")
+            arrangement_vectors = [
+                extract_fixed_vector(msg, spec["keys"], spec["dim"], spec["fallback"])
+                for msg in traj_data[arrangement_topic]
+            ]
+            traj["arrangement"] = np.stack(arrangement_vectors, axis=0)
+
+        if mode_topic:
+            spec = goal_topic_specs.get(mode_topic, {"keys": ["mode"], "dim": 1, "fallback": None})
+            if mode_topic not in traj_data:
+                raise KeyError(f"Configured mode topic {mode_topic} missing after sync for {episode_pkl.name}")
+            mode_vectors = [
+                extract_fixed_vector(msg, spec["keys"], spec["dim"], spec["fallback"]) for msg in traj_data[mode_topic]
+            ]
+            traj["mode"] = np.stack(mode_vectors, axis=0)
 
         if stiffness_label_topic:
             stiffness_vectors = [
@@ -776,6 +887,7 @@ def main(cfg: DictConfig):
         # Flatten each action topic into numeric arrays.
         action_topic_specs = {
             "/cartesian_impedance_controller/pose_command": {"keys": ["ee_pose_commanded"], "dim": 9, "fallback": None},
+            "/cartesian_admittance_controller/pose_command": {"keys": ["ee_pose_commanded"], "dim": 9, "fallback": None},
         }
 
         action_list = []
@@ -796,7 +908,7 @@ def main(cfg: DictConfig):
             else:
                 topic_array = np.stack([np.asarray(m, dtype=float).flatten() for m in traj_data[topic]], axis=0)
 
-            if topic == "/cartesian_impedance_controller/pose_command" and action_pose_mode == "relative":
+            if topic in action_topic_specs and action_pose_mode == "relative":
                 relative_topic_array = np.zeros_like(topic_array)
                 relative_topic_array[1:] = topic_array[1:] - topic_array[:-1]
                 topic_array = relative_topic_array
@@ -815,6 +927,10 @@ def main(cfg: DictConfig):
         lengths = [traj["states"].shape[0], traj["actions"].shape[0]]
         if "goals" in traj:
             lengths.append(traj["goals"].shape[0])
+        if "arrangement" in traj:
+            lengths.append(traj["arrangement"].shape[0])
+        if "mode" in traj:
+            lengths.append(traj["mode"].shape[0])
         if "stiffness_label" in traj:
             lengths.append(traj["stiffness_label"].shape[0])
         num_steps = int(np.min(lengths))
@@ -823,6 +939,10 @@ def main(cfg: DictConfig):
         traj["actions"] = traj["actions"][:num_steps]
         if "goals" in traj:
             traj["goals"] = traj["goals"][:num_steps]
+        if "arrangement" in traj:
+            traj["arrangement"] = traj["arrangement"][:num_steps]
+        if "mode" in traj:
+            traj["mode"] = traj["mode"][:num_steps]
         if "stiffness_label" in traj:
             traj["stiffness_label"] = traj["stiffness_label"][:num_steps]
 
@@ -842,6 +962,11 @@ def main(cfg: DictConfig):
             f"Episode name alignment error: processed_episode_names={len(processed_episode_names)} "
             f"trajectories={len(trajectories)}"
         )
+
+    if topic_fallback_counts:
+        print("Controller topic fallbacks used:")
+        for (expected_topic, fallback_topic), count in sorted(topic_fallback_counts.items()):
+            print(f"  {expected_topic} <- {fallback_topic}: {count} episode(s)")
 
     # normalize states and actions
     state_norm_stats = normalize_states_groupwise(all_states_for_norm, state_obs_topics, state_topic_dims, cfg)
@@ -902,8 +1027,13 @@ def main(cfg: DictConfig):
     obs_config = {
         "state_topics": state_obs_topics,
         "goal_topics": goal_topics,
+        "goal_feature_names": [goal_topic_specs.get(topic, {"keys": ["goal"], "dim": 1})["keys"][0] for topic in goal_topics],
         # 'camera_topics': rgb_obs_topics,
     }
+    if arrangement_topic:
+        obs_config["arrangement_topic"] = arrangement_topic
+    if mode_topic:
+        obs_config["mode_topic"] = mode_topic
     if stiffness_label_topic:
         # number of classes = number of thresholds + 1; if no thresholds -> single class
         classes = list(range(1, len(stiffness_norm_thresholds) + 2))

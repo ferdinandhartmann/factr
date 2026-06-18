@@ -46,6 +46,8 @@ def generate_robobuf(trajectories):
         actions = traj["actions"]
         states = traj["states"]
         goals = traj.get("goals")
+        arrangements = traj.get("arrangement")
+        modes = traj.get("mode")
         stiffness_labels = traj.get("stiffness_label")
         for i in range(num_steps):
             obs = {
@@ -53,6 +55,14 @@ def generate_robobuf(trajectories):
             }
             if goals is not None:
                 obs["goals"] = goals[i]
+            if arrangements is not None:
+                arrangement_arr = np.asarray(arrangements[i]).reshape(-1)
+                if arrangement_arr.size > 0:
+                    obs["arrangement"] = int(arrangement_arr[0])
+            if modes is not None:
+                mode_arr = np.asarray(modes[i]).reshape(-1)
+                if mode_arr.size > 0:
+                    obs["mode"] = int(mode_arr[0])
             if stiffness_labels is not None:
                 label_arr = np.asarray(stiffness_labels[i]).reshape(-1)
                 if label_arr.size > 0:

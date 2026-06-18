@@ -17,6 +17,19 @@ from omegaconf import OmegaConf
 import wandb
 from factr.transforms import get_transform_by_name
 
+
+def _as_bool(value):
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _stiffness_class_count(use_stiffness_conditioning, override_stiffness_with_mode, base_stiffness_classes):
+    if _as_bool(use_stiffness_conditioning) and _as_bool(override_stiffness_with_mode):
+        return 2
+    return int(base_stiffness_classes)
+
+
 OmegaConf.register_new_resolver("env", lambda x: os.environ[x])
 OmegaConf.register_new_resolver("base", lambda: os.path.dirname(os.path.abspath(__file__)))
 OmegaConf.register_new_resolver("transform", lambda name: get_transform_by_name(name))
@@ -27,6 +40,11 @@ except ValueError:
 OmegaConf.register_new_resolver("add", lambda x, y: int(x) + int(y))
 OmegaConf.register_new_resolver("index", lambda arr, idx: arr[idx])
 OmegaConf.register_new_resolver("len", lambda arr: len(arr))
+OmegaConf.register_new_resolver(
+    "ifelse",
+    lambda cond, true_value, false_value: true_value if _as_bool(cond) else false_value,
+)
+OmegaConf.register_new_resolver("stiffness_class_count", _stiffness_class_count)
 
 
 GLOBAL_STEP = 0

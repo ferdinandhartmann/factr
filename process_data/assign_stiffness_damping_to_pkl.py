@@ -11,7 +11,7 @@ except Exception:  # pragma: no cover - optional dependency
     yaml = None
 
 # Folder containing .pkl files
-PKL_FOLDER = Path("~/activeinference/factr/process_data/data_to_process/fourgoals_2_soft/data").expanduser()
+PKL_FOLDER = Path("~/activeinference/factr/process_data/data_to_process/boxlift_1_lead/data").expanduser()
 
 # Files need to be renamed to end with "_stiff.pkl" or "_soft.pkl" for this script to process them.
 
@@ -28,6 +28,9 @@ OUTPUT_TOPIC = "/cartesian_impedance_gains"
 # FIXED_STIFFNESS: List[float] = [1000.0, 1000.0, 1000.0, 30.0, 30.0, 30.0]  # high2
 # FIXED_DAMPING: List[float] = [25.0, 25.0, 25.0, 2.5, 2.5, 2.5]
 
+FIXED_STIFFNESS: List[float] = [1000.0, 1000.0, 1000.0, 30.0, 30.0, 30.0]  # Boxlift
+FIXED_DAMPING: List[float] = [100.0, 100.0, 100.0, 2.5, 2.5, 2.5]
+
 # FIXED_STIFFNESS: List[float] = [1000.0, 1000.0, 1000.0, 30.0, 30.0, 30.0]  # high2 + more damping (fourgoals_4_stiff)
 # FIXED_DAMPING: List[float] = [120.0, 120.0, 120.0, 2.5, 2.5, 2.5]
 
@@ -37,8 +40,8 @@ OUTPUT_TOPIC = "/cartesian_impedance_gains"
 # FIXED_STIFFNESS: List[float] = [50.0, 50.0, 50.0, 4.0, 4.0, 4.0]  # soft stiffness
 # FIXED_DAMPING: List[float] = [4.0, 4.0, 4.0, 0.3, 0.3, 0.3]
 
-FIXED_STIFFNESS: List[float] = [50.0, 50.0, 50.0, 3.0, 3.0, 3.0]  # soft 2 (maybe fourgoals_2_soft)
-FIXED_DAMPING: List[float] = [4.0, 4.0, 4.0, 0.3, 0.3, 0.3]
+# FIXED_STIFFNESS: List[float] = [50.0, 50.0, 50.0, 3.0, 3.0, 3.0]  # soft 2 (maybe fourgoals_2_soft)
+# FIXED_DAMPING: List[float] = [4.0, 4.0, 4.0, 0.3, 0.3, 0.3]
 
 # Whether to update data files in place
 UPDATE_FILES: bool = True
@@ -48,7 +51,7 @@ SKIP_IF_MISSING: bool = False
 
 # Only process PKL files that end with one of these suffixes.
 # Use an empty tuple to process every .pkl file in PKL_FOLDER.
-TARGET_FILE_SUFFIXES: Tuple[str, ...] = ("_stiff.pkl", "_soft.pkl")
+TARGET_FILE_SUFFIXES: Tuple[str, ...] = (".pkl", "_stiff.pkl", "_soft.pkl")
 
 
 def _load_pkl(path: Path) -> Dict[str, Any]:
@@ -238,6 +241,10 @@ def main() -> None:
                 {
                     "file": pkl_path.name,
                     "number_of_added_gain_entries": updated_counts,
+                    # Record the exact gain values written so the assignment file is self-describing.
+                    "gain_topic": OUTPUT_TOPIC,
+                    "stiffness": list(FIXED_STIFFNESS),
+                    "damping": list(FIXED_DAMPING),
                 }
             )
         except Exception as exc:

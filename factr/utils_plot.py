@@ -576,6 +576,7 @@ def build_pose_fan_figure(
     source_time_index: np.ndarray,
     prediction_stride: int,
     measured_pose: Optional[np.ndarray] = None,
+    measured_time_index: Optional[np.ndarray] = None,
     background_actions: Optional[List[np.ndarray]] = None,
     max_plot_steps: Optional[int] = None,
     stiffness_label: Optional[int] = None,
@@ -593,7 +594,7 @@ def build_pose_fan_figure(
             source_time_index.shape[0],
         )
     )
-    if measured_pose is not None:
+    if measured_pose is not None and measured_time_index is None:
         anchor_steps = int(min(anchor_steps, measured_pose.shape[0]))
     if anchor_steps < 1:
         return None
@@ -602,11 +603,18 @@ def build_pose_fan_figure(
     pred_action_chunks = np.asarray(pred_action_chunks, dtype=np.float32)[:anchor_steps]
     mask_chunks = np.asarray(mask_chunks, dtype=np.float32)[:anchor_steps]
     source_time_index = np.asarray(source_time_index, dtype=np.int64)[:anchor_steps]
-    measured_pose_arr = (
-        np.asarray(measured_pose, dtype=np.float32)[:anchor_steps]
-        if measured_pose is not None
-        else None
-    )
+    measured_pose_arr = None
+    measured_time_index_arr = None
+    if measured_pose is not None:
+        measured_pose_arr = np.asarray(measured_pose, dtype=np.float32)
+        if measured_time_index is None:
+            measured_pose_arr = measured_pose_arr[:anchor_steps]
+            measured_time_index_arr = source_time_index[:anchor_steps]
+        else:
+            measured_time_index_arr = np.asarray(measured_time_index, dtype=np.int64)
+            measured_steps = int(min(measured_pose_arr.shape[0], measured_time_index_arr.shape[0]))
+            measured_pose_arr = measured_pose_arr[:measured_steps]
+            measured_time_index_arr = measured_time_index_arr[:measured_steps]
 
     pose_dim = int(min(true_action_chunks.shape[-1], pred_action_chunks.shape[-1]))
     if measured_pose_arr is not None:
@@ -668,6 +676,9 @@ def build_pose_fan_figure(
     x_min, x_max = _compute_x_limits(
         source_time_index, horizon_len, max_plot_steps=max_plot_steps
     )
+    measured_valid = None
+    if measured_pose_arr is not None and measured_time_index_arr is not None:
+        measured_valid = np.logical_and(measured_time_index_arr >= x_min, measured_time_index_arr <= x_max)
     true_by_time = {}
     if plot_ground_truth_reconstructed:
         true_by_time = _reconstruct_true_by_time(
@@ -715,8 +726,8 @@ def build_pose_fan_figure(
 
         if measured_pose_arr is not None:
             ax.plot(
-                source_time_index[:anchor_steps],
-                measured_pose_arr[:anchor_steps, dim],
+                measured_time_index_arr[measured_valid],
+                measured_pose_arr[measured_valid, dim],
                 color="#1f78b4",
                 linestyle="--",
                 linewidth=1.0,
@@ -817,19 +828,26 @@ def build_pose_fan_figure(
                 )
 
             if measured_pose_arr is not None and measured_pose_arr.shape[1] >= 9:
-                meas_pose_first = measured_pose_arr[:anchor_steps, :9]
-                meas_rpy = compute_pose_rpy(meas_pose_first)
-                if meas_rpy.shape[0] == anchor_steps:
+                meas_pose = measured_pose_arr[measured_valid, :9]
+                meas_times = measured_time_index_arr[measured_valid]
+                meas_rpy = compute_pose_rpy(meas_pose)
+                if meas_rpy.shape[0] == meas_times.shape[0]:
                     meas_rpy = apply_rpy_axis_shift(
                         meas_rpy, shift_value, cfg=rpy_config
                     )
-                    meas_rpy = align_angles_to_reference(
-                        true_rpy_anchor_reference, meas_rpy
-                    )
+                    meas_ref = None
+                    if len(true_rpy_reference_by_time) > 0:
+                        ref_vals = [true_rpy_reference_by_time.get(int(time_val)) for time_val in meas_times]
+                        if all(val is not None for val in ref_vals):
+                            meas_ref = np.stack(ref_vals, axis=0).astype(np.float32)
+                    elif meas_rpy.shape[0] == true_rpy_anchor_reference.shape[0]:
+                        meas_ref = true_rpy_anchor_reference
+                    if meas_ref is not None:
+                        meas_rpy = align_angles_to_reference(meas_ref, meas_rpy)
                     meas_rpy_plot = convert_rpy_to_plot_unit(meas_rpy, cfg=rpy_config)
                     for angle_idx, angle_name in enumerate(angle_names):
                         ax_rpy.plot(
-                            source_time_index[:anchor_steps],
+                            meas_times,
                             meas_rpy_plot[:, angle_idx],
                             color=meas_colors[angle_idx],
                             linewidth=1.0,
@@ -937,12 +955,19 @@ def build_pose_fan_figure(
 
         if ax_geo is not None:
             if measured_pose_arr is not None and measured_pose_arr.shape[1] >= 9:
-                geod_meas_rad = compute_pose_geodesic_distance(
-                    true_pose_first, measured_pose_arr[:anchor_steps, :9]
-                )
-                if geod_meas_rad.shape[0] == anchor_steps:
+                meas_pose = measured_pose_arr[measured_valid, :9]
+                meas_times = measured_time_index_arr[measured_valid]
+                true_meas_pose = None
+                if len(true_by_time) > 0:
+                    true_vals = [true_by_time.get(int(time_val)) for time_val in meas_times]
+                    if all(val is not None for val in true_vals):
+                        true_meas_pose = np.stack(true_vals, axis=0).astype(np.float32)[:, :9]
+                elif meas_pose.shape[0] == true_pose_first.shape[0]:
+                    true_meas_pose = true_pose_first
+                if true_meas_pose is not None:
+                    geod_meas_rad = compute_pose_geodesic_distance(true_meas_pose, meas_pose)
                     ax_geo.plot(
-                        source_time_index[:anchor_steps],
+                        meas_times,
                         np.rad2deg(geod_meas_rad),
                         color="#1f78b4",
                         linewidth=1.0,

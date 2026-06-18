@@ -114,6 +114,7 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         include_tracking_error=True,
         use_cls_token=True,
         stiffness_classes=3,
+        use_stiffness_conditioning=True,
         d_z=32,
         latent_distribution="gaussian",
         categorical_num_variables=2,
@@ -146,6 +147,7 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         self._ac_chunk = int(ac_chunk)
         self.obs_window = int(obs_window)
         self.stiffness_classes = int(stiffness_classes)
+        self.use_stiffness_conditioning = bool(use_stiffness_conditioning)
         self.beta = float(beta)
         self.free_bits = free_bits
         self.kl_balance_alpha = float(kl_balance_alpha)
@@ -159,7 +161,9 @@ class LowdimStiffnessCVAEAgent(nn.Module):
 
         print(
             f"Initializing LowdimStiffnessCVAEAgent with obs_dim={self._obs_dim}, ac_dim={self._ac_dim}, ac_chunk={self._ac_chunk}, "
-            f"obs_window={self.obs_window}, stiffness_classes={self.stiffness_classes}, d_z={d_z}, latent_distribution={self.latent_distribution}, "
+            f"obs_window={self.obs_window}, stiffness_classes={self.stiffness_classes}, "
+            f"use_stiffness_conditioning={self.use_stiffness_conditioning}, d_z={d_z}, "
+            f"latent_distribution={self.latent_distribution}, "
         )
 
         if not 0.0 <= self.kl_balance_alpha <= 1.0:
@@ -198,7 +202,7 @@ class LowdimStiffnessCVAEAgent(nn.Module):
                 "tracking": slice(21, 27),
                 "cmd": slice(27, 36),
             }
-            num_tokens = 7 if self.use_cls_token else 6
+            num_tokens = 5
         else:
             self.state_slices = {
                 "pose": slice(0, 9),
@@ -206,7 +210,11 @@ class LowdimStiffnessCVAEAgent(nn.Module):
                 "wrench": slice(15, 21),
                 "cmd": slice(21, 30),
             }
-            num_tokens = 6 if self.use_cls_token else 5
+            num_tokens = 4
+        if self.use_stiffness_conditioning:
+            num_tokens += 1
+        if self.use_cls_token:
+            num_tokens += 1
 
         self.positional_tokens = nn.Parameter(torch.zeros(1, num_tokens, token_dim))
         nn.init.normal_(self.positional_tokens, mean=0.0, std=0.02)
@@ -230,8 +238,12 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         self.vel_encoder = make_group_encoder(6)
         self.wrench_encoder = make_group_encoder(6)
         self.track_encoder = make_group_encoder(6) if self.include_tracking_error else None
-        # Stiffness enters the transformer as an explicit one-hot conditioning token.
-        self.stiffness_encoder = nn.Linear(self.stiffness_classes, token_dim, bias=False)
+        # Stiffness/mode can be fully disabled for unconditioned policy training.
+        self.stiffness_encoder = (
+            nn.Linear(self.stiffness_classes, token_dim, bias=False)
+            if self.use_stiffness_conditioning
+            else None
+        )
         self.cmd_encoder = make_group_encoder(9)  ###
 
         encoder_layer = nn.TransformerEncoderLayer(
@@ -245,7 +257,7 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         self.context_encoder = nn.TransformerEncoder(encoder_layer, num_layers=encoder_layers)
         self.context_norm = nn.LayerNorm(token_dim)
 
-        context_dim = ((6 if self.include_tracking_error else 5) - (0 if self.use_cls_token else 1)) * token_dim
+        context_dim = (num_tokens - 1) * token_dim
 
         if not self.fixed_prior:
             self.prior_backbone = nn.Sequential(
@@ -346,12 +358,6 @@ class LowdimStiffnessCVAEAgent(nn.Module):
 
     def _build_context_tokens(self, obs, class_labels):
         batch_size = self._prepare_obs(obs)
-        stiffness_one_hot = self._labels_to_one_hot(
-            class_labels,
-            batch_size=batch_size,
-            device=obs.device,
-            dtype=obs.dtype,
-        )
 
         pose = obs[:, :, self.state_slices["pose"]].reshape(batch_size, -1)
         vel = obs[:, :, self.state_slices["velocity"]].reshape(batch_size, -1)
@@ -361,7 +367,6 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         pose_token = self.pose_encoder(pose)
         vel_token = self.vel_encoder(vel)
         wrench_token = self.wrench_encoder(wrench)
-        stiffness_token = self.stiffness_encoder(stiffness_one_hot)  ### Stiffness token from one-hot labels
         cmd_token = self.cmd_encoder(cmd)  ### Command token
         token_list = []
         if self.use_cls_token:
@@ -373,7 +378,16 @@ class LowdimStiffnessCVAEAgent(nn.Module):
             track = obs[:, :, self.state_slices["tracking"]].reshape(batch_size, -1)
             track_token = self.track_encoder(track)
             token_list.append(track_token)
-        token_list.extend([stiffness_token, cmd_token])
+        if self.use_stiffness_conditioning:
+            stiffness_one_hot = self._labels_to_one_hot(
+                class_labels,
+                batch_size=batch_size,
+                device=obs.device,
+                dtype=obs.dtype,
+            )
+            stiffness_token = self.stiffness_encoder(stiffness_one_hot)
+            token_list.append(stiffness_token)
+        token_list.append(cmd_token)
         tokens = torch.stack(token_list, dim=1)
         tokens = tokens + self.positional_tokens
         tokens = self.context_encoder(tokens)
@@ -387,28 +401,12 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         """
         Args:
             context_tokens: Tensor of shape (batch_size, num_tokens, token_dim) containing
-                           [pose_token, vel_token, wrench_token, (track_token), stiffness_token]
+                           all context tokens except the command token
                            and optionally cls_token at index 0 when use_cls_token=True.
         Returns:
             Tensor of shape (batch_size, context_dim) representing the concatenated context vector.
         """
-        start = 1 if self.use_cls_token else 0
-        pose_token = context_tokens[:, start + 0]
-        vel_token = context_tokens[:, start + 1]
-        wrench_token = context_tokens[:, start + 2]
-        if self.include_tracking_error:
-            track_token = context_tokens[:, start + 3]
-            stiffness_token = context_tokens[:, start + 4]
-            if self.use_cls_token:
-                cls_token = context_tokens[:, 0]
-                return torch.cat([cls_token, pose_token, vel_token, wrench_token, track_token, stiffness_token], dim=-1)
-            return torch.cat([pose_token, vel_token, wrench_token, track_token, stiffness_token], dim=-1)
-
-        stiffness_token = context_tokens[:, start + 3]
-        if self.use_cls_token:
-            cls_token = context_tokens[:, 0]
-            return torch.cat([cls_token, pose_token, vel_token, wrench_token, stiffness_token], dim=-1)
-        return torch.cat([pose_token, vel_token, wrench_token, stiffness_token], dim=-1)
+        return context_tokens.reshape(context_tokens.shape[0], -1)
 
     def _prior(self, z_context):
         batch_size = z_context.shape[0]
@@ -608,7 +606,8 @@ class LowdimStiffnessCVAEAgent(nn.Module):
     def get_actions_base(self, imgs, obs, class_labels=None, sample=False, **kwargs):
         del imgs, kwargs, sample
         context_tokens = self._build_context_tokens(obs, class_labels=class_labels)
-        z_context = self._build_z_context(context_tokens)
+        context_tokens_no_cmd = context_tokens[:, :-1]
+        z_context = self._build_z_context(context_tokens_no_cmd)
         prior_params = self._prior(z_context)
         z = self._deterministic_latent(prior_params)
         z = self._prepare_decoder_latent(z)
@@ -627,7 +626,8 @@ class LowdimStiffnessCVAEAgent(nn.Module):
     ):
         del imgs
         context_tokens = self._build_context_tokens(obs, class_labels=class_labels)
-        z_context = self._build_z_context(context_tokens)
+        context_tokens_no_cmd = context_tokens[:, :-1]
+        z_context = self._build_z_context(context_tokens_no_cmd)
         prior_params = self._prior(z_context)
 
         z = self._sample_latent_batch(prior_params, sample=sample, num_samples=num_samples)
@@ -648,8 +648,9 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         del imgs
         target_action = self._reshape_actions(target_action)
         context_tokens = self._build_context_tokens(obs, class_labels=class_labels)
+        context_tokens_no_cmd = context_tokens[:, :-1]
 
-        posterior_params = self.posterior(context_tokens, target_action)
+        posterior_params = self.posterior(context_tokens_no_cmd, target_action)
         z = self._sample_latent_batch(posterior_params, sample=sample, num_samples=num_samples)
         z = self._prepare_decoder_latent(z)
         batch_size, _, z_dim = z.shape

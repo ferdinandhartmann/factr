@@ -26,9 +26,6 @@ from factr.utils_plot import (
     build_pose_fan_figure,
     pose_chunks_for_plot,
 )
-from factr.utils_plot import (
-    make_pose_dim_names as _shared_make_pose_dim_names,
-)
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -63,57 +60,17 @@ def _build_data_loader(buffer, batch_size, num_workers, is_train=False, shuffle=
     )
 
 
-def _make_pose_dim_names(dim):
-    return _shared_make_pose_dim_names(int(dim))
-
-
-# def _build_eval_pose_figure(true_actions, pred_actions, mask, title):
-#     rpy_cfg = RPYPlotConfig(
-#         subtract_pi=bool(RPY_SUBTRACT_PI),
-#         subtract_pi_axis=int(RPY_SUBTRACT_PI_AXIS),
-#         unit=str(RPY_PLOT_UNIT),
-#     )
-#     return build_pose_comparison_figure(
-#         true_values=true_actions,
-#         pred_values=pred_actions,
-#         mask=mask,
-#         title=title,
-#         measured_values=None,
-#         rpy_config=rpy_cfg,
-#     )
-
-
-def _build_eval_error_figure(chunk_mse, dim_mse):
-    fig, axes = plt.subplots(1, 2, figsize=(12, 4))
-
-    axes[0].plot(np.arange(len(chunk_mse)), chunk_mse, color="#377EB8", linewidth=1.8)
-    axes[0].set_title("MSE by Action Chunk Step")
-    axes[0].set_xlabel("chunk step")
-    axes[0].set_ylabel("MSE")
-    axes[0].grid(alpha=0.25)
-
-    dim_names = _make_pose_dim_names(len(dim_mse))
-    axes[1].bar(np.arange(len(dim_mse)), dim_mse, color="#FB9A99")
-    axes[1].set_title("MSE by Pose Dimension")
-    axes[1].set_xlabel("pose dimension")
-    axes[1].set_ylabel("MSE")
-    axes[1].set_xticks(np.arange(len(dim_mse)))
-    axes[1].set_xticklabels(dim_names, rotation=45, ha="right")
-    axes[1].grid(alpha=0.25)
-
-    fig.tight_layout()
-    return fig
-
-
 def _build_eval_trajectory_fan_figure(
     true_action_chunks,
     pred_action_chunks,
     mask_chunks,
     measured_pose=None,
+    measured_time_index=None,
     max_steps=300,
     stiffness_label=None,
     source_time_index=None,
     global_step=None,
+    title=None,
     plot_geodesic_subplot=True,
     rpy_config=None,
 ):
@@ -127,20 +84,70 @@ def _build_eval_trajectory_fan_figure(
         source_time_index=np.asarray(source_time_index, dtype=np.int64),
         prediction_stride=1,
         measured_pose=measured_pose,
+        measured_time_index=measured_time_index,
         max_plot_steps=int(max_steps),
         stiffness_label=stiffness_label,
         global_step=global_step,
+        title=title,
         plot_ground_truth_reconstructed=True,
         plot_geodesic_subplot=plot_geodesic_subplot,
         rpy_config=rpy_cfg,
     )
 
 
-def _build_missing_stiffness_figure(stiffness_label, available_labels):
+def _eval_condition_label(stiffness_label, override_stiffness_with_mode=False, use_stiffness_conditioning=True):
+    if not bool(use_stiffness_conditioning):
+        return None
+    if bool(override_stiffness_with_mode):
+        mode_names = {1: "follow", 2: "leading"}
+        mode_name = mode_names.get(int(stiffness_label), f"unknown_label_{int(stiffness_label)}")
+        return f"mode={mode_name}"
+    return f"stiffness={int(stiffness_label)}"
+
+
+def _eval_condition_key(stiffness_label, override_stiffness_with_mode=False, use_stiffness_conditioning=True):
+    if not bool(use_stiffness_conditioning):
+        return None
+    if bool(override_stiffness_with_mode):
+        mode_names = {1: "follow", 2: "leading"}
+        mode_name = mode_names.get(int(stiffness_label), f"unknown_label_{int(stiffness_label)}")
+        return f"mode_{mode_name}"
+    return f"stiffness_{int(stiffness_label)}"
+
+
+def _build_eval_fan_title(
+    stiffness_label=None,
+    global_step=None,
+    override_stiffness_with_mode=False,
+    use_stiffness_conditioning=True,
+):
+    condition = _eval_condition_label(
+        stiffness_label=stiffness_label,
+        override_stiffness_with_mode=override_stiffness_with_mode,
+        use_stiffness_conditioning=use_stiffness_conditioning,
+    )
+    step_str = f" | step={global_step}" if global_step is not None else ""
+    if condition is None:
+        return f"Sampled Prior Trajectories vs Ground Truth{step_str}"
+    return f"Sampled Prior Trajectories vs Ground Truth | {condition}{step_str}"
+
+
+def _build_missing_stiffness_figure(
+    stiffness_label,
+    available_labels,
+    override_stiffness_with_mode=False,
+    use_stiffness_conditioning=True,
+):
     fig, ax = plt.subplots(1, 1, figsize=(8.5, 2.6))
     ax.axis("off")
     available_str = ", ".join(str(v) for v in available_labels) if len(available_labels) > 0 else "none"
-    ax.text(0.01, 0.68, f"No sampled eval episodes for stiffness={stiffness_label}", fontsize=11)
+    condition = _eval_condition_label(
+        stiffness_label=stiffness_label,
+        override_stiffness_with_mode=override_stiffness_with_mode,
+        use_stiffness_conditioning=use_stiffness_conditioning,
+    )
+    condition = "unconditioned policy" if condition is None else condition
+    ax.text(0.01, 0.68, f"No sampled eval episodes for {condition}", fontsize=11)
     ax.text(0.01, 0.40, f"Available sampled stiffness labels: {available_str}", fontsize=10)
     ax.text(0.01, 0.14, "Adjust eval_plot_max_steps / eval_plot_prediction_stride to change coverage.", fontsize=9)
     fig.tight_layout()
@@ -231,6 +238,18 @@ def _stack_plot_candidates(candidates, device):
         "mask": mask,
         "labels": labels,
         "imgs": imgs,
+        "time_index": plot_time_index,
+    }
+
+
+def _stack_measured_plot_candidates(candidates, device):
+    if len(candidates) == 0:
+        return None
+
+    obs = torch.cat([item["obs"] for item in candidates], dim=0).to(device)
+    plot_time_index = np.asarray([int(item["plot_time_index"]) for item in candidates], dtype=np.int64)
+    return {
+        "obs": obs,
         "time_index": plot_time_index,
     }
 
@@ -546,6 +565,8 @@ class DefaultTask:
         sweep_diversity_penalty: float = 2.0,
         sweep_kl_penalty: float = 0.05,
         stiffness_classes: int = 3,
+        use_stiffness_conditioning: bool = True,
+        override_stiffness_with_mode: bool = False,
     ):
         eval_plot_axis_limits = {
             "x": (0.2, 0.6),
@@ -586,6 +607,8 @@ class DefaultTask:
         self.sweep_diversity_penalty = max(0.0, float(sweep_diversity_penalty))
         self.sweep_kl_penalty = max(0.0, float(sweep_kl_penalty))
         self.stiffness_classes = int(stiffness_classes)
+        self.use_stiffness_conditioning = bool(use_stiffness_conditioning)
+        self.override_stiffness_with_mode = bool(override_stiffness_with_mode)
 
         self.weights_history = []
         self.weights_steps = []
@@ -651,6 +674,153 @@ class BCTask(DefaultTask):
             pred_actions = pred_actions.unsqueeze(1)
         return pred_actions
 
+    def _log_eval_plots_for_stiffness(
+        self,
+        model,
+        device,
+        global_step,
+        stiffness_label,
+        label_candidates,
+        label_measured_candidates,
+        available_labels,
+    ):
+        condition_key = _eval_condition_key(
+            stiffness_label=stiffness_label,
+            override_stiffness_with_mode=self.override_stiffness_with_mode,
+            use_stiffness_conditioning=self.use_stiffness_conditioning,
+        )
+        fan_log_key = "eval/prior_fan" if condition_key is None else f"eval/prior_fan_{condition_key}"
+        selected_candidates = _select_episode_plot_candidates(
+            label_candidates,
+            max_steps=self.eval_plot_max_steps,
+        )
+        if len(selected_candidates) == 0:
+            fig_missing = _build_missing_stiffness_figure(
+                stiffness_label=stiffness_label,
+                available_labels=available_labels,
+                override_stiffness_with_mode=self.override_stiffness_with_mode,
+                use_stiffness_conditioning=self.use_stiffness_conditioning,
+            )
+            wandb.log({fan_log_key: wandb.Image(fig_missing)}, step=global_step)
+            plt.close(fig_missing)
+            return
+
+        bundle = _stack_plot_candidates(selected_candidates, device=device)
+        measured_candidates = _select_episode_plot_candidates(
+            label_measured_candidates,
+            max_steps=self.eval_plot_max_steps,
+        )
+        measured_bundle = _stack_measured_plot_candidates(measured_candidates, device=device)
+
+        sampled_actions = self._sample_actions_for_plot(
+            model=model,
+            imgs=bundle["imgs"],
+            obs=bundle["obs"],
+            labels=bundle["labels"],
+            num_samples=self.eval_plot_num_samples,
+        )
+        pred_actions = self._predict_actions(
+            model=model,
+            imgs=bundle["imgs"],
+            obs=bundle["obs"],
+            labels=bundle["labels"],
+        )
+
+        pose_dim = 9
+        assert bundle["actions"].shape[-1] == pose_dim
+        assert bundle["mask"].shape[-1] == pose_dim
+        assert sampled_actions.shape[-1] == pose_dim
+        assert pred_actions.shape[-1] == pose_dim
+        assert bundle["obs"].shape[-1] >= pose_dim
+
+        # Denormalize once, then convert chunks into absolute pose values for plotting.
+        actions_np = _apply_grouped_transform(
+            bundle["actions"].detach().cpu().numpy(),
+            self._eval_plot_action_stats,
+            inverse=True,
+        )
+        sampled_np = _apply_grouped_transform(
+            sampled_actions.detach().cpu().numpy(),
+            self._eval_plot_action_stats,
+            inverse=True,
+        )
+        pred_np = _apply_grouped_transform(
+            pred_actions.detach().cpu().numpy(),
+            self._eval_plot_action_stats,
+            inverse=True,
+        )
+        obs_np = _apply_grouped_transform(
+            bundle["obs"].detach().cpu().numpy(),
+            self._eval_plot_state_stats,
+            inverse=True,
+        )
+        measured_obs_np = (
+            _apply_grouped_transform(
+                measured_bundle["obs"].detach().cpu().numpy(),
+                self._eval_plot_state_stats,
+                inverse=True,
+            )
+            if measured_bundle is not None
+            else None
+        )
+
+        measured_pose = obs_np[:, -1, :pose_dim]
+        measured_pose_dense = measured_obs_np[:, -1, :pose_dim] if measured_obs_np is not None else measured_pose
+        measured_time_dense = measured_bundle["time_index"] if measured_bundle is not None else bundle["time_index"]
+        actions_plot = pose_chunks_for_plot(actions_np[:, :, :pose_dim], measured_pose, self.eval_plot_pose_mode)
+        sampled_plot = pose_chunks_for_plot(
+            sampled_np[:, :, :, :pose_dim],
+            measured_pose[:, None, :],
+            self.eval_plot_pose_mode,
+        )
+        pred_plot = pose_chunks_for_plot(pred_np[:, :, :pose_dim], measured_pose, self.eval_plot_pose_mode)
+        mask_np = bundle["mask"].detach().cpu().numpy()[:, :, :pose_dim]
+
+        fig_fan = _build_eval_trajectory_fan_figure(
+            true_action_chunks=actions_plot,
+            pred_action_chunks=sampled_plot,
+            mask_chunks=mask_np,
+            measured_pose=measured_pose_dense,
+            measured_time_index=measured_time_dense,
+            max_steps=self.eval_plot_max_steps,
+            stiffness_label=int(stiffness_label) if self.use_stiffness_conditioning else None,
+            source_time_index=bundle["time_index"],
+            global_step=global_step,
+            title=_build_eval_fan_title(
+                stiffness_label=stiffness_label,
+                global_step=global_step,
+                override_stiffness_with_mode=self.override_stiffness_with_mode,
+                use_stiffness_conditioning=self.use_stiffness_conditioning,
+            ),
+            plot_geodesic_subplot=self.eval_plot_geodesic_subplot,
+            rpy_config=self.eval_plot_rpy_config,
+        )
+        wandb.log({fan_log_key: wandb.Image(fig_fan)}, step=global_step)
+        plt.close(fig_fan)
+
+        fig_3d = build_pose_3d_figure(
+            measured_pose=measured_pose,
+            true_pose=actions_plot[:, 0, :pose_dim],
+            pred_pose=pred_plot[:, 0, :pose_dim],
+            sampled_pose_chunks=sampled_plot,
+            prediction_stride=1,
+            action_source=self.eval_plot_action_source,
+            true_action_chunks=actions_plot,
+            mask_chunks=mask_np,
+            source_time_index=bundle["time_index"],
+            plot_ground_truth_reconstructed=True,
+            axis_limits=self.eval_plot_axis_limits,
+            view_elev=float(self.eval_plot_view_elev),
+            view_azim=float(self.eval_plot_view_azim),
+            goal_frames=self.eval_plot_goal_frames,
+            show_plot=False,
+        )
+        assert fig_3d is not None
+        action_key = str(self.eval_plot_action_source).strip().lower() or "prior"
+        fan3d_log_key = f"eval/{action_key}_fan3d" if condition_key is None else f"eval/{action_key}_fan3d_{condition_key}"
+        wandb.log({fan3d_log_key: wandb.Image(fig_3d)}, step=global_step)
+        plt.close(fig_3d)
+
     def eval(self, trainer, global_step, generate_plots=True):
         losses = []
         prior_l1_losses = []
@@ -666,11 +836,9 @@ class BCTask(DefaultTask):
         traj_variance_vals = []
         goal_distance_sum_vals = []
         dist_to_opt_traj_vals = []
-        l2_per_joint_all = []
-        chunk_mse_all = []
         accuracy_list = []
-        first_plot_sample = None
         plot_candidates = [] if generate_plots else None
+        plot_measured_candidates = [] if generate_plots else None
         raw_eval_index = 0
         test_dataset = getattr(self.test_loader, "dataset", None) if generate_plots else None
 
@@ -714,12 +882,6 @@ class BCTask(DefaultTask):
                 l2_delta = torch.square(mask * (pred_actions - actions))
                 l2_delta = l2_delta.sum((1, 2)) / mask_den
                 action_l2.append(l2_delta.mean().item())
-
-                l2_per_joint = (mask * (pred_actions - actions) ** 2).sum(1) / mask.sum(1).clamp(min=1.0)
-                l2_per_joint_all.append(l2_per_joint.mean(0).cpu().numpy())
-                chunk_sq = (mask * (pred_actions - actions) ** 2).sum(dim=(0, 2))
-                chunk_den = mask.sum(dim=(0, 2)).clamp(min=1.0)
-                chunk_mse_all.append((chunk_sq / chunk_den).cpu().numpy())
 
                 lsig = torch.logical_or(
                     torch.logical_and(actions > 0, pred_actions <= 0),
@@ -804,13 +966,6 @@ class BCTask(DefaultTask):
                 if np.isfinite(sample_end_direction_diversity):
                     sample_end_direction_diversity_vals.append(sample_end_direction_diversity)
 
-                if generate_plots and first_plot_sample is None:
-                    first_plot_sample = {
-                        "true": actions[0].detach().cpu().numpy(),
-                        "pred": pred_actions[0].detach().cpu().numpy(),
-                        "mask": mask[0].detach().cpu().numpy(),
-                    }
-
                 if generate_plots:
                     for batch_idx in range(actions.shape[0]):
                         meta = _extract_plot_metadata(
@@ -820,6 +975,16 @@ class BCTask(DefaultTask):
 
                         keep_step = meta["episode_step"] % self.eval_plot_prediction_stride == 0
                         within_step_limit = meta["episode_step"] < self.eval_plot_max_steps
+                        if within_step_limit:
+                            # Keep dense measured poses for plotting without changing prediction anchor stride.
+                            measured_candidate = {
+                                "obs": obs[batch_idx : batch_idx + 1].detach().cpu(),
+                                "episode_id": int(meta["episode_id"]),
+                                "episode_step": int(meta["episode_step"]),
+                                "episode_length": int(meta["episode_length"]),
+                                "stiffness_label": int(meta["stiffness_label"]),
+                            }
+                            plot_measured_candidates.append(measured_candidate)
                         if keep_step and within_step_limit:
                             candidate = {
                                 "obs": obs[batch_idx : batch_idx + 1].detach().cpu(),
@@ -897,13 +1062,17 @@ class BCTask(DefaultTask):
                 max_steps=self.eval_plot_max_steps,
             )
             if len(selected_all_candidates) > 0:
-                plot_label_arr = np.asarray(
-                    [int(item["stiffness_label"]) for item in selected_all_candidates], dtype=np.int64
-                )
-                plot_label_counts = {k: int(np.sum(plot_label_arr == k)) for k in range(1, self.stiffness_classes + 1)}
-                plot_label_counts_str = ",".join([f"{k}:{v}" for k, v in plot_label_counts.items()])
+                if self.use_stiffness_conditioning:
+                    plot_label_arr = np.asarray(
+                        [int(item["stiffness_label"]) for item in selected_all_candidates], dtype=np.int64
+                    )
+                    plot_label_counts = {
+                        k: int(np.sum(plot_label_arr == k)) for k in range(1, self.stiffness_classes + 1)
+                    }
+                    plot_label_counts_str = ",".join([f"{k}:{v}" for k, v in plot_label_counts.items()])
+                else:
+                    plot_label_counts_str = "unconditioned"
             else:
-                plot_label_counts = {k: 0 for k in range(1, self.stiffness_classes + 1)}
                 plot_label_counts_str = "none"
         else:
             selected_all_candidates = []
@@ -925,13 +1094,6 @@ class BCTask(DefaultTask):
         )
 
         if wandb.run is not None:
-            # for i, v in enumerate(l2_per_joint_mean):
-            #     wandb.log({f"eval/joint{i + 1}_l2": v}, step=global_step)
-
-            # if chunk_mse_mean is not None:
-            #     for i, v in enumerate(chunk_mse_mean):
-            #         wandb.log({f"eval/chunk_step_{i + 1}_mse": float(v)}, step=global_step)
-
             log_dict = {
                 "eval/sample_diversity_combined": mean_sample_diversity_combined,
                 "eval/sample_diversity": mean_sample_diversity,
@@ -961,185 +1123,34 @@ class BCTask(DefaultTask):
 
             if accuracy_list:
                 log_dict["eval/classification_accuracy"] = np.mean(accuracy_list)
-            # for stiffness_label, count in plot_label_counts.items():
-            #     log_dict[f"eval/plot_anchor_count_stiffness_{int(stiffness_label)}"] = int(count)
 
             wandb.log(
                 log_dict,
                 step=global_step,
             )
 
-            # if first_plot_sample is not None:
-            #     fig = _build_eval_pose_figure(
-            #         first_plot_sample["true"],
-            #         first_plot_sample["pred"],
-            #         first_plot_sample["mask"],
-            #         title="Eval Example: Ground Truth vs Predicted Pose",
-            #     )
-            #     if fig is not None:
-            #         wandb.log({"eval/prediction_example": wandb.Image(fig)}, step=global_step)
-            #         plt.close(fig)
-
-            # if chunk_mse_mean is not None:
-            #     fig_err = _build_eval_error_figure(chunk_mse_mean, l2_per_joint_mean)
-            #     if fig_err is not None:
-            #         wandb.log({"eval/error_summary": wandb.Image(fig_err)}, step=global_step)
-            #         plt.close(fig_err)
-
             if generate_plots and len(selected_all_candidates) > 0:
-                if generate_plots:
-                    plot_candidates = plot_candidates or []
-                    available_labels = sorted({int(item["stiffness_label"]) for item in plot_candidates})
-
-                    for stiffness_label in range(1, self.stiffness_classes + 1):
+                available_labels = sorted({int(item["stiffness_label"]) for item in plot_candidates})
+                plot_labels = range(1, self.stiffness_classes + 1) if self.use_stiffness_conditioning else [None]
+                for stiffness_label in plot_labels:
+                    if self.use_stiffness_conditioning:
                         label_candidates = [
                             item for item in plot_candidates if int(item["stiffness_label"]) == int(stiffness_label)
                         ]
-                        selected_stiff_candidates = _select_episode_plot_candidates(
-                            label_candidates,
-                            max_steps=self.eval_plot_max_steps,
-                        )
-                        if len(selected_stiff_candidates) == 0:
-                            fig_missing = _build_missing_stiffness_figure(
-                                stiffness_label=stiffness_label,
-                                available_labels=available_labels,
-                            )
-                            if fig_missing is not None:
-                                wandb.log(
-                                    {f"eval/prior_fan_stiffness_{int(stiffness_label)}": wandb.Image(fig_missing)},
-                                    step=global_step,
-                                )
-                                plt.close(fig_missing)
-                            continue
-
-                        stiffess_bundle = _stack_plot_candidates(selected_stiff_candidates, device=trainer.device_id)
-                        sampled_actions_stiff = self._sample_actions_for_plot(
-                            model=model,
-                            imgs=stiffess_bundle["imgs"],
-                            obs=stiffess_bundle["obs"],
-                            labels=stiffess_bundle["labels"],
-                            num_samples=self.eval_plot_num_samples,
-                        )
-                        sampled_actions_stiff_np = sampled_actions_stiff.detach().cpu().numpy()
-                        measured_pose_stiff = (
-                            stiffess_bundle["obs"][:, -1, : stiffess_bundle["actions"].shape[-1]].detach().cpu().numpy()
-                        )
-
-                        if int(stiffness_label) in (1, 2):
-                            pose_dim = min(
-                                9,
-                                int(sampled_actions_stiff_np.shape[-1]),
-                                int(measured_pose_stiff.shape[-1]),
-                                int(stiffess_bundle["actions"].shape[-1]),
-                            )
-                            if pose_dim >= 9:
-                                action_stats = self._eval_plot_action_stats
-                                state_stats = self._eval_plot_state_stats
-                                with torch.no_grad():
-                                    pred_actions_stiff = self._predict_actions(
-                                        model=model,
-                                        imgs=stiffess_bundle["imgs"],
-                                        obs=stiffess_bundle["obs"],
-                                        labels=stiffess_bundle["labels"],
-                                    )
-                                pred_actions_stiff_np = pred_actions_stiff.detach().cpu().numpy()
-                                actions_stiff_np = stiffess_bundle["actions"].detach().cpu().numpy()
-                                obs_stiff_np = stiffess_bundle["obs"].detach().cpu().numpy()
-
-                                if action_stats is not None:
-                                    actions_stiff_np = _apply_grouped_transform(
-                                        actions_stiff_np, action_stats, inverse=True
-                                    )
-                                    sampled_actions_stiff_np = _apply_grouped_transform(
-                                        sampled_actions_stiff_np, action_stats, inverse=True
-                                    )
-                                    pred_actions_stiff_np = _apply_grouped_transform(
-                                        pred_actions_stiff_np, action_stats, inverse=True
-                                    )
-                                if state_stats is not None:
-                                    obs_stiff_np = _apply_grouped_transform(obs_stiff_np, state_stats, inverse=True)
-
-                                measured_pose_stiff = obs_stiff_np[:, -1, :pose_dim]
-                                actions_plot_np = pose_chunks_for_plot(
-                                    actions_stiff_np[:, :, :pose_dim],
-                                    measured_pose_stiff,
-                                    self.eval_plot_pose_mode,
-                                )
-                                sampled_plot_np = pose_chunks_for_plot(
-                                    sampled_actions_stiff_np[:, :, :, :pose_dim],
-                                    measured_pose_stiff[:, None, :],
-                                    self.eval_plot_pose_mode,
-                                )
-                                pred_plot_np = pose_chunks_for_plot(
-                                    pred_actions_stiff_np[:, :, :pose_dim],
-                                    measured_pose_stiff,
-                                    self.eval_plot_pose_mode,
-                                )
-
-                                fig_stiff = _build_eval_trajectory_fan_figure(
-                                    true_action_chunks=actions_plot_np,
-                                    pred_action_chunks=sampled_plot_np,
-                                    mask_chunks=stiffess_bundle["mask"].detach().cpu().numpy()[:, :, :pose_dim],
-                                    measured_pose=measured_pose_stiff,
-                                    max_steps=self.eval_plot_max_steps,
-                                    stiffness_label=int(stiffness_label),
-                                    source_time_index=stiffess_bundle["time_index"],
-                                    global_step=global_step,
-                                    plot_geodesic_subplot=self.eval_plot_geodesic_subplot,
-                                    rpy_config=self.eval_plot_rpy_config,
-                                )
-                                wandb.log(
-                                    {f"eval/prior_fan_stiffness_{int(stiffness_label)}": wandb.Image(fig_stiff)},
-                                    step=global_step,
-                                )
-                                plt.close(fig_stiff)
-
-                                true_pose_first = actions_plot_np[:, 0, :pose_dim]
-                                pred_pose_first = pred_plot_np[:, 0, :pose_dim]
-                                measured_pose_first = measured_pose_stiff
-                                fig_stiff_3d = build_pose_3d_figure(
-                                    measured_pose=measured_pose_first,
-                                    true_pose=true_pose_first,
-                                    pred_pose=pred_pose_first,
-                                    sampled_pose_chunks=sampled_plot_np,
-                                    prediction_stride=1,
-                                    action_source=self.eval_plot_action_source,
-                                    true_action_chunks=actions_plot_np,
-                                    mask_chunks=stiffess_bundle["mask"].detach().cpu().numpy(),
-                                    source_time_index=stiffess_bundle["time_index"],
-                                    plot_ground_truth_reconstructed=True,
-                                    axis_limits=self.eval_plot_axis_limits,
-                                    view_elev=float(self.eval_plot_view_elev),
-                                    view_azim=float(self.eval_plot_view_azim),
-                                    goal_frames=self.eval_plot_goal_frames,
-                                    show_plot=False,
-                                )
-                                if fig_stiff_3d is not None:
-                                    action_key = str(self.eval_plot_action_source).strip().lower() or "prior"
-                                    wandb.log(
-                                        {
-                                            f"eval/{action_key}_fan3d_stiffness_{int(stiffness_label)}": wandb.Image(
-                                                fig_stiff_3d
-                                            )
-                                        },
-                                        step=global_step,
-                                    )
-                                    plt.close(fig_stiff_3d)
-                        else:
-                            fig_stiff = _build_eval_trajectory_fan_figure(
-                                true_action_chunks=stiffess_bundle["actions"].detach().cpu().numpy(),
-                                pred_action_chunks=sampled_actions_stiff_np,
-                                mask_chunks=stiffess_bundle["mask"].detach().cpu().numpy(),
-                                measured_pose=measured_pose_stiff,
-                                max_steps=self.eval_plot_max_steps,
-                                stiffness_label=int(stiffness_label),
-                                source_time_index=stiffess_bundle["time_index"],
-                                global_step=global_step,
-                                plot_geodesic_subplot=self.eval_plot_geodesic_subplot,
-                                rpy_config=self.eval_plot_rpy_config,
-                            )
-                            wandb.log(
-                                {f"eval/prior_fan_stiffness_{int(stiffness_label)}": wandb.Image(fig_stiff)},
-                                step=global_step,
-                            )
-                            plt.close(fig_stiff)
+                        label_measured_candidates = [
+                            item
+                            for item in plot_measured_candidates
+                            if int(item["stiffness_label"]) == int(stiffness_label)
+                        ]
+                    else:
+                        label_candidates = plot_candidates
+                        label_measured_candidates = plot_measured_candidates
+                    self._log_eval_plots_for_stiffness(
+                        model=model,
+                        device=trainer.device_id,
+                        global_step=global_step,
+                        stiffness_label=stiffness_label,
+                        label_candidates=label_candidates,
+                        label_measured_candidates=label_measured_candidates,
+                        available_labels=available_labels,
+                    )
