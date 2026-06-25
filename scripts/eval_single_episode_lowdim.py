@@ -14,6 +14,7 @@ import torch
 import yaml
 from factr.utils import apply_grouped_transform as _apply_grouped_transform
 from factr.utils import ensure_normalized as _ensure_normalized
+from factr.transforms import get_transform_by_name
 from factr.utils_plot import RPYPlotConfig, build_pose_3d_figure, build_pose_comparison_figure, build_pose_fan_figure, pose_chunks_for_plot
 from hydra.utils import instantiate
 from omegaconf import OmegaConf
@@ -63,6 +64,8 @@ def _materialize_globals(config_path: Path):
         "RAW_EPISODE_DIR": Path.home() / "activeinference" / "factr" / "process_data" / "data_to_process" / dataset_name / "data",
         "NUM_SAMPLES": int(cfg["num_samples"]),
         "ACTION_SOURCE": cfg["action_source"],
+        "SAMPLE": bool(cfg["sample"]),
+        "STIFFNESS_LABEL": cfg["stiffness_label"],
         "NORMALIZATION_MODE": cfg["normalization_mode"],
         "PREDICTION_STRIDE": int(cfg["prediction_stride"]),
         "VIEW_ELEV": int(cfg["view_elev"]),
@@ -88,8 +91,30 @@ if SHOW_PLOT:
 
 
 def _register_resolvers() -> None:
-    if not OmegaConf.has_resolver("len"):
-        OmegaConf.register_new_resolver("len", lambda x: len(x))
+    def _as_bool(value):
+        if isinstance(value, bool):
+            return value
+        return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+    def _stiffness_class_count(use_stiffness_conditioning, override_stiffness_with_mode, base_stiffness_classes):
+        if _as_bool(use_stiffness_conditioning) and _as_bool(override_stiffness_with_mode):
+            return 2
+        return int(base_stiffness_classes)
+
+    resolvers = {
+        "env": lambda x: __import__("os").environ[x],
+        "base": lambda: str(PROJECT_ROOT / "factr"),
+        "transform": lambda name: get_transform_by_name(name),
+        "mult": lambda x, y: int(x) * int(y),
+        "add": lambda x, y: int(x) + int(y),
+        "index": lambda arr, idx: arr[idx],
+        "len": lambda x: len(x),
+        "ifelse": lambda cond, true_value, false_value: true_value if _as_bool(cond) else false_value,
+        "stiffness_class_count": _stiffness_class_count,
+    }
+    for name, fn in resolvers.items():
+        if not OmegaConf.has_resolver(name):
+            OmegaConf.register_new_resolver(name, fn)
 
 
 def _normalize_action_source(value: str) -> str:
@@ -108,6 +133,16 @@ def _normalize_pose_mode(value: str) -> str:
     if pose_mode not in {"absolute", "relative", "relative_timesteps", "relative_chunks"}:
         raise ValueError(f"pose mode must be one of absolute/relative/relative_timesteps/relative_chunks, got {value}")
     return pose_mode
+
+
+def _resolve_eval_stiffness_label(config_value, inferred_label: int, stiffness_classes: int, use_stiffness_conditioning: bool) -> int:
+    # Config override is useful when comparing the same episode under different conditioning labels.
+    label = int(inferred_label) if config_value is None else int(config_value)
+    if not use_stiffness_conditioning:
+        return label
+    if label < 1 or label > int(stiffness_classes):
+        raise ValueError(f"stiffness_label must be in [1, {int(stiffness_classes)}], got {label}.")
+    return label
 
 
 def _load_run_cfg(exp_config_path: Path):
@@ -389,12 +424,40 @@ def _extract_fallback_vector(msg):
     return np.asarray(msg, dtype=np.float32).reshape(-1)
 
 
+CONTROLLER_TOPIC_FALLBACKS = {
+    "/cartesian_impedance_controller/ee_velocity": ["/cartesian_admittance_controller/ee_velocity"],
+    "/cartesian_impedance_controller/tracking_error": ["/cartesian_admittance_controller/tracking_error"],
+    "/cartesian_impedance_controller/pose_command": ["/cartesian_admittance_controller/pose_command"],
+    "/cartesian_admittance_controller/ee_velocity": ["/cartesian_impedance_controller/ee_velocity"],
+    "/cartesian_admittance_controller/tracking_error": ["/cartesian_impedance_controller/tracking_error"],
+    "/cartesian_admittance_controller/pose_command": ["/cartesian_impedance_controller/pose_command"],
+}
+
+
+def _apply_topic_fallbacks(raw_data, required_topics: List[str]) -> List[Tuple[str, str]]:
+    data = raw_data.get("data", {})
+    timestamps = raw_data.get("timestamps", {})
+    used_fallbacks = []
+    for expected_topic in required_topics:
+        if expected_topic in data and expected_topic in timestamps:
+            continue
+        for fallback_topic in CONTROLLER_TOPIC_FALLBACKS.get(expected_topic, []):
+            if fallback_topic in data and fallback_topic in timestamps:
+                # Keep configured topic names canonical so downstream feature order stays unchanged.
+                data[expected_topic] = data[fallback_topic]
+                timestamps[expected_topic] = timestamps[fallback_topic]
+                used_fallbacks.append((expected_topic, fallback_topic))
+                break
+    return used_fallbacks
+
+
 def _sync_data_slowest(raw_data, topics: List[str]):
     if "data" not in raw_data or "timestamps" not in raw_data:
         raise ValueError("Raw episode file must contain 'data' and 'timestamps'.")
 
     data = raw_data["data"]
     timestamps = raw_data["timestamps"]
+    _apply_topic_fallbacks(raw_data, topics)
     missing = [t for t in topics if t not in data or t not in timestamps]
     if len(missing) > 0:
         raise ValueError(f"Missing topics in raw episode file: {missing}")
@@ -616,7 +679,15 @@ def _build_fan_figure_with_measured(
 
 
 def _summarize_metrics(
-    model, device: torch.device, obs_norm: np.ndarray, actions_norm: np.ndarray, mask_norm: np.ndarray, labels: np.ndarray, num_samples: int, action_source: str
+    model,
+    device: torch.device,
+    obs_norm: np.ndarray,
+    actions_norm: np.ndarray,
+    mask_norm: np.ndarray,
+    labels: np.ndarray,
+    num_samples: int,
+    action_source: str,
+    sample: bool,
 ):
     obs_t = torch.from_numpy(obs_norm).float().to(device)
     actions_t = torch.from_numpy(actions_norm).float().to(device)
@@ -629,11 +700,11 @@ def _summarize_metrics(
     with torch.no_grad():
         output = model({}, obs_t, ac_flat, mask_flat, class_labels=labels_t)
         if action_source == "prior":
-            pred_det = model.get_actions_prior({}, obs_t, class_labels=labels_t, sample=False, num_samples=1)
-            pred_samples = model.get_actions_prior({}, obs_t, class_labels=labels_t, sample=True, num_samples=num_samples)
+            pred_det = model.get_actions_prior({}, obs_t, class_labels=labels_t, sample=sample, num_samples=1)
+            pred_samples = model.get_actions_prior({}, obs_t, class_labels=labels_t, sample=sample, num_samples=num_samples)
         else:
-            pred_det = model.get_actions_pos({}, obs_t, actions_t, class_labels=labels_t, sample=False, num_samples=1)
-            pred_samples = model.get_actions_pos({}, obs_t, actions_t, class_labels=labels_t, sample=True, num_samples=num_samples)
+            pred_det = model.get_actions_pos({}, obs_t, actions_t, class_labels=labels_t, sample=sample, num_samples=1)
+            pred_samples = model.get_actions_pos({}, obs_t, actions_t, class_labels=labels_t, sample=sample, num_samples=num_samples)
 
         if pred_det.ndim == 4:
             pred_det = pred_det[:, 0]
@@ -665,7 +736,7 @@ def main():
     global DATASET_NAME, DATASET_PROJECT_PREFIX, BUFFER_SET_NAME, RUN_NAME
     global CHECKPOINT_NAME, USE_EPISODE_LIST, EPISODE_FILE_NAME, EPISODE_INDEX, EPISODE_LIST
     global LIST_EPISODES_ONLY, RUN_DIR, RAW_EPISODE_DIR
-    global NUM_SAMPLES, ACTION_SOURCE, NORMALIZATION_MODE, PREDICTION_STRIDE, VIEW_ELEV, VIEW_AZIM
+    global NUM_SAMPLES, ACTION_SOURCE, SAMPLE, STIFFNESS_LABEL, NORMALIZATION_MODE, PREDICTION_STRIDE, VIEW_ELEV, VIEW_AZIM
     global SHOW_PLOT, ENABLE_TRAIN_BACKGROUND, TRAIN_BACKGROUND_ONLY_MEDIUM, RPY_SUBTRACT_PI
     global RPY_SUBTRACT_PI_AXIS, RPY_PLOT_UNIT, PLOT_GEODESIC_SUBPLOT, GPU_ID
     global GLOBAL_AXIS_LIMITS, GOAL_FRAMES, OUT_DIR_OVERRIDE
@@ -680,6 +751,7 @@ def main():
 
     action_source = _normalize_action_source(ACTION_SOURCE)
     action_source_title = _action_source_title(action_source)
+    sample_predictions = bool(SAMPLE)
 
     run_dir = Path(RUN_DIR)
     checkpoint_name = str(CHECKPOINT_NAME)
@@ -699,6 +771,10 @@ def main():
         raise FileNotFoundError(f"checkpoint not found: {ckpt_path}")
 
     cfg = _load_run_cfg(exp_config_path)
+    stiffness_classes = int(OmegaConf.select(cfg, "agent.stiffness_classes", default=OmegaConf.select(cfg, "stiffness_classes", default=1)))
+    use_stiffness_conditioning = bool(
+        OmegaConf.select(cfg, "agent.use_stiffness_conditioning", default=OmegaConf.select(cfg, "use_stiffness_conditioning", default=True))
+    )
     cfg_pose_mode = OmegaConf.select(cfg, "eval_plot_pose_mode", default=OmegaConf.select(cfg, "task.eval_plot_pose_mode", default="absolute"))
     plot_pose_mode = _normalize_pose_mode(cfg_pose_mode)
     action_chunk_mode = str(OmegaConf.select(cfg, "action_chunk_mode", default="absolute")).strip().lower()
@@ -706,7 +782,14 @@ def main():
         plot_pose_mode = "relative_chunks" if action_chunk_mode == "relative_chunks" else "absolute"
     elif plot_pose_mode == "relative_chunks" and action_chunk_mode != "relative_chunks":
         plot_pose_mode = "relative_timesteps" if action_chunk_mode == "relative_timesteps" else "absolute"
-    print(f"Eval config | action_chunk_mode={action_chunk_mode} eval_plot_pose_mode={plot_pose_mode}")
+    print(
+        "Eval config | "
+        f"action_chunk_mode={action_chunk_mode} "
+        f"eval_plot_pose_mode={plot_pose_mode} "
+        f"sample={sample_predictions} "
+        f"stiffness_label={STIFFNESS_LABEL if STIFFNESS_LABEL is not None else 'inferred'} "
+        f"use_stiffness_conditioning={use_stiffness_conditioning}"
+    )
     buffer_path = Path(cfg.test_buffer_path)
     rollout_config_path = run_dir / "rollout_config.yaml"
     if not rollout_config_path.exists():
@@ -781,7 +864,17 @@ def main():
         if (not include_tracking_error) and states.shape[-1] >= 36:
             states = np.concatenate([states[:, :21], states[:, 27:]], axis=-1)
         ep_data = _build_eval_samples_from_raw_episode(
-            states=states, actions=raw_actions, episode_label=int(raw_ep["episode_label"]), obs_window=obs_window, ac_chunk=ac_chunk, action_index_offset=action_index_offset
+            states=states,
+            actions=raw_actions,
+            episode_label=_resolve_eval_stiffness_label(
+                STIFFNESS_LABEL,
+                raw_ep["episode_label"],
+                stiffness_classes,
+                use_stiffness_conditioning,
+            ),
+            obs_window=obs_window,
+            ac_chunk=ac_chunk,
+            action_index_offset=action_index_offset,
         )
 
         obs_arr = ep_data["obs"]
@@ -789,7 +882,7 @@ def main():
         mask_arr = ep_data["mask"]
         labels_arr = ep_data["labels"]
         steps_arr = ep_data["steps"]
-        stiffness_arr = np.full((len(steps_arr),), int(raw_ep["episode_label"]), dtype=np.int64)
+        stiffness_arr = labels_arr
 
         obs_norm, obs_applied = _ensure_normalized(obs_arr, state_stats, NORMALIZATION_MODE, "state")
         actions_norm, action_applied = _ensure_normalized(actions_arr, action_stats, NORMALIZATION_MODE, "action")
@@ -816,6 +909,7 @@ def main():
             labels=labels_arr,
             num_samples=int(NUM_SAMPLES),
             action_source=action_source,
+            sample=sample_predictions,
         )
 
         if action_applied:
@@ -854,7 +948,11 @@ def main():
             out_dir = Path(out_dir_override) / out_suffix
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        print(f"Episode {episode_file.name} | steps={len(steps_arr)} | stiffness={int(stiffness_arr[0])} | raw_episode_length={raw_ep['num_steps']}")
+        print(
+            f"Episode {episode_file.name} | steps={len(steps_arr)} | "
+            f"stiffness={int(stiffness_arr[0])} | inferred_stiffness={int(raw_ep['episode_label'])} | "
+            f"sample={sample_predictions} | raw_episode_length={raw_ep['num_steps']}"
+        )
         print(
             "Metrics | "
             f"Posterior L1={metrics['posterior_l1']:.4f} "

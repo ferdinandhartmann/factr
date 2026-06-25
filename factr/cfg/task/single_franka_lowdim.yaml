@@ -7,7 +7,7 @@ n_cams: ${len:${task.cam_indexes}}
 stiffness_classes: ${stiffness_classes}
 use_stiffness_conditioning: ${oc.select:use_stiffness_conditioning,true}
 override_stiffness_with_mode: ${oc.select:override_stiffness_with_mode,false}
-eval_plot_max_steps: 500
+eval_plot_max_steps: 800
 eval_plot_prediction_stride: 25
 eval_plot_num_samples: 40
 eval_plot_pose_mode: ${eval_plot_pose_mode}
@@ -30,7 +30,7 @@ train_buffer:
   obs_window: ${obs_window}
   obs_dim: ${task.obs_dim}
   pose_action_dim: ${task.ac_dim}
-  action_index_offset: 0 # if = 0: Model sees the observation at time t and should predict the action at time t.
+  action_index_offset: 1 # if = 0: Model sees the observation at time t and should predict the action at time t.
   include_tracking_error: ${task.include_tracking_error}
   include_goals: False
   action_chunk_mode: ${action_chunk_mode}
@@ -48,7 +48,7 @@ test_buffer:
   obs_window: ${obs_window}
   obs_dim: ${task.obs_dim}
   pose_action_dim: ${task.ac_dim}
-  action_index_offset: 0
+  action_index_offset: 1
   include_tracking_error: ${task.include_tracking_error}
   include_goals: False
   action_chunk_mode: ${action_chunk_mode}

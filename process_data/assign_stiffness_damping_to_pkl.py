@@ -11,7 +11,7 @@ except Exception:  # pragma: no cover - optional dependency
     yaml = None
 
 # Folder containing .pkl files
-PKL_FOLDER = Path("~/activeinference/factr/process_data/data_to_process/boxlift_1_lead/data").expanduser()
+PKL_FOLDER = Path("~/activeinference/factr/process_data/data_to_process/boxlift_2_lead/data").expanduser()
 
 # Files need to be renamed to end with "_stiff.pkl" or "_soft.pkl" for this script to process them.
 

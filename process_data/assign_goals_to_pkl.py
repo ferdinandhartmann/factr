@@ -21,7 +21,7 @@ ROBOT_STATE_TOPIC = "/franka_robot_state_broadcaster/robot_state"
 ARRANGEMENT_TOPIC = "/arrangement"
 MODE_TOPIC = "/mode"
 
-PKL_FOLDER = Path("~/activeinference/factr/process_data/data_to_process/boxlift_1_lead/data").expanduser()
+PKL_FOLDER = Path("~/activeinference/factr/process_data/data_to_process/boxlift_2_lead/data").expanduser()
 XLSX_PATH = Path(
     "~/activeinference/factr/process_data/data_to_process/boxlift_1_follow/boxlift_1_follow_goalconfig.xlsx"
 ).expanduser()
@@ -39,7 +39,7 @@ W_POS: float = 1.0
 W_ROT: float = 1.0
 
 
-UPDATE_FILES: bool = False
+UPDATE_FILES: bool = True
 
 ADD_MODE_TOPIC: bool =  True # /mode topic and 0 for following or 1 for leading, based on folder name. 
 

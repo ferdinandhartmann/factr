@@ -15,7 +15,7 @@ use_stiffness_conditioning: ${oc.select:use_stiffness_conditioning,true}
 # --- Model size knobs ---
 # token_dim: embedding width of every transformer token
 # hidden_dim: MLP width used inside Transformer layers (dim_feedforward) AND the prior MLP
-token_dim: 64 # 128
+token_dim: 128 # 128
 hidden_dim: 256
 
 # --- CVAE latent ---
@@ -24,17 +24,17 @@ hidden_dim: 256
 # - categorical: decoder-side latent width after projecting the flattened one-hot latent
 d_z: 16 # FOR CATEGORICAL: !!!!!!Should be same as variables*categories to turn of compression
 latent_distribution: categorical  # gaussian | categorical
-fixed_prior: true            # false -> learn p(z|context) instead of keeping a uniform categorical prior
+fixed_prior: false            # false -> learn p(z|context) instead of keeping a uniform categorical prior
 
 categorical_num_variables: 4 # increasing variables compared to categories increases diversity
 categorical_num_categories: 4 # increase for finer choises
 categorical_temperature: 1.0 # Sharpness of the categorical distribution. (higher -> softer, lower -> sharper)
 categorical_straight_through: false # true: forward pass uses hard one-hot samples, but gradients flow through a soft version (straight-through estimator). false means fully soft samples (more smooth/stable, less discrete).
 
-beta: 0.01 # 0.005 # 10 # 0.001 # 1           # KL weight in total_loss = recon + beta * KL.
+beta: 0.003 # 0.005 # 10 # 0.001 # 1           # KL weight in total_loss = recon + beta * KL.
                     # Higher beta ⇒ stronger pressure for prior ≈ posterior (latent carries less extra “action-only” info)
                     # Lower beta ⇒ easier for posterior to use z to fit actions well, but the prior may lag behind (bigger prior-vs-posterior gap).
-kl_balance_alpha: 0.5  # [0,1]. 0.5 keeps legacy behavior; >0.5: Prior is pushed harder toward posterior. Doesn't do anything if fixed_prior=true.
+kl_balance_alpha: 0.7  # [0,1]. 0.5 keeps legacy behavior; >0.5: Prior is pushed harder toward posterior. Doesn't do anything if fixed_prior=true.
 free_bits: null       # KL clamp
 
 encoder_layers: 2

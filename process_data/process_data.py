@@ -237,6 +237,7 @@ def normalize_states_groupwise(all_states_for_norm, state_obs_topics, state_topi
         ],
         "commanded pose",
     )
+    admittance_offset_topic = "/admittance_offset" if "/admittance_offset" in topic_slices else None
 
     required_topics = [pose_topic, vel_topic, track_topic, wrench_topic, cmd_topic]
     missing_topics = [t for t in required_topics if t is None or t not in topic_slices]
@@ -327,6 +328,34 @@ def normalize_states_groupwise(all_states_for_norm, state_obs_topics, state_topi
         "std": [float(x) for x in cmd_std],
     }
     stats["groups"].append(cmd_group)
+
+    if admittance_offset_topic is not None:
+        offset_slice = topic_slices[admittance_offset_topic]
+        if (offset_slice.stop - offset_slice.start) != 9:
+            raise ValueError(
+                f"Admittance offset topic {admittance_offset_topic} must be 9-dim, "
+                f"got {offset_slice.stop - offset_slice.start}."
+            )
+        offset_pos_slice = slice(offset_slice.start, offset_slice.start + 3)
+        offset_ori_slice = slice(offset_slice.start + 3, offset_slice.start + 9)
+        offset_pos_mean, offset_pos_std = _compute_pose_gaussian_stats(
+            all_states_for_norm, offset_pos_slice, shared_std=shared_pose_std
+        )
+        offset_ori_mean, offset_ori_std = _compute_pose_gaussian_stats(
+            all_states_for_norm, offset_ori_slice, shared_std=shared_pose_std
+        )
+        offset_mean = np.concatenate([offset_pos_mean, offset_ori_mean], axis=0)
+        offset_std = np.concatenate([offset_pos_std, offset_ori_std], axis=0)
+        _apply_gaussian(all_states_for_norm, offset_slice, offset_mean, offset_std)
+        stats["groups"].append(
+            {
+                "name": "ee_offset",
+                "type": "gaussian",
+                "indices": [offset_slice.start, offset_slice.stop],
+                "mean": [float(x) for x in offset_mean],
+                "std": [float(x) for x in offset_std],
+            }
+        )
 
     vel_mean, vel_std = _compute_gaussian_stats(all_states_for_norm, vel_slice)
     _apply_gaussian(all_states_for_norm, vel_slice, vel_mean, vel_std)
@@ -436,12 +465,32 @@ def normalize_actions_groupwise(all_actions_for_norm, cfg):
     if any(arr.shape[1] != action_dim for arr in all_actions_for_norm):
         raise ValueError("Action dimensions changed across episodes; cannot build consistent normalization stats.")
 
-    if action_dim < 9:
-        print(f"⚠️ Action dim {action_dim} < 9; falling back to gaussian norm.")
+    action_config = dict(cfg.get("action_config", {}))
+    action_topics = list(action_config.keys())
+    action_topic_dims = [int(action_config[topic]) for topic in action_topics]
+    if not action_topics or sum(action_topic_dims) != action_dim:
+        if action_dim < 9:
+            print(f"⚠️ Action dim {action_dim} < 9; falling back to gaussian norm.")
+            return gaussian_norm(all_actions_for_norm)
+        action_topics = ["__single_pose_action__"]
+        action_topic_dims = [action_dim]
+
+    topic_slices, _ = _build_topic_slices(action_topics, action_topic_dims)
+    pose_like_action_topics = {
+        "__single_pose_action__",
+        "/cartesian_impedance_controller/pose_command",
+        "/cartesian_admittance_controller/pose_command",
+        "/admittance_offset",
+    }
+    pose_like_action_topics = {
+        topic
+        for topic in pose_like_action_topics
+        if topic in topic_slices and (topic_slices[topic].stop - topic_slices[topic].start) == 9
+    }
+    if not pose_like_action_topics:
+        print("⚠️ No 9D pose-like action topics found; falling back to gaussian norm.")
         return gaussian_norm(all_actions_for_norm)
 
-    pos_slice = slice(0, 3)
-    ori_slice = slice(3, 9)
     pose_norm_mode = str(cfg.get("pose_normalization_mode", "per_dim"))
     if pose_norm_mode not in {"per_dim", "group_shared"}:
         raise ValueError(f"pose_normalization_mode must be 'per_dim' or 'group_shared', got {pose_norm_mode}.")
@@ -449,39 +498,49 @@ def normalize_actions_groupwise(all_actions_for_norm, cfg):
 
     stats = {"mode": "grouped", "action_dim": action_dim, "groups": []}
 
-    pos_mean, pos_std = _compute_pose_gaussian_stats(all_actions_for_norm, pos_slice, shared_std=shared_pose_std)
-    _apply_gaussian(all_actions_for_norm, pos_slice, pos_mean, pos_std)
     pose_clip = cfg.get("pose_clip", None)
     pose_clip = None if pose_clip is None else float(pose_clip)
     pose_clip_value = pose_clip if (pose_clip is not None and pose_clip > 0) else None
-    if pose_clip_value is not None:
-        _apply_clip(all_actions_for_norm, pos_slice, pose_clip_value)
 
-    pos_group = {
-        "name": "ee_position",
-        "type": "gaussian_clip" if pose_clip_value is not None else "gaussian",
-        "indices": [pos_slice.start, pos_slice.stop],
-        "mean": [float(x) for x in pos_mean],
-        "std": [float(x) for x in pos_std],
-    }
-    if pose_clip_value is not None:
-        pos_group["clip"] = float(pose_clip_value)
-    stats["groups"].append(pos_group)
+    for topic in action_topics:
+        if topic not in pose_like_action_topics:
+            continue
+        topic_slice = topic_slices[topic]
+        pos_slice = slice(topic_slice.start, topic_slice.start + 3)
+        ori_slice = slice(topic_slice.start + 3, topic_slice.start + 9)
+        group_prefix = "ee_offset" if topic == "/admittance_offset" else "ee"
 
-    orientation_mean, orientation_std = _compute_pose_gaussian_stats(
-        all_actions_for_norm, ori_slice, shared_std=shared_pose_std
-    )
-    _apply_gaussian(all_actions_for_norm, ori_slice, orientation_mean, orientation_std)
-    stats["groups"].append(
-        {
-            "name": "ee_orientation",
-            # "type": "identity", ###
-            "type": "gaussian",
-            "mean": [float(x) for x in orientation_mean],
-            "std": [float(x) for x in orientation_std],
-            "indices": [ori_slice.start, ori_slice.stop],
+        pos_mean, pos_std = _compute_pose_gaussian_stats(all_actions_for_norm, pos_slice, shared_std=shared_pose_std)
+        _apply_gaussian(all_actions_for_norm, pos_slice, pos_mean, pos_std)
+        if pose_clip_value is not None:
+            _apply_clip(all_actions_for_norm, pos_slice, pose_clip_value)
+
+        pos_group = {
+            "name": f"{group_prefix}_position",
+            "topic": None if topic == "__single_pose_action__" else topic,
+            "type": "gaussian_clip" if pose_clip_value is not None else "gaussian",
+            "indices": [pos_slice.start, pos_slice.stop],
+            "mean": [float(x) for x in pos_mean],
+            "std": [float(x) for x in pos_std],
         }
-    )
+        if pose_clip_value is not None:
+            pos_group["clip"] = float(pose_clip_value)
+        stats["groups"].append(pos_group)
+
+        orientation_mean, orientation_std = _compute_pose_gaussian_stats(
+            all_actions_for_norm, ori_slice, shared_std=shared_pose_std
+        )
+        _apply_gaussian(all_actions_for_norm, ori_slice, orientation_mean, orientation_std)
+        stats["groups"].append(
+            {
+                "name": f"{group_prefix}_orientation",
+                "topic": None if topic == "__single_pose_action__" else topic,
+                "type": "gaussian",
+                "mean": [float(x) for x in orientation_mean],
+                "std": [float(x) for x in orientation_std],
+                "indices": [ori_slice.start, ori_slice.stop],
+            }
+        )
 
     used = np.zeros(action_dim, dtype=bool)
     for group in stats["groups"]:
@@ -668,6 +727,7 @@ def main(cfg: DictConfig):
         "/cartesian_admittance_controller/ee_velocity": {"keys": ["ee_velocity"], "dim": 6, "fallback": "data"},
         "/cartesian_impedance_controller/pose_command": {"keys": ["ee_pose_commanded"], "dim": 9, "fallback": None},
         "/cartesian_admittance_controller/pose_command": {"keys": ["ee_pose_commanded"], "dim": 9, "fallback": None},
+        "/admittance_offset": {"keys": ["ee_offset"], "dim": 9, "fallback": None},
         "/cartesian_impedance_controller/tracking_error": {"keys": ["tracking_error"], "dim": 6, "fallback": "data"},
         "/cartesian_admittance_controller/tracking_error": {"keys": ["tracking_error"], "dim": 6, "fallback": "data"},
         "/franka_robot_state_broadcaster/external_wrench_in_stiffness_frame": {
@@ -888,6 +948,11 @@ def main(cfg: DictConfig):
         action_topic_specs = {
             "/cartesian_impedance_controller/pose_command": {"keys": ["ee_pose_commanded"], "dim": 9, "fallback": None},
             "/cartesian_admittance_controller/pose_command": {"keys": ["ee_pose_commanded"], "dim": 9, "fallback": None},
+            "/admittance_offset": {"keys": ["ee_offset"], "dim": 9, "fallback": None},
+        }
+        relative_action_topics = {
+            "/cartesian_impedance_controller/pose_command",
+            "/cartesian_admittance_controller/pose_command",
         }
 
         action_list = []
@@ -908,7 +973,7 @@ def main(cfg: DictConfig):
             else:
                 topic_array = np.stack([np.asarray(m, dtype=float).flatten() for m in traj_data[topic]], axis=0)
 
-            if topic in action_topic_specs and action_pose_mode == "relative":
+            if topic in relative_action_topics and action_pose_mode == "relative":
                 relative_topic_array = np.zeros_like(topic_array)
                 relative_topic_array[1:] = topic_array[1:] - topic_array[:-1]
                 topic_array = relative_topic_array

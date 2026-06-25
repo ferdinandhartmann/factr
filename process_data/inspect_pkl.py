@@ -117,6 +117,6 @@ if __name__ == "__main__":
     p = (
         Path(sys.argv[1])
         if len(sys.argv) > 1
-        else Path("/home/ferdinand/factr_project/factr/process_data/data_to_process/bld_soft/data/ep_02.pkl")
+        else Path("/home/ferdinand/activeinference/factr/process_data/data_to_process/boxlift_1_follow/data/ep_02.pkl")
     )
     summarize_pkl(p)

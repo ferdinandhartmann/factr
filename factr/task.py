@@ -154,7 +154,7 @@ def _build_missing_stiffness_figure(
     return fig
 
 
-def _extract_plot_metadata(dataset, sample_index):
+def _extract_plot_metadata(dataset, sample_index, sample_label=None):
     meta = {}
     if dataset is not None and hasattr(dataset, "get_sample_metadata"):
         try:
@@ -167,7 +167,17 @@ def _extract_plot_metadata(dataset, sample_index):
     episode_id = int(meta.get("episode_id", 0))
     episode_step = int(meta.get("episode_step", sample_index))
     episode_length = int(meta.get("episode_length", max(episode_step + 1, 1)))
-    stiffness_label = int(meta.get("stiffness_label", 0))
+    metadata_label = meta.get("stiffness_label")
+    if sample_label is None and metadata_label is None:
+        raise ValueError(f"Eval sample {sample_index} has no mode/stiffness label for plot selection.")
+
+    stiffness_label = int(sample_label if sample_label is not None else metadata_label)
+    if metadata_label is not None and int(metadata_label) != stiffness_label:
+        raise ValueError(
+            "Eval plot label mismatch: "
+            f"dataset sample {sample_index} has metadata label {int(metadata_label)}, "
+            f"but its batch label is {stiffness_label}."
+        )
     return {
         "episode_id": episode_id,
         "episode_step": episode_step,
@@ -575,10 +585,20 @@ class DefaultTask:
         }
         eval_plot_goal_frames = [
             # fourgoals_2
-            {"name": "goal 1", "pose": [0.341, 0.240, 0.606, 0.999, -0.007, 0.013, -0.007, -1.000, -0.010]},
-            {"name": "goal 2", "pose": [0.524, 0.226, 0.381, 1.000, 0.013, 0.025, 0.013, -1.000, 0.004]},
-            {"name": "goal 3", "pose": [0.591, -0.336, -0.038, 0.907, -0.421, 0.037, -0.421, -0.907, 0.006]},
-            {"name": "goal 4", "pose": [0.439, -0.239, -0.043, 0.905, -0.425, 0.023, -0.426, -0.904, 0.028]},
+            # {"name": "goal 1", "pose": [0.341, 0.240, 0.606, 0.999, -0.007, 0.013, -0.007, -1.000, -0.010]},
+            # {"name": "goal 2", "pose": [0.524, 0.226, 0.381, 1.000, 0.013, 0.025, 0.013, -1.000, 0.004]},
+            # {"name": "goal 3", "pose": [0.591, -0.336, -0.038, 0.907, -0.421, 0.037, -0.421, -0.907, 0.006]},
+            # {"name": "goal 4", "pose": [0.439, -0.239, -0.043, 0.905, -0.425, 0.023, -0.426, -0.904, 0.028]},
+            # Boxlift goals 9 (no rotation)
+            {"name": "goal 1", "pose": [0.392, -0.042, 0.043, 0.999, -0.004, -0.018, -0.004, -1.000, -0.002]}, # Boxlift goal 1
+            {"name": "goal 2", "pose": [0.401, -0.062, 0.170, 0.999, -0.024, -0.011, -0.024, -0.999, -0.003]}, # Boxlift goal 2
+            {"name": "goal 3", "pose": [0.393, -0.059, 0.307, 0.999, -0.031, -0.004, -0.031, -0.999, -0.018]}, # Boxlift goal 3
+            {"name": "goal 4", "pose": [0.541, -0.350, 0.063, 0.999, 0.019, -0.018, 0.019, -0.999, 0.004]},    # Boxlift goal 4
+            {"name": "goal 5", "pose": [0.552, -0.366, 0.189, 0.999, 0.005, -0.019, 0.005, -0.999, 0.021]},    # Boxlift goal 5
+            {"name": "goal 6", "pose": [0.548, -0.362, 0.331, 0.999, 0.003, 0.001, 0.002, -0.999, 0.034]},     # Boxlift goal 6
+            {"name": "goal 7", "pose": [0.265, -0.374, 0.046, 0.997, 0.013, -0.053, 0.015, -0.997, 0.053]},    # Boxlift goal 7
+            {"name": "goal 8", "pose": [0.262, -0.379, 0.180, 0.999, 0.025, 0.002, 0.025, -0.998, 0.031]},     # Boxlift goal 8
+            {"name": "goal 9", "pose": [0.280, -0.344, 0.318, 0.999, -0.001, -0.013, -0.001, -0.999, -0.024]}, # Boxlift goal 9
         ]
         self.n_cams, self.obs_dim, self.ac_dim = n_cams, obs_dim, ac_dim
         self.train_loader = _build_data_loader(train_buffer, batch_size, num_workers, is_train=True)
@@ -968,9 +988,13 @@ class BCTask(DefaultTask):
 
                 if generate_plots:
                     for batch_idx in range(actions.shape[0]):
+                        # The batch label is the mode actually supplied to the policy. Use it
+                        # for plot grouping and verify that dataset metadata stayed aligned.
+                        sample_label = int(labels[batch_idx].detach().cpu().item())
                         meta = _extract_plot_metadata(
                             dataset=test_dataset,
                             sample_index=raw_eval_index,
+                            sample_label=sample_label,
                         )
 
                         keep_step = meta["episode_step"] % self.eval_plot_prediction_stride == 0

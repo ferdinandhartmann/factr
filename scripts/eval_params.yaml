@@ -1,8 +1,8 @@
 shared:
-  dataset_name: fourgoals_24_allgauss_noclip_cmdinput_rel_perdim
-  dataset_project_prefix: aifact_
+  dataset_name: oxlift_1_rel_perdim
+  dataset_project_prefix: b
   buffer_set_name: auto
-  run_name: c_fp_b002_v4k4_ct1_klb5_obs4
+  run_name: c_vp_b005_v4k4_ofs1_t128
   
   checkpoint_name: latest_ckpt.ckpt
   normalization_mode: apply # options: skip, apply, #
@@ -14,6 +14,19 @@ shared:
   list_episodes_only: false
   
   episode_lists:
+    boxlift_1_rel_perdim:
+    # - boxlift_1_follow/ep_06
+    # - boxlift_1_follow/ep_25
+    # - boxlift_1_follow/ep_26
+    # - boxlift_1_follow/ep_29
+    # - boxlift_1_follow/ep_40
+    - boxlift_1_follow/ep_55
+    # - boxlift_1_lead/ep_08
+    # - boxlift_1_lead/ep_24
+    # - boxlift_1_lead/ep_25
+    # - boxlift_1_lead/ep_37
+    # - boxlift_1_lead/ep_54
+    - boxlift_1_lead/ep_55
     aifact_fourgoals_24_allgauss_noclip_cmdinput_rel_perdim:
       # - fourgoals_2_soft/ep_06_soft
       # - fourgoals_2_soft/ep_25_soft
@@ -131,8 +144,10 @@ shared:
       # - ep_260_stiff
 
 eval_single_episode_lowdim:
-  num_samples: 30
+  num_samples: 40
   action_source: prior # options: prior, posterior
+  sample: true # true samples latent predictions; false repeats deterministic mean/mode predictions
+  stiffness_label: 2 # mode 0 -> class 1, mode 1 -> class 2 null infers from episode; otherwise use 1-based label, e.g. 1=soft, 2=medium, 3=stiff
   prediction_stride: 50
   view_elev: 24
   view_azim: -60

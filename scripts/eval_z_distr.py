@@ -823,6 +823,20 @@ def get_required_split_episodes(rollout_cfg: Dict, split_name: str) -> List[str]
     return [normalize_rollout_episode_id(ep) for ep in episodes]
 
 
+def get_split_label(rollout_cfg: Dict, episode_id: str) -> str:
+    episode_id = normalize_rollout_episode_id(episode_id)
+    episode_stem = episode_id.rsplit("/", 1)[-1]
+    split_cfg = rollout_cfg.get("split_config", {}) if isinstance(rollout_cfg, dict) else {}
+    train_eps = {normalize_rollout_episode_id(ep) for ep in split_cfg.get("train_episodes", []) or []}
+    test_eps = {normalize_rollout_episode_id(ep) for ep in split_cfg.get("test_episodes", []) or []}
+
+    if episode_id in test_eps or episode_stem in test_eps:
+        return "test"
+    if episode_id in train_eps or episode_stem in train_eps:
+        return "train"
+    return "unknown"
+
+
 def build_rollout_raw_dirs(rollout_cfg: Dict, fallback_data_root: Path) -> Dict[str, Path]:
     processing_cfg = rollout_cfg.get("processing_config", {}) if isinstance(rollout_cfg, dict) else {}
     input_paths = processing_cfg.get("input_paths", []) or []
@@ -935,12 +949,8 @@ def main():
         else:
             raise FileNotFoundError(f"rollout_config.yaml not found near RUN_DIR: {run_dir}")
 
-    model_name = run_dir.parent.name
-    if SAVE_DIR_OVERRIDE is None:
-        save_dir = run_dir.parent / "eval_z"
-    else:
-        save_dir = Path(SAVE_DIR_OVERRIDE) / str(model_name)
-    save_dir.mkdir(parents=True, exist_ok=True)
+    model_dir = run_dir.parent
+    save_dir_override = Path(SAVE_DIR_OVERRIDE) if SAVE_DIR_OVERRIDE is not None else None
 
     with open(rollout_cfg_path, "r") as f:
         rollout_cfg = yaml.safe_load(f)
@@ -1004,18 +1014,23 @@ def main():
             print(f"Skip {ep_name}: {e}")
             continue
 
+        split_label = get_split_label(rollout_cfg, ep_id)
+        out_suffix = "eval_z_test" if split_label == "test" else "eval_z_train"
+        save_dir = (model_dir / out_suffix) if save_dir_override is None else (save_dir_override / out_suffix)
+        save_dir.mkdir(parents=True, exist_ok=True)
+
         # raw_path = save_dir / f"z_raw_data_{ep_name}.pkl"
         # with open(raw_path, "wb") as f:
         #     pickle.dump(dists, f)
         # print(f"Saved: {raw_path}")
 
-        render_jobs.append((ep_name, dists))
+        render_jobs.append((ep_name, dists, save_dir))
 
     if len(render_jobs) == 0:
         return
 
     if max_workers <= 1:
-        for ep_name, dists in render_jobs:
+        for ep_name, dists, save_dir in render_jobs:
             _, err = render_episode_outputs(dists, save_dir, ep_name, SAVE_STATIC_PLOTS, SAVE_VIDEO, VIDEO_FPS, VIDEO_DPI, VIDEO_FRAME_STRIDE, VIDEO_X_POINTS, VIDEO_X_STD_MULT)
             if err is not None:
                 print(f"Output save failed for {ep_name}: {err}")
@@ -1026,7 +1041,7 @@ def main():
             executor.submit(
                 render_episode_outputs, dists, save_dir, ep_name, SAVE_STATIC_PLOTS, SAVE_VIDEO, VIDEO_FPS, VIDEO_DPI, VIDEO_FRAME_STRIDE, VIDEO_X_POINTS, VIDEO_X_STD_MULT
             )
-            for ep_name, dists in render_jobs
+            for ep_name, dists, save_dir in render_jobs
         ]
         for future in tqdm(as_completed(futures), total=len(futures), desc="Rendering outputs"):
             ep_name, err = future.result()

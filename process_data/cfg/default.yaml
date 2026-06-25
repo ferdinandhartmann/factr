@@ -1,8 +1,9 @@
 
 input_paths:
   - /home/ferdinand/activeinference/factr/process_data/data_to_process/boxlift_1_follow/data
-  - /home/ferdinand/activeinference/factr/process_data/data_to_process/boxlift_1_lead/data
-output_path: /home/ferdinand/activeinference/factr/process_data/processed_data/boxlift_1_abs_groupshared_full
+  - /home/ferdinand/activeinference/factr/process_data/data_to_process/boxlift_1_lead_trimmed/data
+  - /home/ferdinand/activeinference/factr/process_data/data_to_process/boxlift_2_lead/data
+output_path: /home/ferdinand/activeinference/factr/process_data/processed_data/boxlift_12_abs_group_shared_offset_full
 
 downsample: False
 data_frequency: 50.0
@@ -18,7 +19,8 @@ obs_topics:
   # - /cartesian_admittance_controller/ee_velocity
   - /franka_robot_state_broadcaster/external_wrench_in_stiffness_frame
   - /cartesian_impedance_controller/tracking_error
-  - /cartesian_impedance_controller/pose_command
+  # - /cartesian_impedance_controller/pose_command
+  - /admittance_offset
   # - /cartesian_admittance_controller/tracking_error
   # - /cartesian_admittance_controller/pose_command
 
@@ -40,8 +42,9 @@ wrench_clip: 0.0         # set 0 to disable clipping
 action_config:
   # Commanded EE pose: 9D = [x,y,z] + 6D rotation representation
   # If this impedance topic is missing, the matching admittance pose_command topic is used.
-  /cartesian_impedance_controller/pose_command: 9
+  # /cartesian_impedance_controller/pose_command: 9
   # /cartesian_admittance_controller/pose_command: 9
+  /admittance_offset: 9
 action_pose_mode: absolute  # absolute : raw pose_command, relative: pose_command[t]-pose_command[t-1] with t0=zeros
 
 # Stiffness class extraction for observation (class=1: (low stiffness)) 
