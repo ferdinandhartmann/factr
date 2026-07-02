@@ -115,6 +115,7 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         use_cls_token=True,
         stiffness_classes=3,
         use_stiffness_conditioning=True,
+        use_arrangement_conditioning=False,
         d_z=32,
         latent_distribution="gaussian",
         categorical_num_variables=2,
@@ -148,6 +149,7 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         self.obs_window = int(obs_window)
         self.stiffness_classes = int(stiffness_classes)
         self.use_stiffness_conditioning = bool(use_stiffness_conditioning)
+        self.use_arrangement_conditioning = bool(use_arrangement_conditioning)
         self.beta = float(beta)
         self.free_bits = free_bits
         self.kl_balance_alpha = float(kl_balance_alpha)
@@ -163,6 +165,7 @@ class LowdimStiffnessCVAEAgent(nn.Module):
             f"Initializing LowdimStiffnessCVAEAgent with obs_dim={self._obs_dim}, ac_dim={self._ac_dim}, ac_chunk={self._ac_chunk}, "
             f"obs_window={self.obs_window}, stiffness_classes={self.stiffness_classes}, "
             f"use_stiffness_conditioning={self.use_stiffness_conditioning}, d_z={d_z}, "
+            f"use_arrangement_conditioning={self.use_arrangement_conditioning}, "
             f"latent_distribution={self.latent_distribution}, "
         )
 
@@ -213,6 +216,8 @@ class LowdimStiffnessCVAEAgent(nn.Module):
             num_tokens = 4
         if self.use_stiffness_conditioning:
             num_tokens += 1
+        if self.use_arrangement_conditioning:
+            num_tokens += 1
         if self.use_cls_token:
             num_tokens += 1
 
@@ -243,6 +248,9 @@ class LowdimStiffnessCVAEAgent(nn.Module):
             nn.Linear(self.stiffness_classes, token_dim, bias=False)
             if self.use_stiffness_conditioning
             else None
+        )
+        self.arrangement_encoder = (
+            nn.Linear(9, token_dim, bias=False) if self.use_arrangement_conditioning else None
         )
         self.cmd_encoder = make_group_encoder(9)  ###
 
@@ -356,7 +364,7 @@ class LowdimStiffnessCVAEAgent(nn.Module):
             raise ValueError(f"Expected obs_dim={self._obs_dim}, got {dim}.")
         return batch_size
 
-    def _build_context_tokens(self, obs, class_labels):
+    def _build_context_tokens(self, obs, class_labels, arrangement_vectors=None):
         batch_size = self._prepare_obs(obs)
 
         pose = obs[:, :, self.state_slices["pose"]].reshape(batch_size, -1)
@@ -387,6 +395,20 @@ class LowdimStiffnessCVAEAgent(nn.Module):
             )
             stiffness_token = self.stiffness_encoder(stiffness_one_hot)
             token_list.append(stiffness_token)
+        if self.use_arrangement_conditioning:
+            if arrangement_vectors is None:
+                raise ValueError(
+                    "use_arrangement_conditioning=True requires arrangement_vectors with shape (B, 9)."
+                )
+            arrangement_vectors = arrangement_vectors.to(device=obs.device, dtype=obs.dtype)
+            if arrangement_vectors.ndim == 1 and batch_size == 1 and arrangement_vectors.shape[0] == 9:
+                arrangement_vectors = arrangement_vectors.unsqueeze(0)
+            if arrangement_vectors.shape != (batch_size, 9):
+                raise ValueError(
+                    f"Expected arrangement_vectors shape ({batch_size}, 9), got {tuple(arrangement_vectors.shape)}."
+                )
+            arrangement_token = self.arrangement_encoder(arrangement_vectors)
+            token_list.append(arrangement_token)
         token_list.append(cmd_token)
         tokens = torch.stack(token_list, dim=1)
         tokens = tokens + self.positional_tokens
@@ -561,13 +583,15 @@ class LowdimStiffnessCVAEAgent(nn.Module):
             return action_tensor
         raise ValueError(f"Unsupported action tensor shape: {tuple(action_tensor.shape)}")
 
-    def forward(self, imgs, obs, ac_flat, mask_flat, class_labels=None, **kwargs):
+    def forward(self, imgs, obs, ac_flat, mask_flat, class_labels=None, arrangement_vectors=None, **kwargs):
         del imgs, kwargs
 
         target_actions = self._reshape_actions(ac_flat)
         mask = self._reshape_actions(mask_flat)
 
-        context_tokens = self._build_context_tokens(obs, class_labels=class_labels)
+        context_tokens = self._build_context_tokens(
+            obs, class_labels=class_labels, arrangement_vectors=arrangement_vectors
+        )
         context_tokens_withcmd = context_tokens
         # Exclude command token for latent prior/posterior context; command is always appended last.
         context_tokens = context_tokens[:, :-1]
@@ -603,9 +627,11 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         }
 
     @torch.no_grad()
-    def get_actions_base(self, imgs, obs, class_labels=None, sample=False, **kwargs):
+    def get_actions_base(self, imgs, obs, class_labels=None, arrangement_vectors=None, sample=False, **kwargs):
         del imgs, kwargs, sample
-        context_tokens = self._build_context_tokens(obs, class_labels=class_labels)
+        context_tokens = self._build_context_tokens(
+            obs, class_labels=class_labels, arrangement_vectors=arrangement_vectors
+        )
         context_tokens_no_cmd = context_tokens[:, :-1]
         z_context = self._build_z_context(context_tokens_no_cmd)
         prior_params = self._prior(z_context)
@@ -619,13 +645,16 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         imgs,
         obs,
         class_labels=None,
+        arrangement_vectors=None,
         sample=True,
         num_samples=1,
         return_weights=False,
         **kwargs,
     ):
         del imgs
-        context_tokens = self._build_context_tokens(obs, class_labels=class_labels)
+        context_tokens = self._build_context_tokens(
+            obs, class_labels=class_labels, arrangement_vectors=arrangement_vectors
+        )
         context_tokens_no_cmd = context_tokens[:, :-1]
         z_context = self._build_z_context(context_tokens_no_cmd)
         prior_params = self._prior(z_context)
@@ -644,10 +673,22 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         return action_pred
 
     @torch.no_grad()
-    def get_actions_pos(self, imgs, obs, target_action, class_labels=None, num_samples=1, sample=True, **kwargs):
+    def get_actions_pos(
+        self,
+        imgs,
+        obs,
+        target_action,
+        class_labels=None,
+        arrangement_vectors=None,
+        num_samples=1,
+        sample=True,
+        **kwargs,
+    ):
         del imgs
         target_action = self._reshape_actions(target_action)
-        context_tokens = self._build_context_tokens(obs, class_labels=class_labels)
+        context_tokens = self._build_context_tokens(
+            obs, class_labels=class_labels, arrangement_vectors=arrangement_vectors
+        )
         context_tokens_no_cmd = context_tokens[:, :-1]
 
         posterior_params = self.posterior(context_tokens_no_cmd, target_action)

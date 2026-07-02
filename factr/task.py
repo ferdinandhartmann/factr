@@ -60,6 +60,14 @@ def _build_data_loader(buffer, batch_size, num_workers, is_train=False, shuffle=
     )
 
 
+def _unpack_bc_batch(batch):
+    if len(batch) == 5:
+        (imgs, obs), actions, mask, labels, arrangement_vectors = batch
+        return imgs, obs, actions, mask, labels, arrangement_vectors
+    (imgs, obs), actions, mask, labels = batch
+    return imgs, obs, actions, mask, labels, None
+
+
 def _build_eval_trajectory_fan_figure(
     true_action_chunks,
     pred_action_chunks,
@@ -120,16 +128,41 @@ def _build_eval_fan_title(
     global_step=None,
     override_stiffness_with_mode=False,
     use_stiffness_conditioning=True,
+    arrangement_vectors=None,
 ):
     condition = _eval_condition_label(
         stiffness_label=stiffness_label,
         override_stiffness_with_mode=override_stiffness_with_mode,
         use_stiffness_conditioning=use_stiffness_conditioning,
     )
-    step_str = f" | step={global_step}" if global_step is not None else ""
-    if condition is None:
-        return f"Sampled Prior Trajectories vs Ground Truth{step_str}"
-    return f"Sampled Prior Trajectories vs Ground Truth | {condition}{step_str}"
+    title_parts = ["Sampled Prior Trajectories vs Ground Truth"]
+    if condition is not None:
+        title_parts.append(condition)
+    arrangement_text = _format_arrangement_vectors_for_title(arrangement_vectors)
+    if arrangement_text is not None:
+        title_parts.append(arrangement_text)
+    if global_step is not None:
+        title_parts.append(f"step={global_step}")
+    return " | ".join(title_parts)
+
+
+def _format_arrangement_vectors_for_title(arrangement_vectors, max_unique=4):
+    """Format the unique 9D one-hot arrangements represented in an eval plot."""
+    if arrangement_vectors is None:
+        return None
+    if isinstance(arrangement_vectors, torch.Tensor):
+        vectors = arrangement_vectors.detach().cpu().numpy()
+    else:
+        vectors = np.asarray(arrangement_vectors)
+    vectors = np.asarray(vectors).reshape(-1, 9)
+    unique_vectors = np.unique(np.rint(vectors).astype(np.int64), axis=0)
+
+    formatted = ["[" + ",".join(str(int(value)) for value in vector) + "]" for vector in unique_vectors]
+    if len(formatted) == 1:
+        return f"arrangement={formatted[0]}"
+    shown = formatted[: int(max_unique)]
+    suffix = f" (+{len(formatted) - len(shown)} more)" if len(shown) < len(formatted) else ""
+    return f"arrangements={'; '.join(shown)}{suffix}"
 
 
 def _build_missing_stiffness_figure(
@@ -249,6 +282,11 @@ def _stack_plot_candidates(candidates, device):
         "labels": labels,
         "imgs": imgs,
         "time_index": plot_time_index,
+        **(
+            {"arrangement_vectors": torch.cat([item["arrangement_vectors"] for item in candidates], dim=0).to(device)}
+            if all("arrangement_vectors" in item for item in candidates)
+            else {}
+        ),
     }
 
 
@@ -258,10 +296,67 @@ def _stack_measured_plot_candidates(candidates, device):
 
     obs = torch.cat([item["obs"] for item in candidates], dim=0).to(device)
     plot_time_index = np.asarray([int(item["plot_time_index"]) for item in candidates], dtype=np.int64)
-    return {
+    bundle = {
         "obs": obs,
         "time_index": plot_time_index,
     }
+    if all("actions" in item and "mask" in item for item in candidates):
+        bundle["actions"] = torch.cat([item["actions"] for item in candidates], dim=0)
+        bundle["mask"] = torch.cat([item["mask"] for item in candidates], dim=0)
+    return bundle
+
+
+def _dense_ground_truth_pose_line(
+    action_chunks: np.ndarray,
+    mask_chunks: np.ndarray,
+    measured_pose: np.ndarray,
+) -> np.ndarray:
+    """Build a smooth 3D ground-truth path from dense eval samples."""
+    if action_chunks.ndim != 3 or mask_chunks.ndim != 3 or measured_pose.ndim != 2:
+        return measured_pose
+    if action_chunks.shape[0] == 0 or action_chunks.shape[1] == 0:
+        return measured_pose
+
+    valid_first_step = mask_chunks[:, 0, 0] > 0
+    if not np.any(valid_first_step):
+        return measured_pose
+
+    first_future_pose = action_chunks[valid_first_step, 0, :]
+    if measured_pose.shape[0] == 0:
+        return first_future_pose
+    # The replay buffer uses action_index_offset=1, so prepend the current pose
+    # and then use every dense first future action for a continuous path.
+    return np.concatenate([measured_pose[:1], first_future_pose], axis=0).astype(np.float32)
+
+
+def _default_eval_plot_axis_limits(pose_mode: str):
+    mode = str(pose_mode).strip().lower()
+    if mode == "absolute":
+        return {
+            "x": (0.2, 0.6),
+            "y": (-0.4, 0.4),
+            "z": (0.0, 0.7),
+        }
+    return {
+        "x": (0.0, 0.8),
+        "y": (-0.4, 0.4),
+        "z": (0.0, 0.7),
+    }
+
+
+def _select_eval_plot_axis_limits(axis_limits, pose_mode: str):
+    if axis_limits is None:
+        return _default_eval_plot_axis_limits(pose_mode)
+    if not hasattr(axis_limits, "get"):
+        return axis_limits
+
+    mode = str(pose_mode).strip().lower()
+    relative_keys = ("relative", "relative_timestep", "relative_timesteps", "relative_chunks")
+    if mode == "absolute" and axis_limits.get("absolute") is not None:
+        return axis_limits.get("absolute")
+    if mode in relative_keys and axis_limits.get("relative") is not None:
+        return axis_limits.get("relative")
+    return axis_limits
 
 
 def _compute_endpoint_diversity(sampled_actions: torch.Tensor, mask: torch.Tensor) -> float:
@@ -459,9 +554,7 @@ def _compute_goal_distance_sum(
         pose_arr = np.asarray(pose, dtype=np.float32).reshape(-1)
         if pose_arr.shape[0] < 3:
             continue
-        goal_positions.append(
-            torch.as_tensor(pose_arr[:3], device=sampled_actions.device, dtype=sampled_actions.dtype)
-        )
+        goal_positions.append(torch.as_tensor(pose_arr[:3], device=sampled_actions.device, dtype=sampled_actions.dtype))
 
     if len(goal_positions) == 0:
         return float("nan")
@@ -576,13 +669,10 @@ class DefaultTask:
         sweep_kl_penalty: float = 0.05,
         stiffness_classes: int = 3,
         use_stiffness_conditioning: bool = True,
+        use_arrangement_conditioning: bool = False,
         override_stiffness_with_mode: bool = False,
     ):
-        eval_plot_axis_limits = {
-            "x": (0.2, 0.6),
-            "y": (-0.4, 0.4),
-            "z": (0.0, 0.7),
-        }
+        eval_plot_axis_limits = _select_eval_plot_axis_limits(eval_plot_axis_limits, eval_plot_pose_mode)
         eval_plot_goal_frames = [
             # fourgoals_2
             # {"name": "goal 1", "pose": [0.341, 0.240, 0.606, 0.999, -0.007, 0.013, -0.007, -1.000, -0.010]},
@@ -590,15 +680,42 @@ class DefaultTask:
             # {"name": "goal 3", "pose": [0.591, -0.336, -0.038, 0.907, -0.421, 0.037, -0.421, -0.907, 0.006]},
             # {"name": "goal 4", "pose": [0.439, -0.239, -0.043, 0.905, -0.425, 0.023, -0.426, -0.904, 0.028]},
             # Boxlift goals 9 (no rotation)
-            {"name": "goal 1", "pose": [0.392, -0.042, 0.043, 0.999, -0.004, -0.018, -0.004, -1.000, -0.002]}, # Boxlift goal 1
-            {"name": "goal 2", "pose": [0.401, -0.062, 0.170, 0.999, -0.024, -0.011, -0.024, -0.999, -0.003]}, # Boxlift goal 2
-            {"name": "goal 3", "pose": [0.393, -0.059, 0.307, 0.999, -0.031, -0.004, -0.031, -0.999, -0.018]}, # Boxlift goal 3
-            {"name": "goal 4", "pose": [0.541, -0.350, 0.063, 0.999, 0.019, -0.018, 0.019, -0.999, 0.004]},    # Boxlift goal 4
-            {"name": "goal 5", "pose": [0.552, -0.366, 0.189, 0.999, 0.005, -0.019, 0.005, -0.999, 0.021]},    # Boxlift goal 5
-            {"name": "goal 6", "pose": [0.548, -0.362, 0.331, 0.999, 0.003, 0.001, 0.002, -0.999, 0.034]},     # Boxlift goal 6
-            {"name": "goal 7", "pose": [0.265, -0.374, 0.046, 0.997, 0.013, -0.053, 0.015, -0.997, 0.053]},    # Boxlift goal 7
-            {"name": "goal 8", "pose": [0.262, -0.379, 0.180, 0.999, 0.025, 0.002, 0.025, -0.998, 0.031]},     # Boxlift goal 8
-            {"name": "goal 9", "pose": [0.280, -0.344, 0.318, 0.999, -0.001, -0.013, -0.001, -0.999, -0.024]}, # Boxlift goal 9
+            {
+                "name": "goal 1",
+                "pose": [0.392, -0.042, 0.043, 0.999, -0.004, -0.018, -0.004, -1.000, -0.002],
+            },  # Boxlift goal 1
+            {
+                "name": "goal 2",
+                "pose": [0.401, -0.062, 0.170, 0.999, -0.024, -0.011, -0.024, -0.999, -0.003],
+            },  # Boxlift goal 2
+            {
+                "name": "goal 3",
+                "pose": [0.393, -0.059, 0.307, 0.999, -0.031, -0.004, -0.031, -0.999, -0.018],
+            },  # Boxlift goal 3
+            {
+                "name": "goal 4",
+                "pose": [0.541, -0.350, 0.063, 0.999, 0.019, -0.018, 0.019, -0.999, 0.004],
+            },  # Boxlift goal 4
+            {
+                "name": "goal 5",
+                "pose": [0.552, -0.366, 0.189, 0.999, 0.005, -0.019, 0.005, -0.999, 0.021],
+            },  # Boxlift goal 5
+            {
+                "name": "goal 6",
+                "pose": [0.548, -0.362, 0.331, 0.999, 0.003, 0.001, 0.002, -0.999, 0.034],
+            },  # Boxlift goal 6
+            {
+                "name": "goal 7",
+                "pose": [0.265, -0.374, 0.046, 0.997, 0.013, -0.053, 0.015, -0.997, 0.053],
+            },  # Boxlift goal 7
+            {
+                "name": "goal 8",
+                "pose": [0.262, -0.379, 0.180, 0.999, 0.025, 0.002, 0.025, -0.998, 0.031],
+            },  # Boxlift goal 8
+            {
+                "name": "goal 9",
+                "pose": [0.280, -0.344, 0.318, 0.999, -0.001, -0.013, -0.001, -0.999, -0.024],
+            },  # Boxlift goal 9
         ]
         self.n_cams, self.obs_dim, self.ac_dim = n_cams, obs_dim, ac_dim
         self.train_loader = _build_data_loader(train_buffer, batch_size, num_workers, is_train=True)
@@ -628,6 +745,7 @@ class DefaultTask:
         self.sweep_kl_penalty = max(0.0, float(sweep_kl_penalty))
         self.stiffness_classes = int(stiffness_classes)
         self.use_stiffness_conditioning = bool(use_stiffness_conditioning)
+        self.use_arrangement_conditioning = bool(use_arrangement_conditioning)
         self.override_stiffness_with_mode = bool(override_stiffness_with_mode)
 
         self.weights_history = []
@@ -656,15 +774,27 @@ class DefaultTask:
 
 class BCTask(DefaultTask):
     @staticmethod
-    def _predict_actions(model, imgs, obs, labels):
+    def _predict_actions(model, imgs, obs, labels, arrangement_vectors=None):
         if getattr(model, "factr_baseline", False):
             try:
-                pred_actions = model.get_actions_base(imgs, obs, class_labels=labels)
+                pred_actions = model.get_actions_base(
+                    imgs,
+                    obs,
+                    class_labels=labels,
+                    arrangement_vectors=arrangement_vectors,
+                )
             except TypeError:
                 pred_actions = model.get_actions_base(imgs, obs)
         else:
             try:
-                pred_actions = model.get_actions_prior(imgs, obs, class_labels=labels, sample=False, num_samples=1)
+                pred_actions = model.get_actions_prior(
+                    imgs,
+                    obs,
+                    class_labels=labels,
+                    arrangement_vectors=arrangement_vectors,
+                    sample=False,
+                    num_samples=1,
+                )
             except TypeError:
                 pred_actions = model.get_actions_prior(imgs, obs, sample=False, num_samples=1)
 
@@ -673,12 +803,13 @@ class BCTask(DefaultTask):
         return pred_actions
 
     @staticmethod
-    def _sample_actions_for_plot(model, imgs, obs, labels, num_samples):
+    def _sample_actions_for_plot(model, imgs, obs, labels, num_samples, arrangement_vectors=None):
         try:
             pred_actions = model.get_actions_prior(
                 imgs,
                 obs,
                 class_labels=labels,
+                arrangement_vectors=arrangement_vectors,
                 sample=True,
                 num_samples=num_samples,
             )
@@ -738,12 +869,14 @@ class BCTask(DefaultTask):
             obs=bundle["obs"],
             labels=bundle["labels"],
             num_samples=self.eval_plot_num_samples,
+            arrangement_vectors=bundle.get("arrangement_vectors"),
         )
         pred_actions = self._predict_actions(
             model=model,
             imgs=bundle["imgs"],
             obs=bundle["obs"],
             labels=bundle["labels"],
+            arrangement_vectors=bundle.get("arrangement_vectors"),
         )
 
         pose_dim = 9
@@ -788,6 +921,24 @@ class BCTask(DefaultTask):
         measured_pose_dense = measured_obs_np[:, -1, :pose_dim] if measured_obs_np is not None else measured_pose
         measured_time_dense = measured_bundle["time_index"] if measured_bundle is not None else bundle["time_index"]
         actions_plot = pose_chunks_for_plot(actions_np[:, :, :pose_dim], measured_pose, self.eval_plot_pose_mode)
+        gt_pose_line_3d = actions_plot[:, 0, :pose_dim]
+        if measured_bundle is not None and "actions" in measured_bundle and "mask" in measured_bundle:
+            measured_actions_np = _apply_grouped_transform(
+                measured_bundle["actions"].detach().cpu().numpy(),
+                self._eval_plot_action_stats,
+                inverse=True,
+            )
+            measured_mask_np = measured_bundle["mask"].detach().cpu().numpy()[:, :, :pose_dim]
+            measured_actions_plot = pose_chunks_for_plot(
+                measured_actions_np[:, :, :pose_dim],
+                measured_pose_dense,
+                self.eval_plot_pose_mode,
+            )
+            gt_pose_line_3d = _dense_ground_truth_pose_line(
+                measured_actions_plot,
+                measured_mask_np,
+                measured_pose_dense,
+            )
         sampled_plot = pose_chunks_for_plot(
             sampled_np[:, :, :, :pose_dim],
             measured_pose[:, None, :],
@@ -811,6 +962,7 @@ class BCTask(DefaultTask):
                 global_step=global_step,
                 override_stiffness_with_mode=self.override_stiffness_with_mode,
                 use_stiffness_conditioning=self.use_stiffness_conditioning,
+                arrangement_vectors=bundle.get("arrangement_vectors"),
             ),
             plot_geodesic_subplot=self.eval_plot_geodesic_subplot,
             rpy_config=self.eval_plot_rpy_config,
@@ -828,6 +980,8 @@ class BCTask(DefaultTask):
             true_action_chunks=actions_plot,
             mask_chunks=mask_np,
             source_time_index=bundle["time_index"],
+            measured_line_pose=measured_pose_dense,
+            ground_truth_pose=gt_pose_line_3d,
             plot_ground_truth_reconstructed=True,
             axis_limits=self.eval_plot_axis_limits,
             view_elev=float(self.eval_plot_view_elev),
@@ -836,8 +990,14 @@ class BCTask(DefaultTask):
             show_plot=False,
         )
         assert fig_3d is not None
+        arrangement_title = _format_arrangement_vectors_for_title(bundle.get("arrangement_vectors"))
+        if arrangement_title is not None and len(fig_3d.axes) > 0:
+            current_title = fig_3d.axes[0].get_title()
+            fig_3d.axes[0].set_title(f"{current_title}\n{arrangement_title}")
         action_key = str(self.eval_plot_action_source).strip().lower() or "prior"
-        fan3d_log_key = f"eval/{action_key}_fan3d" if condition_key is None else f"eval/{action_key}_fan3d_{condition_key}"
+        fan3d_log_key = (
+            f"eval/{action_key}_fan3d" if condition_key is None else f"eval/{action_key}_fan3d_{condition_key}"
+        )
         wandb.log({fan3d_log_key: wandb.Image(fig_3d)}, step=global_step)
         plt.close(fig_3d)
 
@@ -869,16 +1029,25 @@ class BCTask(DefaultTask):
         with torch.no_grad():
             for batch in self.test_loader:
                 # 1. データ受け取り
-                (imgs, obs), actions, mask, labels = batch
+                imgs, obs, actions, mask, labels, arrangement_vectors = _unpack_bc_batch(batch)
 
                 # 2. GPU転送
                 imgs = {k: v.to(trainer.device_id) for k, v in imgs.items()}
                 obs, actions, mask, labels = [ar.to(trainer.device_id) for ar in (obs, actions, mask, labels)]
+                if arrangement_vectors is not None:
+                    arrangement_vectors = arrangement_vectors.to(trainer.device_id)
 
                 ac_flat = actions.reshape((actions.shape[0], -1))
                 mask_flat = mask.reshape((mask.shape[0], -1))
 
-                output_dict = model(imgs, obs, ac_flat, mask_flat, class_labels=labels)
+                output_dict = model(
+                    imgs,
+                    obs,
+                    ac_flat,
+                    mask_flat,
+                    class_labels=labels,
+                    arrangement_vectors=arrangement_vectors,
+                )
 
                 losses.append(output_dict["l1_loss"].item())
                 if output_dict.get("kl") is not None:
@@ -892,7 +1061,13 @@ class BCTask(DefaultTask):
                 if output_dict.get("posterior_entropy") is not None:
                     posterior_entropy_vals.append(output_dict["posterior_entropy"].item())
 
-                pred_actions = self._predict_actions(model, imgs, obs, labels)
+                pred_actions = self._predict_actions(
+                    model,
+                    imgs,
+                    obs,
+                    labels,
+                    arrangement_vectors=arrangement_vectors,
+                )
 
                 mask_den = mask.sum((1, 2)).clamp(min=1.0)
                 prior_l1 = torch.abs(mask * (pred_actions - actions))
@@ -916,6 +1091,7 @@ class BCTask(DefaultTask):
                     obs=obs,
                     labels=labels,
                     num_samples=self.eval_plot_num_samples,
+                    arrangement_vectors=arrangement_vectors,
                 )
                 sample_diversity = _compute_sample_diversity(sampled_eval_actions, mask)
                 if np.isfinite(sample_diversity):
@@ -1003,6 +1179,8 @@ class BCTask(DefaultTask):
                             # Keep dense measured poses for plotting without changing prediction anchor stride.
                             measured_candidate = {
                                 "obs": obs[batch_idx : batch_idx + 1].detach().cpu(),
+                                "actions": actions[batch_idx : batch_idx + 1].detach().cpu(),
+                                "mask": mask[batch_idx : batch_idx + 1].detach().cpu(),
                                 "episode_id": int(meta["episode_id"]),
                                 "episode_step": int(meta["episode_step"]),
                                 "episode_length": int(meta["episode_length"]),
@@ -1023,6 +1201,15 @@ class BCTask(DefaultTask):
                                 "episode_step": int(meta["episode_step"]),
                                 "episode_length": int(meta["episode_length"]),
                                 "stiffness_label": int(meta["stiffness_label"]),
+                                **(
+                                    {
+                                        "arrangement_vectors": arrangement_vectors[batch_idx : batch_idx + 1]
+                                        .detach()
+                                        .cpu()
+                                    }
+                                    if arrangement_vectors is not None
+                                    else {}
+                                ),
                             }
                             plot_candidates.append(candidate)
                         raw_eval_index += 1

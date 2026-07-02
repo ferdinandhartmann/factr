@@ -589,6 +589,6 @@ def plot_buffer(buf_path, output_dir=None, step=1, rollout_config_path=None, den
 
 
 if __name__ == "__main__":
-    buf_path = "/home/ferdinand/activeinference/factr/process_data/processed_data/boxlift_12_rel_perdim_offset/buf_train.pkl"
+    buf_path = "/home/ferdinand/activeinference/factr/process_data/processed_data/boxlift_12s_abs_groupshared/buf.pkl"
 
     plot_buffer(buf_path, denormalize=False)

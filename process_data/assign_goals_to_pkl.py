@@ -21,7 +21,7 @@ ROBOT_STATE_TOPIC = "/franka_robot_state_broadcaster/robot_state"
 ARRANGEMENT_TOPIC = "/arrangement"
 MODE_TOPIC = "/mode"
 
-PKL_FOLDER = Path("~/activeinference/factr/process_data/data_to_process/boxlift_2_lead/data").expanduser()
+PKL_FOLDER = Path("~/activeinference/factr/process_data/data_to_process/boxlift_2_follow_stopping/data").expanduser()
 XLSX_PATH = Path(
     "~/activeinference/factr/process_data/data_to_process/boxlift_1_follow/boxlift_1_follow_goalconfig.xlsx"
 ).expanduser()
@@ -41,7 +41,7 @@ W_ROT: float = 1.0
 
 UPDATE_FILES: bool = True
 
-ADD_MODE_TOPIC: bool =  True # /mode topic and 0 for following or 1 for leading, based on folder name. 
+ADD_MODE_TOPIC: bool = True  # /mode topic and 0 for following or 1 for leading, based on folder name.
 
 # Optional manual goal assignment in sorted .pkl filename order.
 # Example: ["goal_1", "goal_3", "goal_2"] or [1, 3, 2]
@@ -486,7 +486,9 @@ def _inject_xlsx_topics_into_pkl(
     return counts
 
 
-def _inject_goal_and_arrangement_into_pkl(pkl_data: Dict[str, Any], goal_name: Any, arrangement_id: Any) -> Dict[str, int]:
+def _inject_goal_and_arrangement_into_pkl(
+    pkl_data: Dict[str, Any], goal_name: Any, arrangement_id: Any
+) -> Dict[str, int]:
     return _inject_xlsx_topics_into_pkl(pkl_data, goal_name, arrangement_id, mode_label=None)
 
 

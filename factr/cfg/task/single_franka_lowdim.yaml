@@ -6,6 +6,7 @@ cam_indexes: []
 n_cams: ${len:${task.cam_indexes}}
 stiffness_classes: ${stiffness_classes}
 use_stiffness_conditioning: ${oc.select:use_stiffness_conditioning,true}
+use_arrangement_conditioning: ${oc.select:use_arrangement_conditioning,false}
 override_stiffness_with_mode: ${oc.select:override_stiffness_with_mode,false}
 eval_plot_max_steps: 800
 eval_plot_prediction_stride: 25
@@ -36,6 +37,7 @@ train_buffer:
   action_chunk_mode: ${action_chunk_mode}
   stiffness_classes: ${task.stiffness_classes}
   override_stiffness_with_mode: ${ifelse:${task.use_stiffness_conditioning},${task.override_stiffness_with_mode},false}
+  use_arrangement_conditioning: ${task.use_arrangement_conditioning}
   shuffle: True
 
 test_buffer:
@@ -54,4 +56,5 @@ test_buffer:
   action_chunk_mode: ${action_chunk_mode}
   stiffness_classes: ${task.stiffness_classes}
   override_stiffness_with_mode: ${ifelse:${task.use_stiffness_conditioning},${task.override_stiffness_with_mode},false}
+  use_arrangement_conditioning: ${task.use_arrangement_conditioning}
   shuffle: False

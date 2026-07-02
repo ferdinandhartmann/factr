@@ -12,10 +12,11 @@ hydra:
       CUDA_VISIBLE_DEVICES: "2"
 
 # dataset_project_prefix:
-dataset_name: boxlift_12_rel_perdim_offset
+dataset_name: boxlift_12_rel_perdim
 sweep_pose_tag: rel
 # Stiffness conditioning accepts 1-based scalar labels (1..C) or direct one-hot vectors (B, C).
-use_stiffness_conditioning: false # (and mode if mode override is enabled) 
+use_stiffness_conditioning: true # (and mode if mode override is enabled)
+use_arrangement_conditioning: true # add one token for the three goal-height arrangement
 override_stiffness_with_mode: true
 base_stiffness_classes: 1
 stiffness_classes: ${stiffness_class_count:${use_stiffness_conditioning},${override_stiffness_with_mode},${base_stiffness_classes}}
@@ -26,7 +27,7 @@ buffer_path: /home/ferdinand/activeinference/factr/process_data/processed_data/$
 # episodes. task.py separates their eval plots using each sample's mode label.
 test_buffer_path: /home/ferdinand/activeinference/factr/process_data/processed_data/${dataset_name}/buf_test.pkl
 
-exp_name: c_vp_b003_v4k4_ofs1_t128_ac20_d12_nomode_ofs
+exp_name: c_fp_b005_v4k4_ofs1_t128_ac20_d12_arr
 
 batch_size: 180
 num_workers: 4

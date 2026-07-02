@@ -2,7 +2,7 @@ shared:
   dataset_name: oxlift_1_rel_perdim
   dataset_project_prefix: b
   buffer_set_name: auto
-  run_name: c_vp_b005_v4k4_ofs1_t128
+  run_name: c_fp_b005_v4k4_ofs1_t128_ac20_d12
   
   checkpoint_name: latest_ckpt.ckpt
   normalization_mode: apply # options: skip, apply, #
@@ -19,9 +19,9 @@ shared:
     # - boxlift_1_follow/ep_25
     # - boxlift_1_follow/ep_26
     # - boxlift_1_follow/ep_29
-    # - boxlift_1_follow/ep_40
+    - boxlift_1_follow/ep_40
     - boxlift_1_follow/ep_55
-    # - boxlift_1_lead/ep_08
+    - boxlift_1_lead/ep_08
     # - boxlift_1_lead/ep_24
     # - boxlift_1_lead/ep_25
     # - boxlift_1_lead/ep_37
@@ -184,3 +184,10 @@ eval_z_distr:
   video_x_std_mult: 4.0 # x range for distribution plots will be [mu - x_std_mult*std, mu + x_std_mult*std]
   # 0 -> auto: min(num_episodes, max(1, cpu_count - 1)); 1 -> disable parallel rendering
   max_parallel_episodes: 5
+
+eval_stiffness_interpolation_pca:
+  interpolation_step: 0.1 # [1,0], [0.9,0.1], ..., [0,1]
+  plot_stride: 10 # plot every Nth episode window; PCA still uses every window
+  color_map: turbo # high-contrast interpolation colors; alternatives: plasma, coolwarm
+  show_plot: false
+  out_dir_override: null

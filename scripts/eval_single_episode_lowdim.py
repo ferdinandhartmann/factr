@@ -12,9 +12,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import yaml
+from factr.arrangement import arrangement_id_to_one_hot
+from factr.transforms import get_transform_by_name
 from factr.utils import apply_grouped_transform as _apply_grouped_transform
 from factr.utils import ensure_normalized as _ensure_normalized
-from factr.transforms import get_transform_by_name
 from factr.utils_plot import RPYPlotConfig, build_pose_3d_figure, build_pose_comparison_figure, build_pose_fan_figure, pose_chunks_for_plot
 from hydra.utils import instantiate
 from omegaconf import OmegaConf
@@ -513,10 +514,13 @@ def _load_raw_episode_to_arrays(episode_file: Path, rollout_cfg) -> Dict:
     stiffness_topic = stiffness_info.get("topic", None)
     stiffness_key = stiffness_info.get("key", "stiffness")
     stiffness_thresholds = stiffness_info.get("norm_thresholds")
+    arrangement_topic = obs_cfg.get("arrangement_topic", None)
 
     topics_for_sync = list(state_topics) + [action_topic]
     if stiffness_topic:
         topics_for_sync.append(stiffness_topic)
+    if arrangement_topic:
+        topics_for_sync.append(arrangement_topic)
     # Deduplicate topics while preserving order. This avoids double-processing
     # when the action topic is also present in state_topics (e.g. cmd included).
     topics_for_sync = list(dict.fromkeys(topics_for_sync))
@@ -571,7 +575,23 @@ def _load_raw_episode_to_arrays(episode_file: Path, rollout_cfg) -> Dict:
     else:
         episode_label = 1
 
-    return {"states": states, "actions": actions, "episode_label": int(episode_label), "num_steps": int(num_steps)}
+    arrangement_vector = None
+    if arrangement_topic:
+        raw_arrangement = _extract_fixed_vector(
+            synced[arrangement_topic][0],
+            ["arrangement", "arrangement_id"],
+            1,
+            None,
+        )
+        arrangement_vector = arrangement_id_to_one_hot(raw_arrangement)
+
+    return {
+        "states": states,
+        "actions": actions,
+        "episode_label": int(episode_label),
+        "arrangement_vector": arrangement_vector,
+        "num_steps": int(num_steps),
+    }
 
 
 def _load_raw_background_trajectories(episode_items: List[Tuple[str, Path]], rollout_cfg: Dict) -> List[np.ndarray]:
@@ -685,6 +705,7 @@ def _summarize_metrics(
     actions_norm: np.ndarray,
     mask_norm: np.ndarray,
     labels: np.ndarray,
+    arrangement_vectors: Optional[np.ndarray],
     num_samples: int,
     action_source: str,
     sample: bool,
@@ -693,18 +714,55 @@ def _summarize_metrics(
     actions_t = torch.from_numpy(actions_norm).float().to(device)
     mask_t = torch.from_numpy(mask_norm).float().to(device)
     labels_t = torch.from_numpy(labels).long().to(device)
+    arrangement_t = (
+        torch.from_numpy(arrangement_vectors).float().to(device)
+        if arrangement_vectors is not None
+        else None
+    )
 
     ac_flat = actions_t.reshape(actions_t.shape[0], -1)
     mask_flat = mask_t.reshape(mask_t.shape[0], -1)
 
     with torch.no_grad():
-        output = model({}, obs_t, ac_flat, mask_flat, class_labels=labels_t)
+        output = model(
+            {},
+            obs_t,
+            ac_flat,
+            mask_flat,
+            class_labels=labels_t,
+            arrangement_vectors=arrangement_t,
+        )
         if action_source == "prior":
-            pred_det = model.get_actions_prior({}, obs_t, class_labels=labels_t, sample=sample, num_samples=1)
-            pred_samples = model.get_actions_prior({}, obs_t, class_labels=labels_t, sample=sample, num_samples=num_samples)
+            pred_det = model.get_actions_prior(
+                {}, obs_t, class_labels=labels_t, arrangement_vectors=arrangement_t, sample=sample, num_samples=1
+            )
+            pred_samples = model.get_actions_prior(
+                {},
+                obs_t,
+                class_labels=labels_t,
+                arrangement_vectors=arrangement_t,
+                sample=sample,
+                num_samples=num_samples,
+            )
         else:
-            pred_det = model.get_actions_pos({}, obs_t, actions_t, class_labels=labels_t, sample=sample, num_samples=1)
-            pred_samples = model.get_actions_pos({}, obs_t, actions_t, class_labels=labels_t, sample=sample, num_samples=num_samples)
+            pred_det = model.get_actions_pos(
+                {},
+                obs_t,
+                actions_t,
+                class_labels=labels_t,
+                arrangement_vectors=arrangement_t,
+                sample=sample,
+                num_samples=1,
+            )
+            pred_samples = model.get_actions_pos(
+                {},
+                obs_t,
+                actions_t,
+                class_labels=labels_t,
+                arrangement_vectors=arrangement_t,
+                sample=sample,
+                num_samples=num_samples,
+            )
 
         if pred_det.ndim == 4:
             pred_det = pred_det[:, 0]
@@ -883,6 +941,20 @@ def main():
         labels_arr = ep_data["labels"]
         steps_arr = ep_data["steps"]
         stiffness_arr = labels_arr
+        use_arrangement_conditioning = bool(
+            OmegaConf.select(cfg, "use_arrangement_conditioning", default=False)
+        )
+        arrangement_vectors = None
+        if use_arrangement_conditioning:
+            if raw_ep["arrangement_vector"] is None:
+                raise ValueError(
+                    "This checkpoint enables arrangement conditioning, but the raw episode has no arrangement topic."
+                )
+            arrangement_vectors = np.repeat(
+                raw_ep["arrangement_vector"][None, :],
+                obs_arr.shape[0],
+                axis=0,
+            ).astype(np.float32)
 
         obs_norm, obs_applied = _ensure_normalized(obs_arr, state_stats, NORMALIZATION_MODE, "state")
         actions_norm, action_applied = _ensure_normalized(actions_arr, action_stats, NORMALIZATION_MODE, "action")
@@ -907,6 +979,7 @@ def main():
             actions_norm=actions_norm,
             mask_norm=mask_arr,
             labels=labels_arr,
+            arrangement_vectors=arrangement_vectors,
             num_samples=int(NUM_SAMPLES),
             action_source=action_source,
             sample=sample_predictions,

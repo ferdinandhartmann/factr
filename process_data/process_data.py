@@ -71,11 +71,12 @@ def _resolve_pose_topic(state_obs_topics, topic_slices, cfg):
     return None
 
 
-def _resolve_first_available_topic(topic_slices, candidates, label):
+def _resolve_first_available_topic(topic_slices, candidates, label, warn=True):
     for topic in candidates:
         if topic in topic_slices:
             return topic
-    print(f"⚠️ Could not find {label} topic. Tried: {candidates}")
+    if warn:
+        print(f"⚠️ Could not find {label} topic. Tried: {candidates}")
     return None
 
 
@@ -236,10 +237,11 @@ def normalize_states_groupwise(all_states_for_norm, state_obs_topics, state_topi
             "/cartesian_admittance_controller/pose_command",
         ],
         "commanded pose",
+        warn=False,
     )
     admittance_offset_topic = "/admittance_offset" if "/admittance_offset" in topic_slices else None
 
-    required_topics = [pose_topic, vel_topic, track_topic, wrench_topic, cmd_topic]
+    required_topics = [pose_topic, vel_topic, track_topic, wrench_topic]
     missing_topics = [t for t in required_topics if t is None or t not in topic_slices]
     if missing_topics:
         print(f"⚠️ Missing topics for grouped normalization: {missing_topics}. Falling back to gaussian norm.")
@@ -260,10 +262,6 @@ def normalize_states_groupwise(all_states_for_norm, state_obs_topics, state_topi
     wrench_slice = topic_slices[wrench_topic]
     if (wrench_slice.stop - wrench_slice.start) != 6:
         raise ValueError(f"External wrench topic {wrench_topic} must be 6-dim.")
-
-    cmd_slice = topic_slices[cmd_topic]
-    if (cmd_slice.stop - cmd_slice.start) != 9:
-        raise ValueError(f"Command topic {cmd_topic} must be 9-dim.")
 
     pos_slice = slice(pose_slice.start, pose_slice.start + 3)
     ori_slice = slice(pose_slice.start + 3, pose_slice.start + 9)
@@ -308,26 +306,29 @@ def normalize_states_groupwise(all_states_for_norm, state_obs_topics, state_topi
         }
     )
 
-    ### added command to input
-    cmd_pos_slice = slice(cmd_slice.start, cmd_slice.start + 3)
-    cmd_ori_slice = slice(cmd_slice.start + 3, cmd_slice.start + 9)
-    cmd_pos_mean, cmd_pos_std = _compute_pose_gaussian_stats(
-        all_states_for_norm, cmd_pos_slice, shared_std=shared_pose_std
-    )
-    cmd_ori_mean, cmd_ori_std = _compute_pose_gaussian_stats(
-        all_states_for_norm, cmd_ori_slice, shared_std=shared_pose_std
-    )
-    cmd_mean = np.concatenate([cmd_pos_mean, cmd_ori_mean], axis=0)
-    cmd_std = np.concatenate([cmd_pos_std, cmd_ori_std], axis=0)
-    _apply_gaussian(all_states_for_norm, cmd_slice, cmd_mean, cmd_std)
-    cmd_group = {
-        "name": "ee_pose_commanded",
-        "type": "gaussian",
-        "indices": [cmd_slice.start, cmd_slice.stop],
-        "mean": [float(x) for x in cmd_mean],
-        "std": [float(x) for x in cmd_std],
-    }
-    stats["groups"].append(cmd_group)
+    if cmd_topic is not None:
+        cmd_slice = topic_slices[cmd_topic]
+        if (cmd_slice.stop - cmd_slice.start) != 9:
+            raise ValueError(f"Command topic {cmd_topic} must be 9-dim.")
+        cmd_pos_slice = slice(cmd_slice.start, cmd_slice.start + 3)
+        cmd_ori_slice = slice(cmd_slice.start + 3, cmd_slice.start + 9)
+        cmd_pos_mean, cmd_pos_std = _compute_pose_gaussian_stats(
+            all_states_for_norm, cmd_pos_slice, shared_std=shared_pose_std
+        )
+        cmd_ori_mean, cmd_ori_std = _compute_pose_gaussian_stats(
+            all_states_for_norm, cmd_ori_slice, shared_std=shared_pose_std
+        )
+        cmd_mean = np.concatenate([cmd_pos_mean, cmd_ori_mean], axis=0)
+        cmd_std = np.concatenate([cmd_pos_std, cmd_ori_std], axis=0)
+        _apply_gaussian(all_states_for_norm, cmd_slice, cmd_mean, cmd_std)
+        cmd_group = {
+            "name": "ee_pose_commanded",
+            "type": "gaussian",
+            "indices": [cmd_slice.start, cmd_slice.stop],
+            "mean": [float(x) for x in cmd_mean],
+            "std": [float(x) for x in cmd_std],
+        }
+        stats["groups"].append(cmd_group)
 
     if admittance_offset_topic is not None:
         offset_slice = topic_slices[admittance_offset_topic]

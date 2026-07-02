@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import yaml
+from factr.arrangement import arrangement_id_to_one_hot
 from hydra.utils import instantiate
 from matplotlib.collections import LineCollection
 from omegaconf import OmegaConf
@@ -134,10 +135,13 @@ def _load_raw_episode_to_arrays(episode_file: Path, rollout_cfg) -> Dict:
     stiffness_topic = stiffness_info.get("topic", None)
     stiffness_key = stiffness_info.get("key", "stiffness")
     stiffness_thresholds = stiffness_info.get("norm_thresholds")
+    arrangement_topic = obs_cfg.get("arrangement_topic", None)
 
     required_topics = list(state_topics) + [action_topic]
     if stiffness_topic:
         required_topics.append(stiffness_topic)
+    if arrangement_topic:
+        required_topics.append(arrangement_topic)
     missing_topics = [topic for topic in required_topics if topic not in data]
     if len(missing_topics) > 0:
         raise ValueError(f"Missing required topics in raw episode file: {missing_topics}")
@@ -182,7 +186,23 @@ def _load_raw_episode_to_arrays(episode_file: Path, rollout_cfg) -> Dict:
     else:
         episode_label = 1
 
-    return {"states": states, "actions": actions, "episode_label": int(episode_label), "num_steps": num_steps}
+    arrangement_vector = None
+    if arrangement_topic:
+        arrangement_msg = data[arrangement_topic][0]
+        arrangement_raw = _extract_fixed_vector(
+            arrangement_msg,
+            ["arrangement", "arrangement_id"],
+            1,
+        )
+        arrangement_vector = arrangement_id_to_one_hot(arrangement_raw)
+
+    return {
+        "states": states,
+        "actions": actions,
+        "episode_label": int(episode_label),
+        "arrangement_vector": arrangement_vector,
+        "num_steps": num_steps,
+    }
 
 
 def _build_eval_windows(states: np.ndarray, actions: np.ndarray, episode_label: int, obs_window: int, ac_chunk: int, action_index_offset: int) -> Dict[str, np.ndarray]:
@@ -290,13 +310,32 @@ def _apply_grouped_transform(values: np.ndarray, stats: Dict, inverse: bool = Fa
     return arr
 
 
-def _predict_actions(model, device: torch.device, obs_norm: np.ndarray, labels: np.ndarray, num_samples: int) -> np.ndarray:
+def _predict_actions(
+    model,
+    device: torch.device,
+    obs_norm: np.ndarray,
+    labels: np.ndarray,
+    num_samples: int,
+    arrangement_vectors: Optional[np.ndarray] = None,
+) -> np.ndarray:
     obs_t = torch.from_numpy(obs_norm).float().to(device)
     labels_t = torch.from_numpy(labels).long().to(device)
+    arrangement_t = (
+        torch.from_numpy(arrangement_vectors).float().to(device)
+        if arrangement_vectors is not None
+        else None
+    )
 
     ### Make predictions. image is empty, and class_label is stiffness label
     with torch.no_grad():
-        pred = model.get_actions_prior({}, obs_t, class_labels=labels_t, sample=True, num_samples=int(num_samples))
+        pred = model.get_actions_prior(
+            {},
+            obs_t,
+            class_labels=labels_t,
+            arrangement_vectors=arrangement_t,
+            sample=True,
+            num_samples=int(num_samples),
+        )
 
     # keep (B, S, T, D)
     return pred.detach().cpu().numpy()
@@ -395,6 +434,20 @@ def main():
     obs_arr = ep_data["obs"]
     actions_arr = ep_data["actions"]
     labels_arr = ep_data["labels"]
+    use_arrangement_conditioning = bool(
+        OmegaConf.select(cfg, "use_arrangement_conditioning", default=False)
+    )
+    arrangement_vectors = None
+    if use_arrangement_conditioning:
+        if raw_ep["arrangement_vector"] is None:
+            raise ValueError(
+                "This checkpoint enables arrangement conditioning, but the raw episode has no arrangement topic."
+            )
+        arrangement_vectors = np.repeat(
+            raw_ep["arrangement_vector"][None, :],
+            obs_arr.shape[0],
+            axis=0,
+        ).astype(np.float32)
 
     state_stats = rollout_cfg.get("norm_stats", {}).get("state", None)
     action_stats = rollout_cfg.get("norm_stats", {}).get("action", None)
@@ -417,7 +470,14 @@ def main():
 
     model = _load_model(cfg, ckpt_path, device)
 
-    pred_samples_norm = _predict_actions(model=model, device=device, obs_norm=obs_norm, labels=labels_arr, num_samples=int(NUM_SAMPLES))
+    pred_samples_norm = _predict_actions(
+        model=model,
+        device=device,
+        obs_norm=obs_norm,
+        labels=labels_arr,
+        num_samples=int(NUM_SAMPLES),
+        arrangement_vectors=arrangement_vectors,
+    )
 
     # Convert predictions and targets back to original value space.
     pred_samples_denorm = _apply_grouped_transform(pred_samples_norm, action_stats, inverse=True)

@@ -9,7 +9,9 @@ import numpy as np
 
 
 # Update these
-PKL_PATH = Path("~/factr_ws/raw_data/fourgoals_1_stiff/20260203/data/ep_01.pkl").expanduser()
+PKL_PATH = Path(
+    "~/activeinference/factr/process_data/data_to_process/boxlift_2_lead/data/ep_01.pkl"
+).expanduser()
 JSON_PATH = PKL_PATH.with_name(PKL_PATH.stem + "_converted.json")
 
 

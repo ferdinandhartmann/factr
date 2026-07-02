@@ -16,6 +16,8 @@ import tqdm
 from robobuf import ReplayBuffer as RB
 from torch.utils.data import Dataset, IterableDataset
 
+from factr.arrangement import arrangement_id_to_one_hot
+
 
 # helper functions
 def _img_to_tensor(x):
@@ -312,6 +314,7 @@ class RobobufReplayBufferLowdim(ReplayBuffer):
         action_chunk_mode="absolute",
         stiffness_classes=3,
         override_stiffness_with_mode=False,
+        use_arrangement_conditioning=False,
         shuffle=True,
     ):
         assert mode in ("train", "test"), "Mode must be train/test"
@@ -329,6 +332,7 @@ class RobobufReplayBufferLowdim(ReplayBuffer):
         self.action_chunk_mode = str(action_chunk_mode)
         self.stiffness_classes = int(stiffness_classes)
         self.override_stiffness_with_mode = bool(override_stiffness_with_mode)
+        self.use_arrangement_conditioning = bool(use_arrangement_conditioning)
         self._tracking_slice = slice(21, 27)
         if not self.include_tracking_error and self.obs_dim >= 36:
             self.obs_dim -= 6
@@ -414,6 +418,18 @@ class RobobufReplayBufferLowdim(ReplayBuffer):
             raise ValueError(f"Action dim {action.shape[0]} smaller than pose_action_dim={self.pose_action_dim}.")
         return action[: self.pose_action_dim]
 
+    def _extract_arrangement_vector(self, step, episode_id, episode_step):
+        obs_dict = _obs_to_dict(step.obs)
+        if "arrangement" not in obs_dict:
+            raise ValueError(
+                "use_arrangement_conditioning=True requires obs['arrangement'] in every step; "
+                f"missing from episode {episode_id}, step {episode_step}."
+            )
+        try:
+            return arrangement_id_to_one_hot(obs_dict["arrangement"])
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Invalid arrangement in episode {episode_id}, step {episode_step}: {exc}") from exc
+
     def _infer_episode_stiffness_labels(self, episodes):
         labels = []
         for ep_idx, episode in enumerate(episodes):
@@ -450,6 +466,12 @@ class RobobufReplayBufferLowdim(ReplayBuffer):
 
     def _append_episode_samples(self, episode, label, ac_chunk, episode_id):
         episode_states = [self._extract_obs_vector(step) for step in episode]
+        episode_arrangements = None
+        if self.use_arrangement_conditioning:
+            episode_arrangements = [
+                self._extract_arrangement_vector(step, episode_id=episode_id, episode_step=step_idx)
+                for step_idx, step in enumerate(episode)
+            ]
         state_dim = episode_states[0].shape[0]
         if state_dim != self.obs_dim:
             raise ValueError(f"Expected obs_dim={self.obs_dim}, got {state_dim}.")
@@ -484,7 +506,8 @@ class RobobufReplayBufferLowdim(ReplayBuffer):
             if self.action_chunk_mode == "relative_chunks":
                 pose_chunk = pose_chunk - current_pose[None, :]
             loss_mask = np.asarray(loss_mask, dtype=np.float32)
-            self.s_a_mask.append((obs_window, pose_chunk, loss_mask, int(label)))
+            arrangement_vector = episode_arrangements[t_idx] if episode_arrangements is not None else None
+            self.s_a_mask.append((obs_window, pose_chunk, loss_mask, int(label), arrangement_vector))
             self.sample_metadata.append(
                 {
                     "episode_id": int(episode_id),
@@ -495,14 +518,17 @@ class RobobufReplayBufferLowdim(ReplayBuffer):
             )
 
     def __getitem__(self, idx):
-        obs_window, pose_chunk, loss_mask, label = self.s_a_mask[idx]
+        obs_window, pose_chunk, loss_mask, label, arrangement_vector = self.s_a_mask[idx]
 
         obs_tensor = _to_tensor(obs_window)
         action_tensor = _to_tensor(pose_chunk)
         mask_tensor = _to_tensor(loss_mask)[:, None].repeat((1, action_tensor.shape[-1]))
         label_tensor = torch.tensor(label, dtype=torch.long)
 
-        return ({}, obs_tensor), action_tensor, mask_tensor, label_tensor
+        sample = (({}, obs_tensor), action_tensor, mask_tensor, label_tensor)
+        if not self.use_arrangement_conditioning:
+            return sample
+        return (*sample, _to_tensor(arrangement_vector))
 
     def get_sample_metadata(self, idx):
         if idx < 0 or idx >= len(self.sample_metadata):
