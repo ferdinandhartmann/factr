@@ -19,12 +19,14 @@ from factr.utils import (
 )
 from factr.utils import (
     load_norm_stats_from_buffer_path as _load_norm_stats_from_buffer_path,
+    state_stats_without_tracking_error as _state_stats_without_tracking_error,
 )
 from factr.utils_plot import (
     RPYPlotConfig,
     build_pose_3d_figure,
     build_pose_fan_figure,
     pose_chunks_for_plot,
+    relative_chunk_to_absolute_torch,
 )
 
 matplotlib.use("Agg")
@@ -41,6 +43,12 @@ def seed_worker(_worker_id: int) -> None:
     """
     worker_seed = torch.initial_seed() % 2**32
     pl.seed_everything(worker_seed)
+
+
+def _decode_action_values(values: np.ndarray, action_stats, pose_mode: str) -> np.ndarray:
+    if str(pose_mode).strip().lower() == "relative_chunks":
+        return values.copy()
+    return _apply_grouped_transform(values, action_stats, inverse=True)
 
 
 def _build_data_loader(buffer, batch_size, num_workers, is_train=False, shuffle=True):
@@ -525,6 +533,7 @@ def _compute_goal_distance_sum(
     goal_frames,
     pose_mode: str,
     include_tracking_error: bool,
+    sampled_abs_trajs: Optional[torch.Tensor] = None,
 ) -> float:
     """Sum, over goals, of the minimum endpoint distance across sampled trajectories.
 
@@ -559,17 +568,16 @@ def _compute_goal_distance_sum(
     if len(goal_positions) == 0:
         return float("nan")
 
-    # Convert relative timestep/chunk actions to absolute commanded poses before goal distances.
-    sampled_np = sampled_actions.detach().cpu().numpy()
-    current_cmd_np = obs[:, -1, cmd_start:cmd_stop].detach().cpu().numpy()
-    sampled_abs_np = pose_chunks_for_plot(sampled_np, current_cmd_np[:, None, :], pose_mode)
-
     goals = torch.stack(goal_positions, dim=0)  # (G, 3)
-    endpoints = torch.as_tensor(
-        sampled_abs_np[:, :, -1, :3],
-        device=sampled_actions.device,
-        dtype=sampled_actions.dtype,
-    )  # (B, S, 3)
+    if sampled_abs_trajs is None:
+        sampled_np = sampled_actions.detach().cpu().numpy()
+        current_cmd_np = obs[:, -1, cmd_start:cmd_stop].detach().cpu().numpy()
+        sampled_abs_np = pose_chunks_for_plot(sampled_np, current_cmd_np[:, None, :], pose_mode)
+        endpoints = torch.as_tensor(
+            sampled_abs_np[:, :, -1, :3], device=sampled_actions.device, dtype=sampled_actions.dtype
+        )
+    else:
+        endpoints = sampled_abs_trajs[:, :, -1, :3]
     distances = torch.linalg.norm(endpoints.unsqueeze(2) - goals.unsqueeze(0).unsqueeze(0), dim=-1)  # (B, S, G)
     min_distances = distances.min(dim=1).values  # (B, G)
     return float(min_distances.sum(dim=-1).mean().item())
@@ -581,6 +589,7 @@ def _compute_dist_to_opt_traj(
     goal_frames,
     pose_mode: str,
     include_tracking_error: bool,
+    sampled_abs_trajs: Optional[torch.Tensor] = None,
 ) -> float:
     """Endpoint excess distance to the four straight-line goal endpoints.
 
@@ -614,16 +623,15 @@ def _compute_dist_to_opt_traj(
     if len(goal_positions) == 0:
         return float("nan")
 
-    # Convert relative/absolute sampled chunks into absolute commanded pose before measuring goal coverage.
-    sampled_np = sampled_actions.detach().cpu().numpy()
-    current_cmd_np = obs[:, -1, cmd_start:cmd_stop].detach().cpu().numpy()
-    sampled_abs_np = pose_chunks_for_plot(sampled_np, current_cmd_np[:, None, :], pose_mode)
-
-    endpoints = torch.as_tensor(
-        sampled_abs_np[:, :, -1, :3],
-        device=sampled_actions.device,
-        dtype=sampled_actions.dtype,
-    )  # (B, S, 3)
+    if sampled_abs_trajs is None:
+        sampled_np = sampled_actions.detach().cpu().numpy()
+        current_cmd_np = obs[:, -1, cmd_start:cmd_stop].detach().cpu().numpy()
+        sampled_abs_np = pose_chunks_for_plot(sampled_np, current_cmd_np[:, None, :], pose_mode)
+        endpoints = torch.as_tensor(
+            sampled_abs_np[:, :, -1, :3], device=sampled_actions.device, dtype=sampled_actions.dtype
+        )
+    else:
+        endpoints = sampled_abs_trajs[:, :, -1, :3]
     goals = torch.as_tensor(
         np.stack(goal_positions, axis=0),
         device=sampled_actions.device,
@@ -739,6 +747,8 @@ class DefaultTask:
         )
         buffer_path = getattr(test_buffer, "buffer_path", None)
         self._eval_plot_state_stats, self._eval_plot_action_stats = _load_norm_stats_from_buffer_path(buffer_path)
+        if not self.include_tracking_error:
+            self._eval_plot_state_stats = _state_stats_without_tracking_error(self._eval_plot_state_stats)
         self.sweep_target_min_diversity = max(0.0, float(sweep_target_min_diversity))
         self.sweep_target_min_kl = max(0.0, float(sweep_target_min_kl))
         self.sweep_diversity_penalty = max(0.0, float(sweep_diversity_penalty))
@@ -887,20 +897,20 @@ class BCTask(DefaultTask):
         assert bundle["obs"].shape[-1] >= pose_dim
 
         # Denormalize once, then convert chunks into absolute pose values for plotting.
-        actions_np = _apply_grouped_transform(
+        actions_np = _decode_action_values(
             bundle["actions"].detach().cpu().numpy(),
             self._eval_plot_action_stats,
-            inverse=True,
+            self.eval_plot_pose_mode,
         )
-        sampled_np = _apply_grouped_transform(
+        sampled_np = _decode_action_values(
             sampled_actions.detach().cpu().numpy(),
             self._eval_plot_action_stats,
-            inverse=True,
+            self.eval_plot_pose_mode,
         )
-        pred_np = _apply_grouped_transform(
+        pred_np = _decode_action_values(
             pred_actions.detach().cpu().numpy(),
             self._eval_plot_action_stats,
-            inverse=True,
+            self.eval_plot_pose_mode,
         )
         obs_np = _apply_grouped_transform(
             bundle["obs"].detach().cpu().numpy(),
@@ -918,33 +928,40 @@ class BCTask(DefaultTask):
         )
 
         measured_pose = obs_np[:, -1, :pose_dim]
+        cmd_start = 27 if self.include_tracking_error else 21
+        command_pose = obs_np[:, -1, cmd_start : cmd_start + pose_dim]
         measured_pose_dense = measured_obs_np[:, -1, :pose_dim] if measured_obs_np is not None else measured_pose
         measured_time_dense = measured_bundle["time_index"] if measured_bundle is not None else bundle["time_index"]
-        actions_plot = pose_chunks_for_plot(actions_np[:, :, :pose_dim], measured_pose, self.eval_plot_pose_mode)
+        plot_anchor = command_pose if self.eval_plot_pose_mode == "relative_chunks" else measured_pose
+        actions_plot = pose_chunks_for_plot(actions_np[:, :, :pose_dim], plot_anchor, self.eval_plot_pose_mode)
         gt_pose_line_3d = actions_plot[:, 0, :pose_dim]
         if measured_bundle is not None and "actions" in measured_bundle and "mask" in measured_bundle:
-            measured_actions_np = _apply_grouped_transform(
+            measured_actions_np = _decode_action_values(
                 measured_bundle["actions"].detach().cpu().numpy(),
                 self._eval_plot_action_stats,
-                inverse=True,
+                self.eval_plot_pose_mode,
             )
             measured_mask_np = measured_bundle["mask"].detach().cpu().numpy()[:, :, :pose_dim]
+            measured_command_pose = measured_obs_np[:, -1, cmd_start : cmd_start + pose_dim]
+            measured_anchor = (
+                measured_command_pose if self.eval_plot_pose_mode == "relative_chunks" else measured_pose_dense
+            )
             measured_actions_plot = pose_chunks_for_plot(
                 measured_actions_np[:, :, :pose_dim],
-                measured_pose_dense,
+                measured_anchor,
                 self.eval_plot_pose_mode,
             )
             gt_pose_line_3d = _dense_ground_truth_pose_line(
                 measured_actions_plot,
                 measured_mask_np,
-                measured_pose_dense,
+                measured_anchor,
             )
         sampled_plot = pose_chunks_for_plot(
             sampled_np[:, :, :, :pose_dim],
-            measured_pose[:, None, :],
+            plot_anchor[:, None, :],
             self.eval_plot_pose_mode,
         )
-        pred_plot = pose_chunks_for_plot(pred_np[:, :, :pose_dim], measured_pose, self.eval_plot_pose_mode)
+        pred_plot = pose_chunks_for_plot(pred_np[:, :, :pose_dim], plot_anchor, self.eval_plot_pose_mode)
         mask_np = bundle["mask"].detach().cpu().numpy()[:, :, :pose_dim]
 
         fig_fan = _build_eval_trajectory_fan_figure(
@@ -1099,16 +1116,20 @@ class BCTask(DefaultTask):
                 sample_endpoint_diversity = _compute_endpoint_diversity(sampled_eval_actions, mask)
                 if np.isfinite(sample_endpoint_diversity):
                     sample_endpoint_diversity_vals.append(sample_endpoint_diversity)
-                sampled_eval_actions_denorm = _apply_grouped_transform(
-                    sampled_eval_actions.detach().cpu().numpy(),
-                    self._eval_plot_action_stats,
-                    inverse=True,
-                )
-                sampled_eval_actions_denorm = torch.as_tensor(
-                    sampled_eval_actions_denorm,
-                    dtype=sampled_eval_actions.dtype,
-                    device=sampled_eval_actions.device,
-                )
+                if self.eval_plot_pose_mode == "relative_chunks":
+                    # Relative chunks are already in physical units; keep them on the GPU.
+                    sampled_eval_actions_denorm = sampled_eval_actions
+                else:
+                    sampled_eval_actions_denorm = _decode_action_values(
+                        sampled_eval_actions.detach().cpu().numpy(),
+                        self._eval_plot_action_stats,
+                        self.eval_plot_pose_mode,
+                    )
+                    sampled_eval_actions_denorm = torch.as_tensor(
+                        sampled_eval_actions_denorm,
+                        dtype=sampled_eval_actions.dtype,
+                        device=sampled_eval_actions.device,
+                    )
                 obs_denorm = _apply_grouped_transform(
                     obs.detach().cpu().numpy(),
                     self._eval_plot_state_stats,
@@ -1118,19 +1139,24 @@ class BCTask(DefaultTask):
 
                 cmd_start = 27 if self.include_tracking_error else 21
                 cmd_stop = cmd_start + sampled_eval_actions_denorm.shape[-1]
+                sampled_abs_trajs = None
                 if obs_denorm.shape[-1] >= cmd_stop:
-                    # Convert denormalized chunks into absolute pose trajectories before measuring uncertainty.
-                    current_cmd_pose = obs_denorm[:, -1, cmd_start:cmd_stop].detach().cpu().numpy()
-                    sampled_abs_trajs = pose_chunks_for_plot(
-                        sampled_eval_actions_denorm.detach().cpu().numpy(),
-                        current_cmd_pose[:, None, :],
-                        self.eval_plot_pose_mode,
-                    )
-                    sampled_abs_trajs = torch.as_tensor(
-                        sampled_abs_trajs,
-                        dtype=sampled_eval_actions_denorm.dtype,
-                        device=sampled_eval_actions_denorm.device,
-                    )
+                    current_cmd_pose = obs_denorm[:, -1, cmd_start:cmd_stop]
+                    if self.eval_plot_pose_mode == "relative_chunks":
+                        sampled_abs_trajs = relative_chunk_to_absolute_torch(
+                            sampled_eval_actions_denorm, current_cmd_pose
+                        )
+                    else:
+                        sampled_abs_np = pose_chunks_for_plot(
+                            sampled_eval_actions_denorm.detach().cpu().numpy(),
+                            current_cmd_pose.detach().cpu().numpy()[:, None, :],
+                            self.eval_plot_pose_mode,
+                        )
+                        sampled_abs_trajs = torch.as_tensor(
+                            sampled_abs_np,
+                            dtype=sampled_eval_actions_denorm.dtype,
+                            device=sampled_eval_actions_denorm.device,
+                        )
                     traj_variance = _compute_traj_variance(
                         sampled_abs_trajs,
                         mask,
@@ -1146,6 +1172,7 @@ class BCTask(DefaultTask):
                     goal_frames=self.eval_plot_goal_frames,
                     pose_mode=self.eval_plot_pose_mode,
                     include_tracking_error=self.include_tracking_error,
+                    sampled_abs_trajs=sampled_abs_trajs,
                 )
                 if np.isfinite(goal_distance_sum):
                     goal_distance_sum_vals.append(goal_distance_sum)
@@ -1155,6 +1182,7 @@ class BCTask(DefaultTask):
                     goal_frames=self.eval_plot_goal_frames,
                     pose_mode=self.eval_plot_pose_mode,
                     include_tracking_error=self.include_tracking_error,
+                    sampled_abs_trajs=sampled_abs_trajs,
                 )
                 if np.isfinite(dist_to_opt_traj):
                     dist_to_opt_traj_vals.append(dist_to_opt_traj)

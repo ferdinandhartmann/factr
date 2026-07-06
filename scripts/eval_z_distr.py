@@ -13,7 +13,10 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 import yaml
+from factr.arrangement import arrangement_id_to_one_hot
 from factr.utils import ensure_normalized as _ensure_normalized
+from factr.utils import state_stats_without_tracking_error as _state_stats_without_tracking_error
+from factr.utils_plot import relative_chunk_from_absolute
 from hydra.utils import instantiate
 from omegaconf import OmegaConf
 from tqdm import tqdm
@@ -226,17 +229,19 @@ def _extract_vector_flexible(msg, keys: List[str], expected_dim: Optional[int] =
 def _state_candidate_keys(topic: str) -> List[str]:
     if topic == "/franka_robot_state_broadcaster/robot_state":
         return ["ee_pose", "pose", "data"]
-    if topic == "/cartesian_impedance_controller/ee_velocity":
+    if topic in ("/cartesian_impedance_controller/ee_velocity", "/cartesian_admittance_controller/ee_velocity"):
         return ["ee_velocity", "data"]
     if topic == "/franka_robot_state_broadcaster/external_wrench_in_stiffness_frame":
         return ["external_wrench", "wrench", "data"]
-    if topic == "/cartesian_impedance_controller/tracking_error":
+    if topic in ("/cartesian_impedance_controller/tracking_error", "/cartesian_admittance_controller/tracking_error"):
         return ["tracking_error", "data"]
+    if topic in ("/cartesian_impedance_controller/pose_command", "/cartesian_admittance_controller/pose_command"):
+        return ["ee_pose_commanded", "position", "data"]
     return ["data"]
 
 
 def _action_candidate_keys(topic: str) -> List[str]:
-    if topic == "/cartesian_impedance_controller/pose_command":
+    if topic in ("/cartesian_impedance_controller/pose_command", "/cartesian_admittance_controller/pose_command"):
         return ["ee_pose_commanded", "position", "data"]
     if topic in ["/joint_impedance_dynamic_gain_controller/joint_impedance_command", "/joint_impedance_command_controller/joint_trajectory"]:
         return ["position", "data"]
@@ -246,7 +251,7 @@ def _action_candidate_keys(topic: str) -> List[str]:
 def _infer_action_pose_mode(cfg, rollout_cfg, action_stats) -> str:
     mode = OmegaConf.select(cfg, "action_pose_mode", default=None)
     if mode is None and isinstance(rollout_cfg, dict):
-        mode = rollout_cfg.get("action_pose_mode", None)
+        mode = (rollout_cfg.get("processing_config") or {}).get("action_pose_mode")
     if mode is not None:
         return str(mode).strip().lower()
 
@@ -314,7 +319,31 @@ def _sync_topics_by_min_index(entries: Dict, topics: List[str]) -> Dict[str, Lis
     return {topic: entries[topic][:min_len] for topic in topics}
 
 
-def load_episode_arrays(episode_path: Path, rollout_cfg: Dict) -> Tuple[np.ndarray, np.ndarray, Optional[np.ndarray]]:
+CONTROLLER_TOPIC_FALLBACKS = {
+    "/cartesian_impedance_controller/ee_velocity": "/cartesian_admittance_controller/ee_velocity",
+    "/cartesian_admittance_controller/ee_velocity": "/cartesian_impedance_controller/ee_velocity",
+    "/cartesian_impedance_controller/tracking_error": "/cartesian_admittance_controller/tracking_error",
+    "/cartesian_admittance_controller/tracking_error": "/cartesian_impedance_controller/tracking_error",
+    "/cartesian_impedance_controller/pose_command": "/cartesian_admittance_controller/pose_command",
+    "/cartesian_admittance_controller/pose_command": "/cartesian_impedance_controller/pose_command",
+}
+
+
+def _apply_controller_topic_fallbacks(entries: Dict, timestamps: Optional[Dict], topics: List[str]) -> None:
+    """Alias matching impedance/admittance topics before synchronization."""
+    for expected_topic in topics:
+        if expected_topic in entries:
+            continue
+        fallback_topic = CONTROLLER_TOPIC_FALLBACKS.get(expected_topic)
+        if fallback_topic is None or fallback_topic not in entries:
+            continue
+        entries[expected_topic] = entries[fallback_topic]
+        if timestamps is not None and fallback_topic in timestamps:
+            timestamps[expected_topic] = timestamps[fallback_topic]
+        print(f"Topic fallback: {expected_topic} <- {fallback_topic}")
+
+
+def load_episode_arrays(episode_path: Path, rollout_cfg: Dict) -> Tuple[np.ndarray, np.ndarray, Optional[np.ndarray], Optional[np.ndarray]]:
     with open(episode_path, "rb") as f:
         raw = pickle.load(f)
 
@@ -342,6 +371,8 @@ def load_episode_arrays(episode_path: Path, rollout_cfg: Dict) -> Tuple[np.ndarr
     stiffness_key = stiffness_cfg.get("key", "stiffness")
     stiffness_thresholds = stiffness_cfg.get("norm_thresholds")
     stiffness_classes_cfg = stiffness_cfg.get("classes")
+    arrangement_topic = obs_cfg.get("arrangement_topic")
+    mode_topic = obs_cfg.get("mode_topic")
 
     if isinstance(stiffness_classes_cfg, (list, tuple)) and len(stiffness_classes_cfg) > 0:
         stiffness_num_classes = len(stiffness_classes_cfg)
@@ -353,6 +384,13 @@ def load_episode_arrays(episode_path: Path, rollout_cfg: Dict) -> Tuple[np.ndarr
     topics = list(state_topics) + [action_topic]
     if stiffness_topic is not None:
         topics.append(stiffness_topic)
+    if arrangement_topic is not None:
+        topics.append(arrangement_topic)
+    if mode_topic is not None:
+        topics.append(mode_topic)
+    topics = list(dict.fromkeys(topics))
+
+    _apply_controller_topic_fallbacks(entries, ts, topics)
 
     missing = [topic for topic in topics if topic not in entries]
     if len(missing) > 0:
@@ -388,17 +426,32 @@ def load_episode_arrays(episode_path: Path, rollout_cfg: Dict) -> Tuple[np.ndarr
         actions = actions[:min_steps]
 
     classes = None
-    if stiffness_topic is not None:
+    if mode_topic is not None:
+        classes = np.asarray([
+            int(_extract_vector(msg, ["mode", "data"], 1)[0]) + 1
+            for msg in synced[mode_topic]
+        ], dtype=np.int64)
+    elif stiffness_topic is not None:
         class_ids = []
         for msg in synced[stiffness_topic]:
             vec = _extract_stiffness_vector(msg, stiffness_key)
             class_ids.append(_stiffness_vec_to_class(vec, stiffness_thresholds, num_classes=stiffness_num_classes))
         classes = np.asarray(class_ids, dtype=np.int64)
 
+    arrangement_vectors = None
+    if arrangement_topic is not None:
+        arrangement_vectors = np.stack([
+            arrangement_id_to_one_hot(_extract_vector(msg, ["arrangement", "arrangement_id"], 1))
+            for msg in synced[arrangement_topic]
+        ]).astype(np.float32)
+
     count = min(len(states), len(actions))
     if classes is not None:
         count = min(count, len(classes))
         classes = classes[:count]
+    if arrangement_vectors is not None:
+        count = min(count, len(arrangement_vectors))
+        arrangement_vectors = arrangement_vectors[:count]
 
     states = states[:count]
     actions = actions[:count]
@@ -406,7 +459,7 @@ def load_episode_arrays(episode_path: Path, rollout_cfg: Dict) -> Tuple[np.ndarr
     if count == 0:
         raise ValueError(f"No synchronized samples in episode: {episode_path}")
 
-    return states, actions, classes
+    return states, actions, classes, arrangement_vectors
 
 
 def normalize_episode(states: np.ndarray, actions: np.ndarray, rollout_cfg: Dict) -> Tuple[np.ndarray, np.ndarray]:
@@ -418,10 +471,10 @@ def normalize_episode(states: np.ndarray, actions: np.ndarray, rollout_cfg: Dict
     return norm_states, norm_actions
 
 
-def build_windows(states: np.ndarray, actions: np.ndarray, classes: Optional[np.ndarray], obs_window: int, ac_chunk: int) -> Tuple[np.ndarray, np.ndarray, Optional[np.ndarray]]:
+def build_windows(states, actions, classes, arrangements, obs_window: int, ac_chunk: int, action_index_offset: int = 1):
     total_steps = len(actions)
     start_t = obs_window - 1
-    end_t = total_steps - ac_chunk
+    end_t = total_steps - action_index_offset - ac_chunk
 
     if end_t < start_t:
         raise ValueError(f"Episode too short: T={total_steps}, requires at least obs_window({obs_window}) + ac_chunk({ac_chunk}) - 1")
@@ -429,30 +482,39 @@ def build_windows(states: np.ndarray, actions: np.ndarray, classes: Optional[np.
     obs_windows = []
     action_chunks = []
     class_list = [] if classes is not None else None
+    arrangement_list = [] if arrangements is not None else None
 
     for t in range(start_t, end_t + 1):
         obs_windows.append(states[t - obs_window + 1 : t + 1])
-        action_chunks.append(actions[t : t + ac_chunk])
+        action_chunks.append(actions[t + action_index_offset : t + action_index_offset + ac_chunk])
         if class_list is not None:
             class_list.append(int(classes[t]))
+        if arrangement_list is not None:
+            arrangement_list.append(arrangements[t])
 
     obs_np = np.asarray(obs_windows, dtype=np.float32)
     act_np = np.asarray(action_chunks, dtype=np.float32)
     cls_np = np.asarray(class_list, dtype=np.int64) if class_list is not None else None
+    arrangement_np = np.asarray(arrangement_list, dtype=np.float32) if arrangement_list is not None else None
 
-    return obs_np, act_np, cls_np
+    return obs_np, act_np, cls_np, arrangement_np
 
 
 @torch.no_grad()
-def extract_z_params(policy, obs_np: np.ndarray, act_np: np.ndarray, cls_np: Optional[np.ndarray], device: torch.device):
+def extract_z_params(policy, obs_np, act_np, cls_np, arrangement_np, device: torch.device):
     if not hasattr(policy, "_build_context_tokens") or not hasattr(policy, "_prior") or not hasattr(policy, "posterior"):
         raise TypeError("Policy does not expose low-dim CVAE internals (_build_context_tokens/_prior/posterior).")
 
     obs_tensor = torch.from_numpy(obs_np).to(device)
     act_tensor = torch.from_numpy(act_np).to(device)
     cls_tensor = torch.from_numpy(cls_np).to(device) if cls_np is not None else None
+    arrangement_tensor = torch.from_numpy(arrangement_np).to(device) if arrangement_np is not None else None
 
-    context_tokens = policy._build_context_tokens(obs_tensor, class_labels=cls_tensor)
+    context_tokens_with_command = policy._build_context_tokens(
+        obs_tensor, class_labels=cls_tensor, arrangement_vectors=arrangement_tensor
+    )
+    # Match policy.forward(): the command token is decoder-only and is always last.
+    context_tokens = context_tokens_with_command[:, :-1]
     z_context = policy._build_z_context(context_tokens)
 
     latent_distribution = str(getattr(policy, "latent_distribution", "gaussian")).lower()
@@ -996,10 +1058,12 @@ def main():
         print(f"\nProcessing {ep_id} -> {ep_path}")
 
         try:
-            states, actions, classes = load_episode_arrays(ep_path, rollout_cfg)
+            states, actions, classes, arrangements = load_episode_arrays(ep_path, rollout_cfg)
             include_tracking_error = bool(OmegaConf.select(cfg, "include_tracking_error", default=OmegaConf.select(cfg, "agent.include_tracking_error", default=True)))
+            state_stats = rollout_cfg.get("norm_stats", {}).get("state", None)
             if (not include_tracking_error) and states.shape[-1] >= 36:
                 states = np.concatenate([states[:, :21], states[:, 27:]], axis=-1)
+                state_stats = _state_stats_without_tracking_error(state_stats)
 
             action_stats = rollout_cfg.get("norm_stats", {}).get("action", None)
             action_pose_mode = _infer_action_pose_mode(cfg, rollout_cfg, action_stats)
@@ -1007,9 +1071,33 @@ def main():
                 rel_actions = np.zeros_like(actions)
                 rel_actions[1:] = actions[1:] - actions[:-1]
                 actions = rel_actions
-            states_norm, actions_norm = normalize_episode(states, actions, rollout_cfg)
-            obs_np, act_np, cls_np = build_windows(states_norm, actions_norm, classes, obs_window=obs_window, ac_chunk=ac_chunk)
-            dists = extract_z_params(policy, obs_np, act_np, cls_np, device=device)
+            action_chunk_mode = str(OmegaConf.select(cfg, "action_chunk_mode", default="absolute")).strip().lower()
+            action_index_offset = int(OmegaConf.select(cfg, "task.test_buffer.action_index_offset", default=1))
+            obs_np, act_np, cls_np, arrangement_np = build_windows(
+                states, actions, classes, arrangements,
+                obs_window=obs_window,
+                ac_chunk=ac_chunk,
+                action_index_offset=action_index_offset,
+            )
+            obs_raw_np = obs_np
+            obs_np, _ = _ensure_normalized(obs_np, state_stats, NORMALIZATION_MODE, "state")
+            if action_chunk_mode == "relative_chunks":
+                cmd_start = 27 if include_tracking_error else 21
+                act_np = relative_chunk_from_absolute(
+                    act_np, obs_raw_np[:, -1, cmd_start : cmd_start + 9]
+                )
+            else:
+                act_np, _ = _ensure_normalized(act_np, action_stats, NORMALIZATION_MODE, "action")
+
+            use_arrangement = bool(OmegaConf.select(
+                cfg, "agent.use_arrangement_conditioning",
+                default=OmegaConf.select(cfg, "use_arrangement_conditioning", default=False),
+            ))
+            if use_arrangement and arrangement_np is None:
+                raise ValueError("Checkpoint requires arrangement conditioning, but episode has no arrangement topic.")
+            if not use_arrangement:
+                arrangement_np = None
+            dists = extract_z_params(policy, obs_np, act_np, cls_np, arrangement_np, device=device)
         except Exception as e:
             print(f"Skip {ep_name}: {e}")
             continue

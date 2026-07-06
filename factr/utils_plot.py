@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
+import torch
 
 
 @dataclass(frozen=True)
@@ -64,11 +65,87 @@ def pose_chunks_for_plot(action_chunks: np.ndarray, measured_pose: np.ndarray, p
     ):
         return np.cumsum(action_chunks, axis=-2) + measured_pose[..., None, :]
     if mode == "relative_chunks":
-        return action_chunks + measured_pose[..., None, :]
+        return relative_chunk_to_absolute(action_chunks, measured_pose)
     if mode != "absolute":
         warnings.warn(f"Unknown pose_mode '{pose_mode}'. Falling back to absolute.")
         return action_chunks
     return action_chunks
+
+
+def matrix_to_rot6d(rot: np.ndarray) -> np.ndarray:
+    return np.concatenate([rot[..., :, 0], rot[..., :, 1]], axis=-1).astype(np.float32)
+
+
+def relative_chunk_from_absolute(action_chunks: np.ndarray, anchor_pose: np.ndarray) -> np.ndarray:
+    """Express every absolute 9D pose in a chunk relative to one anchor pose."""
+    actions = np.asarray(action_chunks, dtype=np.float32)
+    anchor = np.asarray(anchor_pose, dtype=np.float32)
+    out = np.empty_like(actions)
+    out[..., :3] = actions[..., :3] - anchor[..., None, :3]
+    anchor_rot = np.stack([rot6d_to_matrix(v) for v in anchor[..., 3:9].reshape(-1, 6)])
+    anchor_rot = anchor_rot.reshape(anchor.shape[:-1] + (3, 3))
+    target_rot = np.stack([rot6d_to_matrix(v) for v in actions[..., 3:9].reshape(-1, 6)])
+    target_rot = target_rot.reshape(actions.shape[:-1] + (3, 3))
+    relative_rot = np.matmul(np.swapaxes(anchor_rot, -1, -2)[..., None, :, :], target_rot)
+    out[..., 3:9] = matrix_to_rot6d(relative_rot)
+    return out
+
+
+def relative_chunk_to_absolute(action_chunks: np.ndarray, anchor_pose: np.ndarray) -> np.ndarray:
+    """Reconstruct absolute poses from a chunk sharing one commanded-pose anchor."""
+    actions = np.asarray(action_chunks, dtype=np.float32)
+    anchor = np.asarray(anchor_pose, dtype=np.float32)
+    out = np.empty_like(actions)
+    out[..., :3] = actions[..., :3] + anchor[..., None, :3]
+    anchor_rot = np.stack([rot6d_to_matrix(v) for v in anchor[..., 3:9].reshape(-1, 6)])
+    anchor_rot = anchor_rot.reshape(anchor.shape[:-1] + (3, 3))
+    relative_rot = np.stack([rot6d_to_matrix(v) for v in actions[..., 3:9].reshape(-1, 6)])
+    relative_rot = relative_rot.reshape(actions.shape[:-1] + (3, 3))
+    absolute_rot = np.matmul(anchor_rot[..., None, :, :], relative_rot)
+    out[..., 3:9] = matrix_to_rot6d(absolute_rot)
+    return out
+
+
+def _normalize_vec_torch(vec: torch.Tensor) -> torch.Tensor:
+    """Normalize batched vectors while matching the NumPy fallback convention."""
+    norm = torch.linalg.vector_norm(vec, dim=-1, keepdim=True)
+    valid = torch.isfinite(vec).all(dim=-1, keepdim=True) & torch.isfinite(norm) & (norm >= 1e-9)
+    fallback = torch.zeros_like(vec)
+    fallback[..., 0] = 1.0
+    return torch.where(valid, vec / norm.clamp_min(1e-9), fallback)
+
+
+def rot6d_to_matrix_torch(rot6: torch.Tensor) -> torch.Tensor:
+    """Vectorized 6D rotation conversion for tensors shaped ``(..., 6)``."""
+    if rot6.shape[-1] != 6:
+        raise ValueError(f"Expected rot6 shape (..., 6), got {tuple(rot6.shape)}.")
+    finite = torch.isfinite(rot6).all(dim=-1, keepdim=True).unsqueeze(-1)
+    a1, a2 = rot6[..., :3], rot6[..., 3:6]
+    b1 = _normalize_vec_torch(a1)
+    b2 = _normalize_vec_torch(a2 - (b1 * a2).sum(dim=-1, keepdim=True) * b1)
+    b3 = _normalize_vec_torch(torch.cross(b1, b2, dim=-1))
+    matrix = torch.stack((b1, b2, b3), dim=-1)
+    identity = torch.eye(3, dtype=rot6.dtype, device=rot6.device).expand_as(matrix)
+    return torch.where(finite, matrix, identity)
+
+
+def relative_chunk_to_absolute_torch(action_chunks: torch.Tensor, anchor_pose: torch.Tensor) -> torch.Tensor:
+    """GPU-friendly reconstruction of ``(..., T, 9)`` relative pose chunks."""
+    if action_chunks.shape[-1] != 9 or anchor_pose.shape[-1] != 9:
+        raise ValueError(
+            f"Expected 9D actions and anchors, got {tuple(action_chunks.shape)} and {tuple(anchor_pose.shape)}."
+        )
+    # Insert singleton sample axes between the anchor batch axes and chunk horizon.
+    extra_dims = action_chunks.ndim - anchor_pose.ndim
+    if extra_dims < 1:
+        raise ValueError("action_chunks must have at least one more dimension than anchor_pose.")
+    anchor = anchor_pose.reshape(anchor_pose.shape[:-1] + (1,) * extra_dims + (9,))
+    absolute_position = action_chunks[..., :3] + anchor[..., :3]
+    anchor_rot = rot6d_to_matrix_torch(anchor[..., 3:9])
+    relative_rot = rot6d_to_matrix_torch(action_chunks[..., 3:9])
+    absolute_rot = torch.matmul(anchor_rot, relative_rot)
+    absolute_rot6 = torch.cat((absolute_rot[..., :, 0], absolute_rot[..., :, 1]), dim=-1)
+    return torch.cat((absolute_position, absolute_rot6), dim=-1)
 
 
 def _normalize_vec(vec: np.ndarray) -> np.ndarray:

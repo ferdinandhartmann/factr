@@ -17,6 +17,7 @@
 # ---------------------------------------------------------------------------
 
 
+import copy
 import math
 import os
 
@@ -394,3 +395,37 @@ def load_norm_stats_from_buffer_path(buffer_path):
     state_stats = norm_stats.get("state", None)
     action_stats = norm_stats.get("action", None)
     return state_stats, action_stats
+
+
+def load_action_pose_mode_from_buffer_path(buffer_path):
+    """Read the action representation recorded beside a processed buffer."""
+    if not buffer_path:
+        return None
+    rollout_path = os.path.join(os.path.dirname(str(buffer_path)), "rollout_config.yaml")
+    if not os.path.exists(rollout_path):
+        return None
+    try:
+        with open(rollout_path, "r") as f:
+            cfg = yaml.safe_load(f) or {}
+    except Exception:
+        return None
+    return (cfg.get("processing_config") or {}).get("action_pose_mode")
+
+
+def state_stats_without_tracking_error(stats: dict):
+    """Shift grouped state-stat indices after removing state[21:27]."""
+    if not stats or stats.get("mode") != "grouped":
+        return stats
+    if int(stats.get("state_dim", 36)) <= 30:
+        return stats
+    adjusted = copy.deepcopy(stats)
+    for group in adjusted.get("groups", []):
+        indices = group.get("indices")
+        if not indices or len(indices) != 2:
+            continue
+        start, stop = map(int, indices)
+        if start >= 27:
+            group["indices"] = [start - 6, stop - 6]
+    if "state_dim" in adjusted:
+        adjusted["state_dim"] = int(adjusted["state_dim"]) - 6
+    return adjusted

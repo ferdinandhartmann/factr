@@ -4,8 +4,8 @@ input_paths:
   - /home/ferdinand/activeinference/factr/process_data/data_to_process/boxlift_1_lead/data
   # - /home/ferdinand/activeinference/factr/process_data/data_to_process/boxlift_1_lead_trimmed/data
   - /home/ferdinand/activeinference/factr/process_data/data_to_process/boxlift_2_lead/data
-  - /home/ferdinand/activeinference/factr/process_data/data_to_process/boxlift_2_follow_stopping/data
-output_path: /home/ferdinand/activeinference/factr/process_data/processed_data/boxlift_123_abs_groupshared
+  # - /home/ferdinand/activeinference/factr/process_data/data_to_process/boxlift_2_follow_stopping/data
+output_path: /home/ferdinand/activeinference/factr/process_data/processed_data/boxlift_12_abs_perdim
 
 downsample: False
 data_frequency: 50.0
@@ -34,7 +34,7 @@ pose_topic: /franka_robot_state_broadcaster/robot_state
 # per_dim: every pose dim gets its own std.
 # group_shared: xyz share one position std, and rot6d dims share one rotation std.
 # Other features still use their own normalization: velocity, tracking error, wrench, goals, stiffness labels.
-pose_normalization_mode: group_shared
+pose_normalization_mode: per_dim
 
 pose_clip: 0.0           # set 0 to disable clipping (for observations and actions)
 velocity_clip: 0.0       # set 0 to disable clipping
@@ -63,7 +63,7 @@ mode_topic: /mode
 # Optional train/test split at buffer creation time (episode-level random split).
 # When enabled: writes two files in `output_path`, e.g. `buf_train.pkl` and `buf_test.pkl`.
 train_test_split:
-  enabled: false
+  enabled: true
   train_ratio: 0.90
   seed: 45
   train_buffer_name: buf_train

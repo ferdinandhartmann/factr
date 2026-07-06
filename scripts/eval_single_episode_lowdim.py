@@ -16,7 +16,8 @@ from factr.arrangement import arrangement_id_to_one_hot
 from factr.transforms import get_transform_by_name
 from factr.utils import apply_grouped_transform as _apply_grouped_transform
 from factr.utils import ensure_normalized as _ensure_normalized
-from factr.utils_plot import RPYPlotConfig, build_pose_3d_figure, build_pose_comparison_figure, build_pose_fan_figure, pose_chunks_for_plot
+from factr.utils import state_stats_without_tracking_error as _state_stats_without_tracking_error
+from factr.utils_plot import RPYPlotConfig, build_pose_3d_figure, build_pose_comparison_figure, build_pose_fan_figure, pose_chunks_for_plot, relative_chunk_from_absolute
 from hydra.utils import instantiate
 from omegaconf import OmegaConf
 
@@ -293,7 +294,7 @@ def _infer_action_pose_mode(cfg, rollout_cfg, action_stats) -> str:
     """Infer whether actions are absolute or relative deltas for eval plotting."""
     mode = OmegaConf.select(cfg, "action_pose_mode", default=None)
     if mode is None and isinstance(rollout_cfg, dict):
-        mode = rollout_cfg.get("action_pose_mode", None)
+        mode = (rollout_cfg.get("processing_config") or {}).get("action_pose_mode")
     if mode is not None:
         return str(mode).strip().lower()
 
@@ -515,12 +516,15 @@ def _load_raw_episode_to_arrays(episode_file: Path, rollout_cfg) -> Dict:
     stiffness_key = stiffness_info.get("key", "stiffness")
     stiffness_thresholds = stiffness_info.get("norm_thresholds")
     arrangement_topic = obs_cfg.get("arrangement_topic", None)
+    mode_topic = obs_cfg.get("mode_topic", None)
 
     topics_for_sync = list(state_topics) + [action_topic]
     if stiffness_topic:
         topics_for_sync.append(stiffness_topic)
     if arrangement_topic:
         topics_for_sync.append(arrangement_topic)
+    if mode_topic:
+        topics_for_sync.append(mode_topic)
     # Deduplicate topics while preserving order. This avoids double-processing
     # when the action topic is also present in state_topics (e.g. cmd included).
     topics_for_sync = list(dict.fromkeys(topics_for_sync))
@@ -567,7 +571,9 @@ def _load_raw_episode_to_arrays(episode_file: Path, rollout_cfg) -> Dict:
     states = states[:num_steps]
     actions = actions[:num_steps]
 
-    if stiffness_topic:
+    if mode_topic:
+        episode_label = int(_extract_fixed_vector(synced[mode_topic][0], ["mode", "data"], 1, None)[0]) + 1
+    elif stiffness_topic:
         raw_stiff = synced[stiffness_topic][:num_steps]
         stiff_vecs = [_extract_fixed_vector(msg, [stiffness_key], 6, None) for msg in raw_stiff]
         stiff_labels = np.asarray([_stiffness_vec_to_class(v, stiffness_thresholds) for v in stiff_vecs], dtype=np.int64)
@@ -858,7 +864,7 @@ def main():
     action_pose_mode = _infer_action_pose_mode(cfg, rollout_cfg, action_stats)
 
     if not buffer_path.exists():
-        raise FileNotFoundError(f"buffer not found: {buffer_path}")
+        print(f"Buffer not found; raw rollout evaluation will continue: {buffer_path}")
 
     auto_buffer_set = str(BUFFER_SET_NAME).strip().lower() == "auto"
     raw_dirs = _build_rollout_raw_dirs(rollout_cfg, raw_episode_dir)
@@ -921,6 +927,7 @@ def main():
         states = raw_ep["states"]
         if (not include_tracking_error) and states.shape[-1] >= 36:
             states = np.concatenate([states[:, :21], states[:, 27:]], axis=-1)
+            state_stats = _state_stats_without_tracking_error(state_stats)
         ep_data = _build_eval_samples_from_raw_episode(
             states=states,
             actions=raw_actions,
@@ -941,9 +948,10 @@ def main():
         labels_arr = ep_data["labels"]
         steps_arr = ep_data["steps"]
         stiffness_arr = labels_arr
-        use_arrangement_conditioning = bool(
-            OmegaConf.select(cfg, "use_arrangement_conditioning", default=False)
-        )
+        use_arrangement_conditioning = bool(OmegaConf.select(
+            cfg, "agent.use_arrangement_conditioning",
+            default=OmegaConf.select(cfg, "use_arrangement_conditioning", default=False),
+        ))
         arrangement_vectors = None
         if use_arrangement_conditioning:
             if raw_ep["arrangement_vector"] is None:
@@ -957,7 +965,13 @@ def main():
             ).astype(np.float32)
 
         obs_norm, obs_applied = _ensure_normalized(obs_arr, state_stats, NORMALIZATION_MODE, "state")
-        actions_norm, action_applied = _ensure_normalized(actions_arr, action_stats, NORMALIZATION_MODE, "action")
+        if action_chunk_mode == "relative_chunks":
+            cmd_start = 27 if include_tracking_error else 21
+            command_anchor = obs_arr[:, -1, cmd_start : cmd_start + 9]
+            actions_norm = relative_chunk_from_absolute(actions_arr, command_anchor)
+            action_applied = False
+        else:
+            actions_norm, action_applied = _ensure_normalized(actions_arr, action_stats, NORMALIZATION_MODE, "action")
 
         # Select device based on GPU_ID and CUDA availability
         if torch.cuda.is_available() and GPU_ID is not None:
@@ -1003,9 +1017,12 @@ def main():
         pose_dim = min(9, ac_dim)
 
         measured_first = obs_denorm[:, -1, :pose_dim]
-        actions_plot = pose_chunks_for_plot(actions_denorm[:, :, :pose_dim], measured_first, plot_pose_mode)
-        pred_det_plot = pose_chunks_for_plot(pred_det_denorm[:, :, :pose_dim], measured_first, plot_pose_mode)
-        pred_samples_plot = pose_chunks_for_plot(pred_samples_denorm[:, :, :, :pose_dim], measured_first[:, None, :], plot_pose_mode)
+        cmd_start = 27 if include_tracking_error else 21
+        command_first = obs_denorm[:, -1, cmd_start : cmd_start + pose_dim]
+        plot_anchor = command_first if plot_pose_mode == "relative_chunks" else measured_first
+        actions_plot = pose_chunks_for_plot(actions_denorm[:, :, :pose_dim], plot_anchor, plot_pose_mode)
+        pred_det_plot = pose_chunks_for_plot(pred_det_denorm[:, :, :pose_dim], plot_anchor, plot_pose_mode)
+        pred_samples_plot = pose_chunks_for_plot(pred_samples_denorm[:, :, :, :pose_dim], plot_anchor[:, None, :], plot_pose_mode)
 
         true_first = actions_plot[:, 0, :pose_dim]
         pred_first = pred_det_plot[:, 0, :pose_dim]

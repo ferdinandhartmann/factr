@@ -17,6 +17,13 @@ from robobuf import ReplayBuffer as RB
 from torch.utils.data import Dataset, IterableDataset
 
 from factr.arrangement import arrangement_id_to_one_hot
+from factr.utils import (
+    apply_grouped_transform,
+    load_action_pose_mode_from_buffer_path,
+    load_norm_stats_from_buffer_path,
+    state_stats_without_tracking_error,
+)
+from factr.utils_plot import relative_chunk_from_absolute
 
 
 # helper functions
@@ -336,6 +343,22 @@ class RobobufReplayBufferLowdim(ReplayBuffer):
         self._tracking_slice = slice(21, 27)
         if not self.include_tracking_error and self.obs_dim >= 36:
             self.obs_dim -= 6
+        self._state_norm_stats, self._action_norm_stats = load_norm_stats_from_buffer_path(buffer_path)
+        if not self.include_tracking_error:
+            self._state_norm_stats = state_stats_without_tracking_error(self._state_norm_stats)
+        if self.action_chunk_mode == "relative_chunks" and (
+            not self._state_norm_stats or not self._action_norm_stats
+        ):
+            raise ValueError(
+                "relative_chunks requires state/action normalization metadata in rollout_config.yaml. "
+                "Use a processed absolute-action dataset."
+            )
+        source_action_mode = load_action_pose_mode_from_buffer_path(buffer_path)
+        if self.action_chunk_mode == "relative_chunks" and source_action_mode != "absolute":
+            raise ValueError(
+                "relative_chunks requires processing_config.action_pose_mode=absolute; "
+                f"dataset reports {source_action_mode!r}."
+            )
         self.use_internal_split = bool(use_internal_split)
         self.transform = None
         self.s_a_mask = []
@@ -502,9 +525,18 @@ class RobobufReplayBufferLowdim(ReplayBuffer):
                     loss_mask.append(0.0)
 
             pose_chunk = np.stack(chunk_actions, axis=0).astype(np.float32)
-            current_pose = obs_window[-1, : self.pose_action_dim]
             if self.action_chunk_mode == "relative_chunks":
-                pose_chunk = pose_chunk - current_pose[None, :]
+                # The stored buffer is normalized, so recover physical poses before
+                # forming one chunk relative to the current commanded pose.
+                pose_chunk = apply_grouped_transform(pose_chunk, self._action_norm_stats, inverse=True)
+                current_state = apply_grouped_transform(
+                    obs_window[-1:], self._state_norm_stats, inverse=True
+                )[0]
+                cmd_start = 27 if self.include_tracking_error else 21
+                current_command = current_state[cmd_start : cmd_start + self.pose_action_dim]
+                if current_command.shape[0] != self.pose_action_dim:
+                    raise ValueError("Observation does not contain the expected 9D commanded pose.")
+                pose_chunk = relative_chunk_from_absolute(pose_chunk[None], current_command[None])[0]
             loss_mask = np.asarray(loss_mask, dtype=np.float32)
             arrangement_vector = episode_arrangements[t_idx] if episode_arrangements is not None else None
             self.s_a_mask.append((obs_window, pose_chunk, loss_mask, int(label), arrangement_vector))
