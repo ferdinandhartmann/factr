@@ -419,13 +419,20 @@ def state_stats_without_tracking_error(stats: dict):
     if int(stats.get("state_dim", 36)) <= 30:
         return stats
     adjusted = copy.deepcopy(stats)
+    groups = []
     for group in adjusted.get("groups", []):
         indices = group.get("indices")
         if not indices or len(indices) != 2:
+            groups.append(group)
             continue
         start, stop = map(int, indices)
+        # This feature no longer exists in the reduced 30D observation.
+        if (start, stop) == (21, 27) or group.get("name") == "tracking_error":
+            continue
         if start >= 27:
             group["indices"] = [start - 6, stop - 6]
+        groups.append(group)
+    adjusted["groups"] = groups
     if "state_dim" in adjusted:
         adjusted["state_dim"] = int(adjusted["state_dim"]) - 6
     return adjusted

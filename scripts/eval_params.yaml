@@ -2,7 +2,7 @@ shared:
   dataset_name: boxlift_12_abs_perdim
   dataset_project_prefix: ""
   buffer_set_name: auto
-  run_name: c_fp_b005_v4k4_ofs1_t128_ac20_d12_arr_rel #c_vp_b100_v4k4_ofs1_t128_ac20_d12_arr_rel
+  run_name: c_fp_b001_v4k4_ofs1_t64_obs4_d12_arr_rel #c_vp_b100_v4k4_ofs1_t128_ac20_d12_arr_rel
   
   checkpoint_name: latest_ckpt.ckpt
   normalization_mode: apply # options: skip, apply, #
@@ -20,18 +20,18 @@ shared:
     # - boxlift_1_follow/ep_29
     # - boxlift_1_follow/ep_34
     # - boxlift_1_follow/ep_36
-    # - boxlift_1_follow/ep_38
+    - boxlift_1_follow/ep_38
     # - boxlift_1_follow/ep_41
     # - boxlift_1_follow/ep_42
-    # - boxlift_1_follow/ep_45
-    - boxlift_1_lead/ep_08
+    - boxlift_1_follow/ep_45
+    # - boxlift_1_lead/ep_08
     # - boxlift_1_lead/ep_21
     # - boxlift_1_lead/ep_25
     # - boxlift_1_lead/ep_29
     - boxlift_1_lead/ep_55
     # - boxlift_2_lead/ep_34
     # - boxlift_2_lead/ep_44
-    # - boxlift_2_lead/ep_48
+    - boxlift_2_lead/ep_48
     # - boxlift_2_lead/ep_57
     boxlift_1_rel_perdim:
     # - boxlift_1_follow/ep_06
@@ -179,7 +179,7 @@ eval_single_episode_lowdim:
   plot_geodesic_subplot: false
   out_dir_override: null
   global_axis_limits:
-    x: [0.2, 0.6]
+    x: [0.0, 0.8]
     y: [-0.4, 0.4]
     z: [0.0, 0.7]
   goal_frames:
