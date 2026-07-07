@@ -409,7 +409,36 @@ def load_action_pose_mode_from_buffer_path(buffer_path):
             cfg = yaml.safe_load(f) or {}
     except Exception:
         return None
-    return (cfg.get("processing_config") or {}).get("action_pose_mode")
+    processing = cfg.get("processing_config") or {}
+    return canonical_action_mode(processing.get("action_pose_mode"), processing_config=processing)
+
+
+def canonical_action_mode(value, processing_config=None):
+    """Use absolute/delta/relative while accepting unambiguous legacy names."""
+    mode = str(value or "absolute").strip().lower()
+    if mode in {"relative_timestep", "relative_timesteps"}:
+        return "delta"
+    if mode == "relative_chunks":
+        return "relative"
+    # Before the rename, processed datasets used plain `relative` for deltas.
+    if mode == "relative" and processing_config is not None and "ac_chunk" not in processing_config:
+        return "delta"
+    return mode
+
+
+def load_processing_config_from_buffer_path(buffer_path):
+    """Load processing metadata stored beside a processed replay buffer."""
+    if not buffer_path:
+        return {}
+    rollout_path = os.path.join(os.path.dirname(str(buffer_path)), "rollout_config.yaml")
+    if not os.path.exists(rollout_path):
+        return {}
+    try:
+        with open(rollout_path, "r") as f:
+            cfg = yaml.safe_load(f) or {}
+    except Exception:
+        return {}
+    return dict(cfg.get("processing_config") or {})
 
 
 def state_stats_without_tracking_error(stats: dict):

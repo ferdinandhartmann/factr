@@ -65,7 +65,7 @@ class StageConfig:
 
 DATASET_CONFIGS: Tuple[Tuple[str, str, str], ...] = (
     ("abs", "fourgoals_2_allgauss_noclip_cmdinput", "absolute"),
-    ("rel", "fourgoals_2_allgauss_noclip_cmdinput_rel", "relative_timesteps"),
+    ("rel", "fourgoals_2_allgauss_noclip_cmdinput_rel", "delta"),
 )
 
 GAUSSIAN_STAGES: Tuple[StageConfig, ...] = tuple(

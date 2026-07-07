@@ -24,12 +24,11 @@ import numpy as np
 import yaml
 from omegaconf import DictConfig, ListConfig, OmegaConf
 from tqdm import tqdm
-from utils_data_process import (
-    downsample_data,
-    gaussian_norm,
-    generate_robobuf,
-    sync_data_slowest,
-)
+try:
+    from .utils_data_process import downsample_data, gaussian_norm, generate_robobuf, sync_data_slowest
+except ImportError:  # Direct execution: python process_data/process_data.py
+    from utils_data_process import downsample_data, gaussian_norm, generate_robobuf, sync_data_slowest
+from factr.utils_plot import relative_chunk_from_absolute
 
 
 def _build_topic_slices(state_obs_topics, state_topic_dims):
@@ -683,6 +682,57 @@ def _split_episode_indices(num_episodes, train_ratio, seed):
     return train_indices, test_indices
 
 
+def _build_relative_chunks(trajectories, command_slice, ac_chunk, action_index_offset):
+    """Materialize one fixed-anchor relative pose chunk for every episode step."""
+    for traj in trajectories:
+        absolute_actions = np.asarray(traj["actions"], dtype=np.float32)
+        raw_states = np.asarray(traj["states"], dtype=np.float32)
+        if absolute_actions.ndim != 2 or absolute_actions.shape[1] != 9:
+            raise ValueError(f"relative mode requires absolute actions shaped (N, 9), got {absolute_actions.shape}.")
+        command_poses = raw_states[:, command_slice]
+        if command_poses.shape != absolute_actions.shape:
+            raise ValueError(
+                "relative mode requires one 9D commanded pose in every state; "
+                f"got commands={command_poses.shape}, actions={absolute_actions.shape}."
+            )
+
+        num_steps = int(traj["num_steps"])
+        target_indices = (
+            np.arange(num_steps, dtype=np.int64)[:, None]
+            + action_index_offset
+            + np.arange(ac_chunk, dtype=np.int64)[None, :]
+        )
+        masks = (target_indices < num_steps).astype(np.float32)
+        target_poses = absolute_actions[np.clip(target_indices, 0, num_steps - 1)]
+        chunks = relative_chunk_from_absolute(target_poses, command_poses)
+        traj["actions"] = chunks
+        traj["action_mask"] = masks
+
+
+def _normalize_relative_chunks(train_trajectories, all_trajectories):
+    """Fit per-dimension statistics on valid training targets and apply them to every split."""
+    valid_values = []
+    for traj in train_trajectories:
+        actions = np.asarray(traj["actions"], dtype=np.float32)
+        mask = np.asarray(traj["action_mask"], dtype=bool)
+        valid_values.append(actions[mask])
+    values = np.concatenate(valid_values, axis=0)
+    if values.size == 0:
+        raise ValueError("Cannot normalize relative chunks because the training split has no valid targets.")
+    mean = np.mean(values, axis=0).astype(np.float32)
+    std = np.std(values, axis=0).astype(np.float32)
+    std[np.abs(std) < 1e-6] = 1e-6
+    for traj in all_trajectories:
+        traj["actions"] = ((traj["actions"] - mean) / std).astype(np.float32)
+    return {
+        "mode": "gaussian",
+        "action_dim": 9,
+        "mean": [float(x) for x in mean],
+        "std": [float(x) for x in std],
+        "fit_on": "valid_train_chunks_only",
+    }
+
+
 @hydra.main(version_base=None, config_path="cfg", config_name="default")
 def main(cfg: DictConfig):
     output_path = cfg.output_path
@@ -701,7 +751,17 @@ def main(cfg: DictConfig):
             label_topics.append(topic)
     action_config = dict(cfg.action_config)
     action_topics = list(action_config.keys())
-    action_pose_mode = str(cfg.get("action_pose_mode", "absolute"))
+    action_pose_mode = str(cfg.get("action_pose_mode", "absolute")).strip().lower()
+    action_pose_mode = {"relative_chunks": "relative", "relative_timesteps": "delta"}.get(
+        action_pose_mode, action_pose_mode
+    )
+    if action_pose_mode not in {"absolute", "delta", "relative"}:
+        raise ValueError(f"Unknown action_pose_mode={action_pose_mode!r}.")
+    ac_chunk = int(cfg.get("ac_chunk", 20))
+    action_index_offset = int(cfg.get("action_index_offset", 1))
+    relative_chunk_normalized = bool(cfg.get("relative_chunk_normalized", True))
+    if ac_chunk < 1 or action_index_offset < 0:
+        raise ValueError("ac_chunk must be >= 1 and action_index_offset must be >= 0.")
     stiffness_label_topic = cfg.get("stiffness_label_topic", None)
     stiffness_label_key = cfg.get("stiffness_label_key", "stiffness")
     stiffness_norm_thresholds = cfg.get("stiffness_norm_thresholds", [200.0, 1000.0])
@@ -974,7 +1034,7 @@ def main(cfg: DictConfig):
             else:
                 topic_array = np.stack([np.asarray(m, dtype=float).flatten() for m in traj_data[topic]], axis=0)
 
-            if topic in relative_action_topics and action_pose_mode == "relative":
+            if topic in relative_action_topics and action_pose_mode == "delta":
                 relative_topic_array = np.zeros_like(topic_array)
                 relative_topic_array[1:] = topic_array[1:] - topic_array[:-1]
                 topic_array = relative_topic_array
@@ -1034,10 +1094,40 @@ def main(cfg: DictConfig):
         for (expected_topic, fallback_topic), count in sorted(topic_fallback_counts.items()):
             print(f"  {expected_topic} <- {fallback_topic}: {count} episode(s)")
 
-    # normalize states and actions
+    # Establish the episode split before fitting relative-action statistics.
+    if split_cfg["enabled"]:
+        train_indices, test_indices = _split_episode_indices(
+            num_episodes=len(trajectories), train_ratio=split_cfg["train_ratio"], seed=split_cfg["seed"]
+        )
+    else:
+        train_indices, test_indices = list(range(len(trajectories))), []
+
+    if action_pose_mode == "relative":
+        topic_slices, _ = _build_topic_slices(state_obs_topics, state_topic_dims)
+        command_topic = _resolve_first_available_topic(
+            topic_slices,
+            [
+                "/cartesian_impedance_controller/pose_command",
+                "/cartesian_admittance_controller/pose_command",
+            ],
+            "commanded pose",
+            warn=False,
+        )
+        if command_topic is None or topic_slices[command_topic].stop - topic_slices[command_topic].start != 9:
+            raise ValueError("relative mode requires a 9D controller pose_command in obs_topics.")
+        _build_relative_chunks(trajectories, topic_slices[command_topic], ac_chunk, action_index_offset)
+
+    # Normalize observations as before. Relative chunks use their own train-only statistics.
     state_norm_stats = normalize_states_groupwise(all_states_for_norm, state_obs_topics, state_topic_dims, cfg)
-    action_norm_stats = normalize_actions_groupwise(all_actions, cfg)
-    norm_stats = dict(state=state_norm_stats, action=action_norm_stats)
+    if action_pose_mode == "relative":
+        if not relative_chunk_normalized:
+            raise ValueError("Precomputed relative mode requires relative_chunk_normalized=true.")
+        train_trajectories_for_stats = [trajectories[idx] for idx in train_indices]
+        action_norm_stats = _normalize_relative_chunks(train_trajectories_for_stats, trajectories)
+        norm_stats = dict(state=state_norm_stats, action=action_norm_stats, relative_action=action_norm_stats)
+    else:
+        action_norm_stats = normalize_actions_groupwise(all_actions, cfg)
+        norm_stats = dict(state=state_norm_stats, action=action_norm_stats)
 
     split_info = {
         "enabled": split_cfg["enabled"],
@@ -1048,11 +1138,6 @@ def main(cfg: DictConfig):
 
     # dump data buffer(s)
     if split_cfg["enabled"]:
-        train_indices, test_indices = _split_episode_indices(
-            num_episodes=len(trajectories),
-            train_ratio=split_cfg["train_ratio"],
-            seed=split_cfg["seed"],
-        )
         train_trajectories = [trajectories[idx] for idx in train_indices]
         test_trajectories = [trajectories[idx] for idx in test_indices]
         train_episode_names = [processed_episode_names[idx] for idx in train_indices]
@@ -1113,6 +1198,11 @@ def main(cfg: DictConfig):
         "input_paths": [str(path) for path in data_folders],
         "pose_normalization_mode": str(cfg.get("pose_normalization_mode", "per_dim")),
         "action_pose_mode": action_pose_mode,
+        "ac_chunk": ac_chunk if action_pose_mode == "relative" else None,
+        "action_index_offset": action_index_offset if action_pose_mode == "relative" else None,
+        "relative_chunk_anchor": "current_command" if action_pose_mode == "relative" else None,
+        "relative_chunk_normalized": relative_chunk_normalized if action_pose_mode == "relative" else None,
+        "relative_rotation": "anchor_inverse_times_target" if action_pose_mode == "relative" else None,
         "downsample": downsample,
         "data_frequency": data_frequency,
         "target_downsampling_freq": target_downsampling_freq,

@@ -57,14 +57,14 @@ def make_obs_dim_names(dim: int) -> List[str]:
 def pose_chunks_for_plot(action_chunks: np.ndarray, measured_pose: np.ndarray, pose_mode: str) -> np.ndarray:
     mode = str(pose_mode).strip().lower()
     if mode in (
-        "relative",
+        "delta",
         "relative_timestep",
         "relative_timesteps",
         "relative_timestamp",
         "relative_timestamps",
     ):
         return np.cumsum(action_chunks, axis=-2) + measured_pose[..., None, :]
-    if mode == "relative_chunks":
+    if mode in ("relative", "relative_chunks"):
         return relative_chunk_to_absolute(action_chunks, measured_pose)
     if mode != "absolute":
         warnings.warn(f"Unknown pose_mode '{pose_mode}'. Falling back to absolute.")

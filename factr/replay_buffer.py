@@ -19,11 +19,12 @@ from torch.utils.data import Dataset, IterableDataset
 from factr.arrangement import arrangement_id_to_one_hot
 from factr.utils import (
     apply_grouped_transform,
+    canonical_action_mode,
     load_action_pose_mode_from_buffer_path,
     load_norm_stats_from_buffer_path,
+    load_processing_config_from_buffer_path,
     state_stats_without_tracking_error,
 )
-from factr.utils_plot import relative_chunk_from_absolute
 
 
 # helper functions
@@ -336,7 +337,7 @@ class RobobufReplayBufferLowdim(ReplayBuffer):
         self.pose_action_dim = int(pose_action_dim)
         self.action_index_offset = int(action_index_offset)
         self.include_goals = bool(include_goals)
-        self.action_chunk_mode = str(action_chunk_mode)
+        self.action_chunk_mode = canonical_action_mode(action_chunk_mode)
         self.stiffness_classes = int(stiffness_classes)
         self.override_stiffness_with_mode = bool(override_stiffness_with_mode)
         self.use_arrangement_conditioning = bool(use_arrangement_conditioning)
@@ -346,19 +347,30 @@ class RobobufReplayBufferLowdim(ReplayBuffer):
         self._state_norm_stats, self._action_norm_stats = load_norm_stats_from_buffer_path(buffer_path)
         if not self.include_tracking_error:
             self._state_norm_stats = state_stats_without_tracking_error(self._state_norm_stats)
-        if self.action_chunk_mode == "relative_chunks" and (
-            not self._state_norm_stats or not self._action_norm_stats
-        ):
+        if self.action_chunk_mode == "relative" and not self._action_norm_stats:
             raise ValueError(
-                "relative_chunks requires state/action normalization metadata in rollout_config.yaml. "
-                "Use a processed absolute-action dataset."
+                "relative mode requires dedicated action normalization metadata in rollout_config.yaml."
             )
         source_action_mode = load_action_pose_mode_from_buffer_path(buffer_path)
-        if self.action_chunk_mode == "relative_chunks" and source_action_mode != "absolute":
+        self._processing_config = load_processing_config_from_buffer_path(buffer_path)
+        if self.action_chunk_mode == "relative" and source_action_mode != "relative":
             raise ValueError(
-                "relative_chunks requires processing_config.action_pose_mode=absolute; "
+                "Training with relative mode requires a precomputed relative dataset; "
                 f"dataset reports {source_action_mode!r}."
             )
+        if self.action_chunk_mode == "relative":
+            stored_chunk = int(self._processing_config.get("ac_chunk", -1))
+            stored_offset = int(self._processing_config.get("action_index_offset", -1))
+            if stored_chunk != int(ac_chunk) or stored_offset != self.action_index_offset:
+                raise ValueError(
+                    "Relative-chunk dataset/training mismatch: "
+                    f"stored ac_chunk={stored_chunk}, offset={stored_offset}; "
+                    f"requested ac_chunk={ac_chunk}, offset={self.action_index_offset}."
+                )
+            if not bool(self._processing_config.get("relative_chunk_normalized", False)):
+                raise ValueError("Expected a dataset with relative_chunk_normalized=true.")
+            if self._processing_config.get("relative_chunk_anchor") != "current_command":
+                raise ValueError("Expected relative_chunk_anchor=current_command.")
         self.use_internal_split = bool(use_internal_split)
         self.transform = None
         self.s_a_mask = []
@@ -441,6 +453,19 @@ class RobobufReplayBufferLowdim(ReplayBuffer):
             raise ValueError(f"Action dim {action.shape[0]} smaller than pose_action_dim={self.pose_action_dim}.")
         return action[: self.pose_action_dim]
 
+    def _extract_precomputed_chunk(self, step, ac_chunk):
+        action = np.asarray(step.action, dtype=np.float32)
+        expected_shape = (int(ac_chunk), self.pose_action_dim)
+        if action.shape != expected_shape:
+            raise ValueError(f"Expected stored relative chunk shape {expected_shape}, got {action.shape}.")
+        obs_dict = _obs_to_dict(step.obs)
+        if "action_mask" not in obs_dict:
+            raise ValueError("Precomputed relative chunk is missing obs['action_mask'].")
+        mask = np.asarray(obs_dict["action_mask"], dtype=np.float32).reshape(-1)
+        if mask.shape != (int(ac_chunk),):
+            raise ValueError(f"Expected action mask shape ({ac_chunk},), got {mask.shape}.")
+        return action, mask
+
     def _extract_arrangement_vector(self, step, episode_id, episode_step):
         obs_dict = _obs_to_dict(step.obs)
         if "arrangement" not in obs_dict:
@@ -510,34 +535,23 @@ class RobobufReplayBufferLowdim(ReplayBuffer):
                 window_states.insert(0, window_states[0])
             obs_window = np.stack(window_states, axis=0).astype(np.float32)
 
-            chunk_actions = []
-            loss_mask = []
-            for k in range(ac_chunk):
-                idx = t_idx + self.action_index_offset + k
-                if idx < len(episode):
-                    chunk_actions.append(self._extract_pose_action(episode[idx]))
-                    loss_mask.append(1.0)
-                else:
-                    if len(chunk_actions) == 0:
-                        chunk_actions.append(self._extract_pose_action(episode[-1]))
+            if self.action_chunk_mode == "relative":
+                pose_chunk, loss_mask = self._extract_precomputed_chunk(episode[t_idx], ac_chunk)
+            else:
+                chunk_actions = []
+                loss_mask = []
+                for k in range(ac_chunk):
+                    idx = t_idx + self.action_index_offset + k
+                    if idx < len(episode):
+                        chunk_actions.append(self._extract_pose_action(episode[idx]))
+                        loss_mask.append(1.0)
                     else:
-                        chunk_actions.append(chunk_actions[-1])
-                    loss_mask.append(0.0)
-
-            pose_chunk = np.stack(chunk_actions, axis=0).astype(np.float32)
-            if self.action_chunk_mode == "relative_chunks":
-                # The stored buffer is normalized, so recover physical poses before
-                # forming one chunk relative to the current commanded pose.
-                pose_chunk = apply_grouped_transform(pose_chunk, self._action_norm_stats, inverse=True)
-                current_state = apply_grouped_transform(
-                    obs_window[-1:], self._state_norm_stats, inverse=True
-                )[0]
-                cmd_start = 27 if self.include_tracking_error else 21
-                current_command = current_state[cmd_start : cmd_start + self.pose_action_dim]
-                if current_command.shape[0] != self.pose_action_dim:
-                    raise ValueError("Observation does not contain the expected 9D commanded pose.")
-                pose_chunk = relative_chunk_from_absolute(pose_chunk[None], current_command[None])[0]
-            loss_mask = np.asarray(loss_mask, dtype=np.float32)
+                        chunk_actions.append(
+                            self._extract_pose_action(episode[-1]) if not chunk_actions else chunk_actions[-1]
+                        )
+                        loss_mask.append(0.0)
+                pose_chunk = np.stack(chunk_actions, axis=0).astype(np.float32)
+                loss_mask = np.asarray(loss_mask, dtype=np.float32)
             arrangement_vector = episode_arrangements[t_idx] if episode_arrangements is not None else None
             self.s_a_mask.append((obs_window, pose_chunk, loss_mask, int(label), arrangement_vector))
             self.sample_metadata.append(

@@ -16,6 +16,7 @@ import wandb
 from factr.replay_buffer import IterableWrapper
 from factr.utils import (
     apply_grouped_transform as _apply_grouped_transform,
+    canonical_action_mode as _canonical_action_mode,
 )
 from factr.utils import (
     load_norm_stats_from_buffer_path as _load_norm_stats_from_buffer_path,
@@ -46,8 +47,6 @@ def seed_worker(_worker_id: int) -> None:
 
 
 def _decode_action_values(values: np.ndarray, action_stats, pose_mode: str) -> np.ndarray:
-    if str(pose_mode).strip().lower() == "relative_chunks":
-        return values.copy()
     return _apply_grouped_transform(values, action_stats, inverse=True)
 
 
@@ -359,7 +358,7 @@ def _select_eval_plot_axis_limits(axis_limits, pose_mode: str):
         return axis_limits
 
     mode = str(pose_mode).strip().lower()
-    relative_keys = ("relative", "relative_timestep", "relative_timesteps", "relative_chunks")
+    relative_keys = ("delta", "relative", "relative_timestep", "relative_timesteps", "relative_chunks")
     if mode == "absolute" and axis_limits.get("absolute") is not None:
         return axis_limits.get("absolute")
     if mode in relative_keys and axis_limits.get("relative") is not None:
@@ -736,7 +735,7 @@ class DefaultTask:
         self.eval_plot_geodesic_subplot = bool(eval_plot_geodesic_subplot)
         self.eval_plot_axis_limits = eval_plot_axis_limits
         self.eval_plot_goal_frames = eval_plot_goal_frames
-        self.eval_plot_pose_mode = str(eval_plot_pose_mode)
+        self.eval_plot_pose_mode = _canonical_action_mode(eval_plot_pose_mode)
         self.eval_traj_variance_w_start = float(eval_traj_variance_w_start)
         self.eval_traj_variance_w_end = float(eval_traj_variance_w_end)
         self.include_tracking_error = bool(include_tracking_error) if include_tracking_error is not None else True
@@ -932,7 +931,7 @@ class BCTask(DefaultTask):
         command_pose = obs_np[:, -1, cmd_start : cmd_start + pose_dim]
         measured_pose_dense = measured_obs_np[:, -1, :pose_dim] if measured_obs_np is not None else measured_pose
         measured_time_dense = measured_bundle["time_index"] if measured_bundle is not None else bundle["time_index"]
-        plot_anchor = command_pose if self.eval_plot_pose_mode == "relative_chunks" else measured_pose
+        plot_anchor = command_pose if self.eval_plot_pose_mode == "relative" else measured_pose
         actions_plot = pose_chunks_for_plot(actions_np[:, :, :pose_dim], plot_anchor, self.eval_plot_pose_mode)
         gt_pose_line_3d = actions_plot[:, 0, :pose_dim]
         if measured_bundle is not None and "actions" in measured_bundle and "mask" in measured_bundle:
@@ -944,7 +943,7 @@ class BCTask(DefaultTask):
             measured_mask_np = measured_bundle["mask"].detach().cpu().numpy()[:, :, :pose_dim]
             measured_command_pose = measured_obs_np[:, -1, cmd_start : cmd_start + pose_dim]
             measured_anchor = (
-                measured_command_pose if self.eval_plot_pose_mode == "relative_chunks" else measured_pose_dense
+                measured_command_pose if self.eval_plot_pose_mode == "relative" else measured_pose_dense
             )
             measured_actions_plot = pose_chunks_for_plot(
                 measured_actions_np[:, :, :pose_dim],
@@ -1116,20 +1115,16 @@ class BCTask(DefaultTask):
                 sample_endpoint_diversity = _compute_endpoint_diversity(sampled_eval_actions, mask)
                 if np.isfinite(sample_endpoint_diversity):
                     sample_endpoint_diversity_vals.append(sample_endpoint_diversity)
-                if self.eval_plot_pose_mode == "relative_chunks":
-                    # Relative chunks are already in physical units; keep them on the GPU.
-                    sampled_eval_actions_denorm = sampled_eval_actions
-                else:
-                    sampled_eval_actions_denorm = _decode_action_values(
-                        sampled_eval_actions.detach().cpu().numpy(),
-                        self._eval_plot_action_stats,
-                        self.eval_plot_pose_mode,
-                    )
-                    sampled_eval_actions_denorm = torch.as_tensor(
-                        sampled_eval_actions_denorm,
-                        dtype=sampled_eval_actions.dtype,
-                        device=sampled_eval_actions.device,
-                    )
+                sampled_eval_actions_denorm = _decode_action_values(
+                    sampled_eval_actions.detach().cpu().numpy(),
+                    self._eval_plot_action_stats,
+                    self.eval_plot_pose_mode,
+                )
+                sampled_eval_actions_denorm = torch.as_tensor(
+                    sampled_eval_actions_denorm,
+                    dtype=sampled_eval_actions.dtype,
+                    device=sampled_eval_actions.device,
+                )
                 obs_denorm = _apply_grouped_transform(
                     obs.detach().cpu().numpy(),
                     self._eval_plot_state_stats,
@@ -1142,7 +1137,7 @@ class BCTask(DefaultTask):
                 sampled_abs_trajs = None
                 if obs_denorm.shape[-1] >= cmd_stop:
                     current_cmd_pose = obs_denorm[:, -1, cmd_start:cmd_stop]
-                    if self.eval_plot_pose_mode == "relative_chunks":
+                    if self.eval_plot_pose_mode == "relative":
                         sampled_abs_trajs = relative_chunk_to_absolute_torch(
                             sampled_eval_actions_denorm, current_cmd_pose
                         )
@@ -1324,7 +1319,7 @@ class BCTask(DefaultTask):
             f"prior_H: {mean_prior_entropy:.4f}\tpost_H: {mean_posterior_entropy:.4f}\t"
             f"sample_div: {mean_sample_diversity:.4f}\tsweep_score: {sweep_score:.4f}\t"
             f"goal_min_sum: {mean_goal_distance_sum:.4f}\t"
-            f"dist_to_opt_traj: {mean_dist_to_opt_traj:.4f}\t"
+            # f"dist_to_opt_traj: {mean_dist_to_opt_traj:.4f}\t"
             f"sample_endpoint_div: {mean_sample_endpoint_diversity:.4f}\t"
             f"sample_end_direction_div: {mean_sample_end_direction_diversity:.4f}\t"
             f"traj_var_abs: {mean_traj_variance:.4f}\t"
@@ -1334,15 +1329,15 @@ class BCTask(DefaultTask):
 
         if wandb.run is not None:
             log_dict = {
-                "eval/sample_diversity_combined": mean_sample_diversity_combined,
-                "eval/sample_diversity": mean_sample_diversity,
-                "eval/goal_min_dist_sum": mean_goal_distance_sum,
-                "eval/dist_to_opt_traj": mean_dist_to_opt_traj,
+                # "eval/sample_diversity_combined": mean_sample_diversity_combined,
+                "eval_diversity/sample_diversity": mean_sample_diversity,
+                "eval_diversity/goal_min_dist_sum": mean_goal_distance_sum,
+                # "eval/dist_to_opt_traj": mean_dist_to_opt_traj,
                 "eval/prior_l1": mean_prior_l1,
                 "eval/prior_entropy": mean_prior_entropy,
                 "eval/posterior_l1": mean_val_loss,
                 "eval/posterior_entropy": mean_posterior_entropy,
-                "eval/sample_endpoint_diversity": mean_sample_endpoint_diversity,
+                "eval_diversity/sample_endpoint_diversity": mean_sample_endpoint_diversity,
                 "eval/posterior_kl": mean_posterior_kl,
                 "eval/prior_lsig": ac_lsig,
                 **(
@@ -1354,8 +1349,8 @@ class BCTask(DefaultTask):
                     and not getattr(model, "fixed_prior", False)
                     else {}
                 ),
-                "eval/sample_end_direction_diversity": mean_sample_end_direction_diversity,
-                "eval/traj_variance": mean_traj_variance,
+                "eval_diversity/sample_end_direction_diversity": mean_sample_end_direction_diversity,
+                "eval_diversity/traj_variance": mean_traj_variance,
                 # "eval/prior_l2": ac_l2,
                 # "eval/sweep_score": sweep_score,
             }

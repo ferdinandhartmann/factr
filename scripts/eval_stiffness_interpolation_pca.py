@@ -295,7 +295,7 @@ def main() -> None:
         raw_episode = episode_eval._load_raw_episode_to_arrays(episode_path, rollout_cfg)
         states = raw_episode["states"]
         actions = raw_episode["actions"]
-        if action_pose_mode == "relative" and len(actions) > 1:
+        if action_pose_mode == "delta" and len(actions) > 1:
             relative_actions = np.zeros_like(actions)
             relative_actions[1:] = actions[1:] - actions[:-1]
             actions = relative_actions

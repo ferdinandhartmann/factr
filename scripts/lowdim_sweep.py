@@ -66,10 +66,10 @@ class StageConfig:
 
 DATASET_CONFIGS: Tuple[Tuple[str, str, str], ...] = (
     ("fg2abs", "fourgoals_2_allgauss_noclip_cmdinput", "absolute"),
-    ("fg2rel", "fourgoals_2_allgauss_noclip_cmdinput_rel", "relative_timesteps"),
+    ("fg2rel", "fourgoals_2_allgauss_noclip_cmdinput_rel", "delta"),
     # Per-dimension normalized dataset variants.
     ("fg23abs", "fourgoals_23_allgauss_noclip_cmdinput_abs_perdim", "absolute"),
-    ("fg23rel", "fourgoals_23_allgauss_noclip_cmdinput_rel_perdim", "relative_timesteps"),
+    ("fg23rel", "fourgoals_23_allgauss_noclip_cmdinput_rel_perdim", "delta"),
 )
 
 

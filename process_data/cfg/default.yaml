@@ -5,7 +5,7 @@ input_paths:
   # - /home/ferdinand/activeinference/factr/process_data/data_to_process/boxlift_1_lead_trimmed/data
   - /home/ferdinand/activeinference/factr/process_data/data_to_process/boxlift_2_lead/data
   # - /home/ferdinand/activeinference/factr/process_data/data_to_process/boxlift_2_follow_stopping/data
-output_path: /home/ferdinand/activeinference/factr/process_data/processed_data/boxlift_12_abs_perdim
+output_path: /home/ferdinand/activeinference/factr/process_data/processed_data/boxlift_12_relative_perdim
 
 downsample: False
 data_frequency: 50.0
@@ -47,7 +47,10 @@ action_config:
   # /cartesian_impedance_controller/pose_command: 9
   /cartesian_admittance_controller/pose_command: 9
   # /admittance_offset: 9
-action_pose_mode: absolute  # absolute : raw pose_command, relative: pose_command[t]-pose_command[t-1] with t0=zeros
+action_pose_mode: relative  # absolute, delta (step-to-step), relative (whole chunk uses the current command anchor)
+ac_chunk: 20
+action_index_offset: 1
+relative_chunk_normalized: true  # Fit on valid training targets, then apply the same statistics to train/test.
 
 # Stiffness class extraction for observation (class=1: (low stiffness)) 
 stiffness_label_topic: /cartesian_impedance_gains

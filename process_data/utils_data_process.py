@@ -49,6 +49,7 @@ def generate_robobuf(trajectories):
         arrangements = traj.get("arrangement")
         modes = traj.get("mode")
         stiffness_labels = traj.get("stiffness_label")
+        action_masks = traj.get("action_mask")
         for i in range(num_steps):
             obs = {
                 "state": states[i],
@@ -67,6 +68,8 @@ def generate_robobuf(trajectories):
                 label_arr = np.asarray(stiffness_labels[i]).reshape(-1)
                 if label_arr.size > 0:
                     obs["stiffness_label"] = int(label_arr[0])
+            if action_masks is not None:
+                obs["action_mask"] = np.asarray(action_masks[i], dtype=np.float32)
             for k, v in traj.items():
                 if k.startswith("enc_cam_"):
                     obs[k] = v[i]

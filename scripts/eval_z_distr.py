@@ -14,6 +14,8 @@ import torch
 import torch.nn.functional as F
 import yaml
 from factr.arrangement import arrangement_id_to_one_hot
+from factr.utils import apply_grouped_transform as _apply_grouped_transform
+from factr.utils import canonical_action_mode as _canonical_action_mode
 from factr.utils import ensure_normalized as _ensure_normalized
 from factr.utils import state_stats_without_tracking_error as _state_stats_without_tracking_error
 from factr.utils_plot import relative_chunk_from_absolute
@@ -253,7 +255,8 @@ def _infer_action_pose_mode(cfg, rollout_cfg, action_stats) -> str:
     if mode is None and isinstance(rollout_cfg, dict):
         mode = (rollout_cfg.get("processing_config") or {}).get("action_pose_mode")
     if mode is not None:
-        return str(mode).strip().lower()
+        processing = (rollout_cfg.get("processing_config") or {}) if isinstance(rollout_cfg, dict) else None
+        return _canonical_action_mode(mode, processing_config=processing)
 
     if isinstance(action_stats, dict) and action_stats.get("mode", None) == "grouped":
         std_vals = []
@@ -264,7 +267,7 @@ def _infer_action_pose_mode(cfg, rollout_cfg, action_stats) -> str:
         if std_vals:
             mean_std = float(np.mean(np.concatenate(std_vals)))
             if np.isfinite(mean_std) and mean_std < 0.02:
-                return "relative"
+                return "delta"
 
     return "absolute"
 
@@ -1067,11 +1070,11 @@ def main():
 
             action_stats = rollout_cfg.get("norm_stats", {}).get("action", None)
             action_pose_mode = _infer_action_pose_mode(cfg, rollout_cfg, action_stats)
-            if action_pose_mode == "relative" and actions.shape[0] > 1:
+            if action_pose_mode == "delta" and actions.shape[0] > 1:
                 rel_actions = np.zeros_like(actions)
                 rel_actions[1:] = actions[1:] - actions[:-1]
                 actions = rel_actions
-            action_chunk_mode = str(OmegaConf.select(cfg, "action_chunk_mode", default="absolute")).strip().lower()
+            action_chunk_mode = _canonical_action_mode(OmegaConf.select(cfg, "action_chunk_mode", default="absolute"))
             action_index_offset = int(OmegaConf.select(cfg, "task.test_buffer.action_index_offset", default=1))
             obs_np, act_np, cls_np, arrangement_np = build_windows(
                 states, actions, classes, arrangements,
@@ -1081,11 +1084,12 @@ def main():
             )
             obs_raw_np = obs_np
             obs_np, _ = _ensure_normalized(obs_np, state_stats, NORMALIZATION_MODE, "state")
-            if action_chunk_mode == "relative_chunks":
+            if action_chunk_mode == "relative":
                 cmd_start = 27 if include_tracking_error else 21
                 act_np = relative_chunk_from_absolute(
                     act_np, obs_raw_np[:, -1, cmd_start : cmd_start + 9]
                 )
+                act_np = _apply_grouped_transform(act_np, action_stats, inverse=False)
             else:
                 act_np, _ = _ensure_normalized(act_np, action_stats, NORMALIZATION_MODE, "action")
 

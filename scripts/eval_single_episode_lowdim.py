@@ -15,9 +15,10 @@ import yaml
 from factr.arrangement import arrangement_id_to_one_hot
 from factr.transforms import get_transform_by_name
 from factr.utils import apply_grouped_transform as _apply_grouped_transform
+from factr.utils import canonical_action_mode as _canonical_action_mode
 from factr.utils import ensure_normalized as _ensure_normalized
 from factr.utils import state_stats_without_tracking_error as _state_stats_without_tracking_error
-from factr.utils_plot import RPYPlotConfig, build_pose_3d_figure, build_pose_comparison_figure, build_pose_fan_figure, pose_chunks_for_plot, relative_chunk_from_absolute
+from factr.utils_plot import RPYPlotConfig, build_pose_3d_figure, build_pose_comparison_figure, build_pose_fan_figure, pose_chunks_for_plot, relative_chunk_from_absolute, relative_chunk_to_absolute
 from hydra.utils import instantiate
 from omegaconf import OmegaConf
 
@@ -131,9 +132,9 @@ def _action_source_title(action_source: str) -> str:
 
 
 def _normalize_pose_mode(value: str) -> str:
-    pose_mode = str(value).strip().lower()
-    if pose_mode not in {"absolute", "relative", "relative_timesteps", "relative_chunks"}:
-        raise ValueError(f"pose mode must be one of absolute/relative/relative_timesteps/relative_chunks, got {value}")
+    pose_mode = _canonical_action_mode(value)
+    if pose_mode not in {"absolute", "delta", "relative"}:
+        raise ValueError(f"pose mode must be one of absolute/delta/relative, got {value}")
     return pose_mode
 
 
@@ -296,7 +297,8 @@ def _infer_action_pose_mode(cfg, rollout_cfg, action_stats) -> str:
     if mode is None and isinstance(rollout_cfg, dict):
         mode = (rollout_cfg.get("processing_config") or {}).get("action_pose_mode")
     if mode is not None:
-        return str(mode).strip().lower()
+        processing = (rollout_cfg.get("processing_config") or {}) if isinstance(rollout_cfg, dict) else None
+        return _canonical_action_mode(mode, processing_config=processing)
 
     if isinstance(action_stats, dict) and action_stats.get("mode", None) == "grouped":
         std_vals = []
@@ -307,7 +309,7 @@ def _infer_action_pose_mode(cfg, rollout_cfg, action_stats) -> str:
         if std_vals:
             mean_std = float(np.mean(np.concatenate(std_vals)))
             if np.isfinite(mean_std) and mean_std < 0.02:
-                return "relative"
+                return "delta"
 
     return "absolute"
 
@@ -335,15 +337,18 @@ def _load_train_buffer_background(buf_path: Path, action_stats: Optional[dict], 
                 continue
 
             actions = []
+            states = []
             pose0 = None
             for entry in traj:
                 try:
                     obs, action, _ = entry
                     actions.append(np.asarray(action, dtype=np.float32))
+                    state0 = _extract_state_from_buffer_obs(obs)
+                    if state0 is not None and state_stats is not None:
+                        state0 = _apply_grouped_transform(state0[None, :], state_stats, inverse=True)[0]
+                    if state0 is not None:
+                        states.append(state0)
                     if pose0 is None:
-                        state0 = _extract_state_from_buffer_obs(obs)
-                        if state0 is not None and state_stats is not None:
-                            state0 = _apply_grouped_transform(state0[None, :], state_stats, inverse=True)[0]
                         if state0 is not None and state0.size >= 9:
                             pose0 = state0[:9]
                 except Exception:
@@ -358,8 +363,16 @@ def _load_train_buffer_background(buf_path: Path, action_stats: Optional[dict], 
 
             action_dim = actions_arr.shape[-1]
             pose_dim = min(9, action_dim)
-            pose_seq = actions_arr[:, :pose_dim]
             if action_pose_mode == "relative":
+                if len(states) != len(actions_arr):
+                    continue
+                states_arr = np.stack(states, axis=0)
+                cmd_start = 27 if states_arr.shape[-1] >= 36 else 21
+                anchors = states_arr[:, cmd_start : cmd_start + pose_dim]
+                pose_seq = relative_chunk_to_absolute(actions_arr[..., :pose_dim], anchors)[:, 0]
+            else:
+                pose_seq = actions_arr[:, :pose_dim]
+            if action_pose_mode == "delta":
                 base = pose0 if pose0 is not None else np.zeros((pose_dim,), dtype=np.float32)
                 pose_seq = np.cumsum(pose_seq, axis=0) + base[None, :]
 
@@ -841,11 +854,9 @@ def main():
     )
     cfg_pose_mode = OmegaConf.select(cfg, "eval_plot_pose_mode", default=OmegaConf.select(cfg, "task.eval_plot_pose_mode", default="absolute"))
     plot_pose_mode = _normalize_pose_mode(cfg_pose_mode)
-    action_chunk_mode = str(OmegaConf.select(cfg, "action_chunk_mode", default="absolute")).strip().lower()
-    if plot_pose_mode in ("relative", "relative_timesteps") and action_chunk_mode != "relative_timesteps":
-        plot_pose_mode = "relative_chunks" if action_chunk_mode == "relative_chunks" else "absolute"
-    elif plot_pose_mode == "relative_chunks" and action_chunk_mode != "relative_chunks":
-        plot_pose_mode = "relative_timesteps" if action_chunk_mode == "relative_timesteps" else "absolute"
+    action_chunk_mode = _canonical_action_mode(OmegaConf.select(cfg, "action_chunk_mode", default="absolute"))
+    if plot_pose_mode != action_chunk_mode:
+        plot_pose_mode = action_chunk_mode
     print(
         "Eval config | "
         f"action_chunk_mode={action_chunk_mode} "
@@ -916,7 +927,7 @@ def main():
 
         raw_ep = _load_raw_episode_to_arrays(episode_file, rollout_cfg)
         raw_actions = raw_ep["actions"]
-        if action_pose_mode == "relative" and raw_actions.shape[0] > 1:
+        if action_pose_mode == "delta" and raw_actions.shape[0] > 1:
             rel_actions = np.zeros_like(raw_actions)
             rel_actions[1:] = raw_actions[1:] - raw_actions[:-1]
             raw_actions = rel_actions
@@ -965,11 +976,12 @@ def main():
             ).astype(np.float32)
 
         obs_norm, obs_applied = _ensure_normalized(obs_arr, state_stats, NORMALIZATION_MODE, "state")
-        if action_chunk_mode == "relative_chunks":
+        if action_chunk_mode == "relative":
             cmd_start = 27 if include_tracking_error else 21
             command_anchor = obs_arr[:, -1, cmd_start : cmd_start + 9]
-            actions_norm = relative_chunk_from_absolute(actions_arr, command_anchor)
-            action_applied = False
+            actions_relative = relative_chunk_from_absolute(actions_arr, command_anchor)
+            actions_norm = _apply_grouped_transform(actions_relative, action_stats, inverse=False)
+            action_applied = True
         else:
             actions_norm, action_applied = _ensure_normalized(actions_arr, action_stats, NORMALIZATION_MODE, "action")
 
@@ -1019,7 +1031,7 @@ def main():
         measured_first = obs_denorm[:, -1, :pose_dim]
         cmd_start = 27 if include_tracking_error else 21
         command_first = obs_denorm[:, -1, cmd_start : cmd_start + pose_dim]
-        plot_anchor = command_first if plot_pose_mode == "relative_chunks" else measured_first
+        plot_anchor = command_first if plot_pose_mode == "relative" else measured_first
         actions_plot = pose_chunks_for_plot(actions_denorm[:, :, :pose_dim], plot_anchor, plot_pose_mode)
         pred_det_plot = pose_chunks_for_plot(pred_det_denorm[:, :, :pose_dim], plot_anchor, plot_pose_mode)
         pred_samples_plot = pose_chunks_for_plot(pred_samples_denorm[:, :, :, :pose_dim], plot_anchor[:, None, :], plot_pose_mode)
