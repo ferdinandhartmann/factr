@@ -17,13 +17,15 @@ from robobuf import ReplayBuffer as RB
 from torch.utils.data import Dataset, IterableDataset
 
 from factr.arrangement import arrangement_id_to_one_hot
+from factr.goal_label import goal_label_to_group_one_hot
 from factr.utils import (
     apply_grouped_transform,
     canonical_action_mode,
     load_action_pose_mode_from_buffer_path,
+    lowdim_filter_state_features,
+    lowdim_state_stats_without_features,
     load_norm_stats_from_buffer_path,
     load_processing_config_from_buffer_path,
-    state_stats_without_tracking_error,
 )
 
 
@@ -317,12 +319,14 @@ class RobobufReplayBufferLowdim(ReplayBuffer):
         obs_dim=27,
         pose_action_dim=9,
         action_index_offset=0,
+        include_velocity=True,
         include_tracking_error=True,
         include_goals=False,
         action_chunk_mode="absolute",
         stiffness_classes=3,
         override_stiffness_with_mode=False,
         use_arrangement_conditioning=False,
+        goal_label=False,
         shuffle=True,
     ):
         assert mode in ("train", "test"), "Mode must be train/test"
@@ -332,6 +336,7 @@ class RobobufReplayBufferLowdim(ReplayBuffer):
         self.buffer_path = buffer_path
 
         self.obs_window = int(obs_window)
+        self.include_velocity = bool(include_velocity)
         self.include_tracking_error = bool(include_tracking_error)
         self.obs_dim = int(obs_dim)
         self.pose_action_dim = int(pose_action_dim)
@@ -341,12 +346,18 @@ class RobobufReplayBufferLowdim(ReplayBuffer):
         self.stiffness_classes = int(stiffness_classes)
         self.override_stiffness_with_mode = bool(override_stiffness_with_mode)
         self.use_arrangement_conditioning = bool(use_arrangement_conditioning)
-        self._tracking_slice = slice(21, 27)
-        if not self.include_tracking_error and self.obs_dim >= 36:
-            self.obs_dim -= 6
+        self.goal_label = bool(goal_label)
+        if self.obs_dim >= 36:
+            if not self.include_velocity:
+                self.obs_dim -= 6
+            if not self.include_tracking_error:
+                self.obs_dim -= 6
         self._state_norm_stats, self._action_norm_stats = load_norm_stats_from_buffer_path(buffer_path)
-        if not self.include_tracking_error:
-            self._state_norm_stats = state_stats_without_tracking_error(self._state_norm_stats)
+        self._state_norm_stats = lowdim_state_stats_without_features(
+            self._state_norm_stats,
+            include_velocity=self.include_velocity,
+            include_tracking_error=self.include_tracking_error,
+        )
         if self.action_chunk_mode == "relative" and not self._action_norm_stats:
             raise ValueError(
                 "relative mode requires dedicated action normalization metadata in rollout_config.yaml."
@@ -403,7 +414,8 @@ class RobobufReplayBufferLowdim(ReplayBuffer):
 
         print(
             f"Building {mode} lowdim buffer with episodes={len(use_episode_indices)}, "
-            f"obs_window={self.obs_window}, ac_chunk={ac_chunk}, pose_action_dim={self.pose_action_dim}"
+            f"obs_window={self.obs_window}, ac_chunk={ac_chunk}, pose_action_dim={self.pose_action_dim}, "
+            f"include_velocity={self.include_velocity}, include_tracking_error={self.include_tracking_error}"
         )
         print(f"Loaded from file: {buffer_path}")
 
@@ -435,13 +447,13 @@ class RobobufReplayBufferLowdim(ReplayBuffer):
     def _extract_obs_vector(self, step):
         obs_dict = _obs_to_dict(step.obs)
         state = np.asarray(obs_dict["state"], dtype=np.float32).reshape(-1)
-        if not self.include_tracking_error:
-            if state.shape[0] == self.obs_dim + 6:
-                state = np.concatenate(
-                    [state[: self._tracking_slice.start], state[self._tracking_slice.stop :]], axis=0
-                )
-            elif state.shape[0] != self.obs_dim:
-                raise ValueError(f"Expected state dim {self.obs_dim} without tracking error, got {state.shape[0]}.")
+        state = lowdim_filter_state_features(
+            state,
+            include_velocity=self.include_velocity,
+            include_tracking_error=self.include_tracking_error,
+        )
+        if state.shape[0] != self.obs_dim:
+            raise ValueError(f"Expected state dim {self.obs_dim}, got {state.shape[0]}.")
         if self.include_goals and "goals" in obs_dict:
             goals = np.asarray(obs_dict["goals"], dtype=np.float32).reshape(-1)
             state = np.concatenate([state, goals], axis=0)
@@ -477,6 +489,19 @@ class RobobufReplayBufferLowdim(ReplayBuffer):
             return arrangement_id_to_one_hot(obs_dict["arrangement"])
         except (TypeError, ValueError) as exc:
             raise ValueError(f"Invalid arrangement in episode {episode_id}, step {episode_step}: {exc}") from exc
+
+    def _extract_goal_vector(self, step, episode_id, episode_step):
+        obs_dict = _obs_to_dict(step.obs)
+        raw_goal = obs_dict.get("goals", obs_dict.get("goal"))
+        if raw_goal is None:
+            raise ValueError(
+                "goal_label=True requires obs['goals'] or obs['goal'] in every step; "
+                f"missing from episode {episode_id}, step {episode_step}."
+            )
+        try:
+            return goal_label_to_group_one_hot(raw_goal)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Invalid goal label in episode {episode_id}, step {episode_step}: {exc}") from exc
 
     def _infer_episode_stiffness_labels(self, episodes):
         labels = []
@@ -520,6 +545,12 @@ class RobobufReplayBufferLowdim(ReplayBuffer):
                 self._extract_arrangement_vector(step, episode_id=episode_id, episode_step=step_idx)
                 for step_idx, step in enumerate(episode)
             ]
+        episode_goal_vectors = None
+        if self.goal_label:
+            episode_goal_vectors = [
+                self._extract_goal_vector(step, episode_id=episode_id, episode_step=step_idx)
+                for step_idx, step in enumerate(episode)
+            ]
         state_dim = episode_states[0].shape[0]
         if state_dim != self.obs_dim:
             raise ValueError(f"Expected obs_dim={self.obs_dim}, got {state_dim}.")
@@ -553,7 +584,8 @@ class RobobufReplayBufferLowdim(ReplayBuffer):
                 pose_chunk = np.stack(chunk_actions, axis=0).astype(np.float32)
                 loss_mask = np.asarray(loss_mask, dtype=np.float32)
             arrangement_vector = episode_arrangements[t_idx] if episode_arrangements is not None else None
-            self.s_a_mask.append((obs_window, pose_chunk, loss_mask, int(label), arrangement_vector))
+            goal_vector = episode_goal_vectors[t_idx] if episode_goal_vectors is not None else None
+            self.s_a_mask.append((obs_window, pose_chunk, loss_mask, int(label), arrangement_vector, goal_vector))
             self.sample_metadata.append(
                 {
                     "episode_id": int(episode_id),
@@ -564,7 +596,7 @@ class RobobufReplayBufferLowdim(ReplayBuffer):
             )
 
     def __getitem__(self, idx):
-        obs_window, pose_chunk, loss_mask, label, arrangement_vector = self.s_a_mask[idx]
+        obs_window, pose_chunk, loss_mask, label, arrangement_vector, goal_vector = self.s_a_mask[idx]
 
         obs_tensor = _to_tensor(obs_window)
         action_tensor = _to_tensor(pose_chunk)
@@ -572,9 +604,11 @@ class RobobufReplayBufferLowdim(ReplayBuffer):
         label_tensor = torch.tensor(label, dtype=torch.long)
 
         sample = (({}, obs_tensor), action_tensor, mask_tensor, label_tensor)
-        if not self.use_arrangement_conditioning:
-            return sample
-        return (*sample, _to_tensor(arrangement_vector))
+        if self.use_arrangement_conditioning:
+            sample = (*sample, _to_tensor(arrangement_vector))
+        if self.goal_label:
+            sample = (*sample, _to_tensor(goal_vector))
+        return sample
 
     def get_sample_metadata(self, idx):
         if idx < 0 or idx >= len(self.sample_metadata):

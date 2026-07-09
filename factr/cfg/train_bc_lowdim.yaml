@@ -14,12 +14,20 @@ hydra:
 # dataset_project_prefix:
 dataset_name: boxlift_12_relative_perdim
 sweep_pose_tag: rel
+
 # Stiffness conditioning accepts 1-based scalar labels (1..C) or direct one-hot vectors (B, C).
 use_stiffness_conditioning: true # (and mode if mode override is enabled)
-use_arrangement_conditioning: true # add one token for the three goal-height arrangement
+use_arrangement_conditioning: true # condition on the three goal-height arrangement
+goal_label: true # condition on grouped goals: 1-3, 4-6, and 7-9
+# If true, active arrangement/goal conditions modulate context LayerNorm instead of adding tokens.
+use_adaptive_layer_norm: true
+# class 1/mode 0 weakly uses the goal; class 2/mode 1 uses it fully.
+use_stiffness_goal_adaln_gate: true
+goal_adaln_gate_min: 0.0
 override_stiffness_with_mode: true
 base_stiffness_classes: 1
 stiffness_classes: ${stiffness_class_count:${use_stiffness_conditioning},${override_stiffness_with_mode},${base_stiffness_classes}}
+include_velocity: true # if false, automatically reduces obs_dim -6 and removes the velocity token
 include_tracking_error: false # if false, atuomatically reduces obs_dim -6
 
 buffer_path: /home/ferdinand/activeinference/factr/process_data/processed_data/${dataset_name}/buf_train.pkl
@@ -27,7 +35,7 @@ buffer_path: /home/ferdinand/activeinference/factr/process_data/processed_data/$
 # episodes. task.py separates their eval plots using each sample's mode label.
 test_buffer_path: /home/ferdinand/activeinference/factr/process_data/processed_data/${dataset_name}/buf_test.pkl
 
-exp_name: c_vp_b0001_v4k4_ofs1_obs4_arr
+exp_name: h4l4_c_fp_b005_v3k3_obs4_arr_g_alngz
 
 batch_size: 180
 num_workers: 2

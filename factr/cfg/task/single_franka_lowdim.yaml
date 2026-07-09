@@ -1,5 +1,6 @@
 _target_: factr.task.BCTask
 obs_dim: 36 # if tracking error included: false: automatically cahnged to 30, if true stays at 36
+include_velocity: ${oc.select:include_velocity,true}
 include_tracking_error: ${oc.select:include_tracking_error,true}
 ac_dim: 9
 cam_indexes: []
@@ -7,9 +8,11 @@ n_cams: ${len:${task.cam_indexes}}
 stiffness_classes: ${stiffness_classes}
 use_stiffness_conditioning: ${oc.select:use_stiffness_conditioning,true}
 use_arrangement_conditioning: ${oc.select:use_arrangement_conditioning,false}
+goal_label: ${oc.select:goal_label,false}
 override_stiffness_with_mode: ${oc.select:override_stiffness_with_mode,false}
 eval_plot_max_steps: 800
 eval_plot_prediction_stride: 25
+# With goal conditioning, evaluation samples floor(eval_plot_num_samples / 3) per goal group.
 eval_plot_num_samples: 40
 eval_plot_pose_mode: ${action_chunk_mode}
 eval_traj_variance_w_start: 0.0
@@ -32,12 +35,14 @@ train_buffer:
   obs_dim: ${task.obs_dim}
   pose_action_dim: ${task.ac_dim}
   action_index_offset: 1 # if = 0: Model sees the observation at time t and should predict the action at time t.
+  include_velocity: ${task.include_velocity}
   include_tracking_error: ${task.include_tracking_error}
   include_goals: False
   action_chunk_mode: ${action_chunk_mode}
   stiffness_classes: ${task.stiffness_classes}
   override_stiffness_with_mode: ${ifelse:${task.use_stiffness_conditioning},${task.override_stiffness_with_mode},false}
   use_arrangement_conditioning: ${task.use_arrangement_conditioning}
+  goal_label: ${task.goal_label}
   shuffle: True
 
 test_buffer:
@@ -51,10 +56,12 @@ test_buffer:
   obs_dim: ${task.obs_dim}
   pose_action_dim: ${task.ac_dim}
   action_index_offset: 1
+  include_velocity: ${task.include_velocity}
   include_tracking_error: ${task.include_tracking_error}
   include_goals: False
   action_chunk_mode: ${action_chunk_mode}
   stiffness_classes: ${task.stiffness_classes}
   override_stiffness_with_mode: ${ifelse:${task.use_stiffness_conditioning},${task.override_stiffness_with_mode},false}
   use_arrangement_conditioning: ${task.use_arrangement_conditioning}
+  goal_label: ${task.goal_label}
   shuffle: False

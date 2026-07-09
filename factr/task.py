@@ -13,6 +13,7 @@ import torch
 from torch.utils.data import DataLoader, IterableDataset
 
 import wandb
+from factr.goal_label import equal_goal_group_samples, format_real_goal_groups
 from factr.replay_buffer import IterableWrapper
 from factr.utils import (
     apply_grouped_transform as _apply_grouped_transform,
@@ -20,7 +21,8 @@ from factr.utils import (
 )
 from factr.utils import (
     load_norm_stats_from_buffer_path as _load_norm_stats_from_buffer_path,
-    state_stats_without_tracking_error as _state_stats_without_tracking_error,
+    lowdim_command_start as _lowdim_command_start,
+    lowdim_state_stats_without_features as _lowdim_state_stats_without_features,
 )
 from factr.utils_plot import (
     RPYPlotConfig,
@@ -68,11 +70,22 @@ def _build_data_loader(buffer, batch_size, num_workers, is_train=False, shuffle=
 
 
 def _unpack_bc_batch(batch):
+    arrangement_vectors = None
+    goal_vectors = None
+    if len(batch) == 6:
+        (imgs, obs), actions, mask, labels, arrangement_vectors, goal_vectors = batch
+        return imgs, obs, actions, mask, labels, arrangement_vectors, goal_vectors
     if len(batch) == 5:
-        (imgs, obs), actions, mask, labels, arrangement_vectors = batch
-        return imgs, obs, actions, mask, labels, arrangement_vectors
+        (imgs, obs), actions, mask, labels, condition_vectors = batch
+        if condition_vectors.shape[-1] == 9:
+            arrangement_vectors = condition_vectors
+        elif condition_vectors.shape[-1] == 3:
+            goal_vectors = condition_vectors
+        else:
+            raise ValueError(f"Unknown conditioning vector width {condition_vectors.shape[-1]}.")
+        return imgs, obs, actions, mask, labels, arrangement_vectors, goal_vectors
     (imgs, obs), actions, mask, labels = batch
-    return imgs, obs, actions, mask, labels, None
+    return imgs, obs, actions, mask, labels, arrangement_vectors, goal_vectors
 
 
 def _build_eval_trajectory_fan_figure(
@@ -136,6 +149,7 @@ def _build_eval_fan_title(
     override_stiffness_with_mode=False,
     use_stiffness_conditioning=True,
     arrangement_vectors=None,
+    goal_vectors=None,
 ):
     condition = _eval_condition_label(
         stiffness_label=stiffness_label,
@@ -148,6 +162,9 @@ def _build_eval_fan_title(
     arrangement_text = _format_arrangement_vectors_for_title(arrangement_vectors)
     if arrangement_text is not None:
         title_parts.append(arrangement_text)
+    goal_text = format_real_goal_groups(goal_vectors)
+    if goal_text is not None:
+        title_parts.append(goal_text)
     if global_step is not None:
         title_parts.append(f"step={global_step}")
     return " | ".join(title_parts)
@@ -282,19 +299,25 @@ def _stack_plot_candidates(candidates, device):
             imgs[key] = torch.cat(img_list, dim=0).to(device)
 
     plot_time_index = np.asarray([int(item["plot_time_index"]) for item in candidates], dtype=np.int64)
-    return {
+    bundle = {
         "obs": obs,
         "actions": actions,
         "mask": mask,
         "labels": labels,
         "imgs": imgs,
         "time_index": plot_time_index,
-        **(
-            {"arrangement_vectors": torch.cat([item["arrangement_vectors"] for item in candidates], dim=0).to(device)}
-            if all("arrangement_vectors" in item for item in candidates)
-            else {}
-        ),
     }
+    bundle.update(
+        {"arrangement_vectors": torch.cat([item["arrangement_vectors"] for item in candidates], dim=0).to(device)}
+        if all("arrangement_vectors" in item for item in candidates)
+        else {}
+    )
+    bundle.update(
+        {"goal_vectors": torch.cat([item["goal_vectors"] for item in candidates], dim=0).to(device)}
+        if all("goal_vectors" in item for item in candidates)
+        else {}
+    )
+    return bundle
 
 
 def _stack_measured_plot_candidates(candidates, device):
@@ -531,6 +554,7 @@ def _compute_goal_distance_sum(
     obs: torch.Tensor,
     goal_frames,
     pose_mode: str,
+    include_velocity: bool,
     include_tracking_error: bool,
     sampled_abs_trajs: Optional[torch.Tensor] = None,
 ) -> float:
@@ -541,15 +565,19 @@ def _compute_goal_distance_sum(
         obs: Tensor of shape (B, W, obs_dim) containing denormalized observations.
         goal_frames: Sequence of dicts with a 9D pose entry. Only XYZ is used here.
         pose_mode: Action pose mode used to convert chunks into absolute pose.
+        include_velocity: Whether obs contains the 6D velocity slice.
         include_tracking_error: Whether obs contains the 6D tracking-error slice.
     """
     if sampled_actions.ndim != 4 or obs.ndim != 3 or not goal_frames:
         return float("nan")
 
-    if sampled_actions.shape[-1] < 3 or obs.shape[-1] < 30:
+    if sampled_actions.shape[-1] < 3 or obs.shape[-1] < 24:
         return float("nan")
 
-    cmd_start = 27 if include_tracking_error else 21
+    cmd_start = _lowdim_command_start(
+        include_velocity=include_velocity,
+        include_tracking_error=include_tracking_error,
+    )
     cmd_stop = cmd_start + sampled_actions.shape[-1]
     if obs.shape[-1] < cmd_stop:
         return float("nan")
@@ -587,6 +615,7 @@ def _compute_dist_to_opt_traj(
     obs: torch.Tensor,
     goal_frames,
     pose_mode: str,
+    include_velocity: bool,
     include_tracking_error: bool,
     sampled_abs_trajs: Optional[torch.Tensor] = None,
 ) -> float:
@@ -597,14 +626,18 @@ def _compute_dist_to_opt_traj(
         obs: Tensor of shape (B, W, obs_dim) containing denormalized observations.
         goal_frames: Sequence of dicts with a 9D pose entry. Only XYZ is used here.
         pose_mode: Action pose mode used to convert chunks into absolute pose.
+        include_velocity: Whether obs contains the 6D velocity slice.
         include_tracking_error: Whether obs contains the 6D tracking-error slice.
     """
     if sampled_actions.ndim != 4 or obs.ndim != 3 or not goal_frames:
         return float("nan")
-    if sampled_actions.shape[-1] < 3 or obs.shape[-1] < 30:
+    if sampled_actions.shape[-1] < 3 or obs.shape[-1] < 24:
         return float("nan")
 
-    cmd_start = 27 if include_tracking_error else 21
+    cmd_start = _lowdim_command_start(
+        include_velocity=include_velocity,
+        include_tracking_error=include_tracking_error,
+    )
     cmd_stop = cmd_start + sampled_actions.shape[-1]
     if obs.shape[-1] < cmd_stop:
         return float("nan")
@@ -669,6 +702,7 @@ class DefaultTask:
         eval_plot_pose_mode: str = "absolute",
         eval_traj_variance_w_start: float = 0.0,
         eval_traj_variance_w_end: float = 1.0,
+        include_velocity: Optional[bool] = None,
         include_tracking_error: Optional[bool] = None,
         sweep_target_min_diversity: float = 0.02,
         sweep_target_min_kl: float = 0.5,
@@ -677,6 +711,7 @@ class DefaultTask:
         stiffness_classes: int = 3,
         use_stiffness_conditioning: bool = True,
         use_arrangement_conditioning: bool = False,
+        goal_label: bool = False,
         override_stiffness_with_mode: bool = False,
     ):
         eval_plot_axis_limits = _select_eval_plot_axis_limits(eval_plot_axis_limits, eval_plot_pose_mode)
@@ -738,6 +773,7 @@ class DefaultTask:
         self.eval_plot_pose_mode = _canonical_action_mode(eval_plot_pose_mode)
         self.eval_traj_variance_w_start = float(eval_traj_variance_w_start)
         self.eval_traj_variance_w_end = float(eval_traj_variance_w_end)
+        self.include_velocity = bool(include_velocity) if include_velocity is not None else True
         self.include_tracking_error = bool(include_tracking_error) if include_tracking_error is not None else True
         self.eval_plot_rpy_config = RPYPlotConfig(
             subtract_pi=bool(eval_plot_rpy_subtract_pi),
@@ -746,8 +782,11 @@ class DefaultTask:
         )
         buffer_path = getattr(test_buffer, "buffer_path", None)
         self._eval_plot_state_stats, self._eval_plot_action_stats = _load_norm_stats_from_buffer_path(buffer_path)
-        if not self.include_tracking_error:
-            self._eval_plot_state_stats = _state_stats_without_tracking_error(self._eval_plot_state_stats)
+        self._eval_plot_state_stats = _lowdim_state_stats_without_features(
+            self._eval_plot_state_stats,
+            include_velocity=self.include_velocity,
+            include_tracking_error=self.include_tracking_error,
+        )
         self.sweep_target_min_diversity = max(0.0, float(sweep_target_min_diversity))
         self.sweep_target_min_kl = max(0.0, float(sweep_target_min_kl))
         self.sweep_diversity_penalty = max(0.0, float(sweep_diversity_penalty))
@@ -755,6 +794,7 @@ class DefaultTask:
         self.stiffness_classes = int(stiffness_classes)
         self.use_stiffness_conditioning = bool(use_stiffness_conditioning)
         self.use_arrangement_conditioning = bool(use_arrangement_conditioning)
+        self.goal_label = bool(goal_label)
         self.override_stiffness_with_mode = bool(override_stiffness_with_mode)
 
         self.weights_history = []
@@ -783,7 +823,7 @@ class DefaultTask:
 
 class BCTask(DefaultTask):
     @staticmethod
-    def _predict_actions(model, imgs, obs, labels, arrangement_vectors=None):
+    def _predict_actions(model, imgs, obs, labels, arrangement_vectors=None, goal_vectors=None):
         if getattr(model, "factr_baseline", False):
             try:
                 pred_actions = model.get_actions_base(
@@ -791,6 +831,7 @@ class BCTask(DefaultTask):
                     obs,
                     class_labels=labels,
                     arrangement_vectors=arrangement_vectors,
+                    goal_vectors=goal_vectors,
                 )
             except TypeError:
                 pred_actions = model.get_actions_base(imgs, obs)
@@ -801,6 +842,7 @@ class BCTask(DefaultTask):
                     obs,
                     class_labels=labels,
                     arrangement_vectors=arrangement_vectors,
+                    goal_vectors=goal_vectors,
                     sample=False,
                     num_samples=1,
                 )
@@ -812,23 +854,24 @@ class BCTask(DefaultTask):
         return pred_actions
 
     @staticmethod
-    def _sample_actions_for_plot(model, imgs, obs, labels, num_samples, arrangement_vectors=None):
-        try:
-            pred_actions = model.get_actions_prior(
-                imgs,
-                obs,
-                class_labels=labels,
-                arrangement_vectors=arrangement_vectors,
-                sample=True,
-                num_samples=num_samples,
-            )
-        except TypeError:
-            pred_actions = model.get_actions_prior(
-                imgs,
-                obs,
-                sample=True,
-                num_samples=num_samples,
-            )
+    def _sample_actions_for_plot(
+        model, imgs, obs, labels, num_samples, arrangement_vectors=None, goal_vectors=None
+    ):
+        def sample_once(condition, count):
+            try:
+                return model.get_actions_prior(
+                    imgs,
+                    obs,
+                    class_labels=labels,
+                    arrangement_vectors=arrangement_vectors,
+                    goal_vectors=condition,
+                    sample=True,
+                    num_samples=count,
+                )
+            except TypeError:
+                return model.get_actions_prior(imgs, obs, sample=True, num_samples=count)
+
+        pred_actions = equal_goal_group_samples(sample_once, goal_vectors, num_samples)
 
         if pred_actions.ndim == 3:
             pred_actions = pred_actions.unsqueeze(1)
@@ -879,6 +922,7 @@ class BCTask(DefaultTask):
             labels=bundle["labels"],
             num_samples=self.eval_plot_num_samples,
             arrangement_vectors=bundle.get("arrangement_vectors"),
+            goal_vectors=bundle.get("goal_vectors"),
         )
         pred_actions = self._predict_actions(
             model=model,
@@ -886,6 +930,7 @@ class BCTask(DefaultTask):
             obs=bundle["obs"],
             labels=bundle["labels"],
             arrangement_vectors=bundle.get("arrangement_vectors"),
+            goal_vectors=bundle.get("goal_vectors"),
         )
 
         pose_dim = 9
@@ -927,7 +972,10 @@ class BCTask(DefaultTask):
         )
 
         measured_pose = obs_np[:, -1, :pose_dim]
-        cmd_start = 27 if self.include_tracking_error else 21
+        cmd_start = _lowdim_command_start(
+            include_velocity=self.include_velocity,
+            include_tracking_error=self.include_tracking_error,
+        )
         command_pose = obs_np[:, -1, cmd_start : cmd_start + pose_dim]
         measured_pose_dense = measured_obs_np[:, -1, :pose_dim] if measured_obs_np is not None else measured_pose
         measured_time_dense = measured_bundle["time_index"] if measured_bundle is not None else bundle["time_index"]
@@ -979,6 +1027,7 @@ class BCTask(DefaultTask):
                 override_stiffness_with_mode=self.override_stiffness_with_mode,
                 use_stiffness_conditioning=self.use_stiffness_conditioning,
                 arrangement_vectors=bundle.get("arrangement_vectors"),
+                goal_vectors=bundle.get("goal_vectors"),
             ),
             plot_geodesic_subplot=self.eval_plot_geodesic_subplot,
             rpy_config=self.eval_plot_rpy_config,
@@ -1007,9 +1056,11 @@ class BCTask(DefaultTask):
         )
         assert fig_3d is not None
         arrangement_title = _format_arrangement_vectors_for_title(bundle.get("arrangement_vectors"))
-        if arrangement_title is not None and len(fig_3d.axes) > 0:
+        goal_title = format_real_goal_groups(bundle.get("goal_vectors"))
+        extra_titles = [title for title in (arrangement_title, goal_title) if title is not None]
+        if extra_titles and len(fig_3d.axes) > 0:
             current_title = fig_3d.axes[0].get_title()
-            fig_3d.axes[0].set_title(f"{current_title}\n{arrangement_title}")
+            fig_3d.axes[0].set_title(f"{current_title}\n{' | '.join(extra_titles)}")
         action_key = str(self.eval_plot_action_source).strip().lower() or "prior"
         fan3d_log_key = (
             f"eval/{action_key}_fan3d" if condition_key is None else f"eval/{action_key}_fan3d_{condition_key}"
@@ -1019,6 +1070,7 @@ class BCTask(DefaultTask):
 
     def eval(self, trainer, global_step, generate_plots=True):
         losses = []
+        total_losses = []
         prior_l1_losses = []
         posterior_kl_losses = []
         prior_std_mean_vals = []
@@ -1045,13 +1097,15 @@ class BCTask(DefaultTask):
         with torch.no_grad():
             for batch in self.test_loader:
                 # 1. データ受け取り
-                imgs, obs, actions, mask, labels, arrangement_vectors = _unpack_bc_batch(batch)
+                imgs, obs, actions, mask, labels, arrangement_vectors, goal_vectors = _unpack_bc_batch(batch)
 
                 # 2. GPU転送
                 imgs = {k: v.to(trainer.device_id) for k, v in imgs.items()}
                 obs, actions, mask, labels = [ar.to(trainer.device_id) for ar in (obs, actions, mask, labels)]
                 if arrangement_vectors is not None:
                     arrangement_vectors = arrangement_vectors.to(trainer.device_id)
+                if goal_vectors is not None:
+                    goal_vectors = goal_vectors.to(trainer.device_id)
 
                 ac_flat = actions.reshape((actions.shape[0], -1))
                 mask_flat = mask.reshape((mask.shape[0], -1))
@@ -1063,9 +1117,14 @@ class BCTask(DefaultTask):
                     mask_flat,
                     class_labels=labels,
                     arrangement_vectors=arrangement_vectors,
+                    goal_vectors=goal_vectors,
                 )
 
                 losses.append(output_dict["l1_loss"].item())
+                if output_dict.get("total_loss") is not None:
+                    # Eval total loss uses the model's exact training objective:
+                    # reconstruction plus the configured KL term.
+                    total_losses.append(output_dict["total_loss"].item())
                 if output_dict.get("kl") is not None:
                     posterior_kl_losses.append(output_dict["kl"].item())
                 if output_dict.get("prior_std_mean") is not None and model.latent_distribution != "categorical":
@@ -1083,6 +1142,7 @@ class BCTask(DefaultTask):
                     obs,
                     labels,
                     arrangement_vectors=arrangement_vectors,
+                    goal_vectors=goal_vectors,
                 )
 
                 mask_den = mask.sum((1, 2)).clamp(min=1.0)
@@ -1108,6 +1168,7 @@ class BCTask(DefaultTask):
                     labels=labels,
                     num_samples=self.eval_plot_num_samples,
                     arrangement_vectors=arrangement_vectors,
+                    goal_vectors=goal_vectors,
                 )
                 sample_diversity = _compute_sample_diversity(sampled_eval_actions, mask)
                 if np.isfinite(sample_diversity):
@@ -1132,7 +1193,10 @@ class BCTask(DefaultTask):
                 )
                 obs_denorm = torch.as_tensor(obs_denorm, dtype=obs.dtype, device=obs.device)
 
-                cmd_start = 27 if self.include_tracking_error else 21
+                cmd_start = _lowdim_command_start(
+                    include_velocity=self.include_velocity,
+                    include_tracking_error=self.include_tracking_error,
+                )
                 cmd_stop = cmd_start + sampled_eval_actions_denorm.shape[-1]
                 sampled_abs_trajs = None
                 if obs_denorm.shape[-1] >= cmd_stop:
@@ -1166,6 +1230,7 @@ class BCTask(DefaultTask):
                     obs=obs_denorm,
                     goal_frames=self.eval_plot_goal_frames,
                     pose_mode=self.eval_plot_pose_mode,
+                    include_velocity=self.include_velocity,
                     include_tracking_error=self.include_tracking_error,
                     sampled_abs_trajs=sampled_abs_trajs,
                 )
@@ -1176,6 +1241,7 @@ class BCTask(DefaultTask):
                     obs=obs_denorm,
                     goal_frames=self.eval_plot_goal_frames,
                     pose_mode=self.eval_plot_pose_mode,
+                    include_velocity=self.include_velocity,
                     include_tracking_error=self.include_tracking_error,
                     sampled_abs_trajs=sampled_abs_trajs,
                 )
@@ -1233,6 +1299,11 @@ class BCTask(DefaultTask):
                                     if arrangement_vectors is not None
                                     else {}
                                 ),
+                                **(
+                                    {"goal_vectors": goal_vectors[batch_idx : batch_idx + 1].detach().cpu()}
+                                    if goal_vectors is not None
+                                    else {}
+                                ),
                             }
                             plot_candidates.append(candidate)
                         raw_eval_index += 1
@@ -1247,6 +1318,7 @@ class BCTask(DefaultTask):
             model.train()
 
         mean_val_loss = np.mean(losses)
+        mean_total_loss = np.mean(total_losses) if total_losses else float("nan")
         mean_prior_l1 = np.mean(prior_l1_losses) if prior_l1_losses else float("nan")
         mean_posterior_kl = np.mean(posterior_kl_losses) if posterior_kl_losses else float("nan")
         mean_prior_std = np.mean(prior_std_mean_vals) if prior_std_mean_vals else float("nan")
@@ -1313,7 +1385,8 @@ class BCTask(DefaultTask):
             plot_label_counts_str = "skipped"
 
         print(
-            f"Step: {global_step}\tPosterior L1: {mean_val_loss:.4f}\tPrior L1: {mean_prior_l1:.4f}\t"
+            f"Step: {global_step}\tEval Total: {mean_total_loss:.4f}\t"
+            f"Posterior L1: {mean_val_loss:.4f}\tPrior L1: {mean_prior_l1:.4f}\t"
             f"KL: {mean_posterior_kl:.4f}\tAction L2: {ac_l2:.3f}\tLSign: {ac_lsig:.4f}\t"
             f"prior_std: {mean_prior_std:.4f}\tpost_std: {mean_posterior_std:.4f}\t"
             f"prior_H: {mean_prior_entropy:.4f}\tpost_H: {mean_posterior_entropy:.4f}\t"
@@ -1324,7 +1397,8 @@ class BCTask(DefaultTask):
             f"sample_end_direction_div: {mean_sample_end_direction_diversity:.4f}\t"
             f"traj_var_abs: {mean_traj_variance:.4f}\t"
             f"plot_steps: {len(selected_all_candidates)}\tplot_stride: {self.eval_plot_prediction_stride}\t"
-            f"plot_samples: {self.eval_plot_num_samples}\tplot_label_counts: {plot_label_counts_str}"
+            f"plot_samples: {self.eval_plot_num_samples if not self.goal_label else (self.eval_plot_num_samples // 3) * 3}"
+            f"\tplot_label_counts: {plot_label_counts_str}"
         )
 
         if wandb.run is not None:
@@ -1335,6 +1409,7 @@ class BCTask(DefaultTask):
                 # "eval/dist_to_opt_traj": mean_dist_to_opt_traj,
                 "eval/prior_l1": mean_prior_l1,
                 "eval/prior_entropy": mean_prior_entropy,
+                "eval/total_loss": mean_total_loss,
                 "eval/posterior_l1": mean_val_loss,
                 "eval/posterior_entropy": mean_posterior_entropy,
                 "eval_diversity/sample_endpoint_diversity": mean_sample_endpoint_diversity,

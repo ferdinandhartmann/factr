@@ -2,6 +2,7 @@
 import os
 import pickle
 import sys
+import time
 import warnings
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
@@ -14,10 +15,13 @@ import torch
 import torch.nn.functional as F
 import yaml
 from factr.arrangement import arrangement_id_to_one_hot
+from factr.goal_label import format_real_goal_groups, goal_label_to_group_one_hot
 from factr.utils import apply_grouped_transform as _apply_grouped_transform
 from factr.utils import canonical_action_mode as _canonical_action_mode
 from factr.utils import ensure_normalized as _ensure_normalized
-from factr.utils import state_stats_without_tracking_error as _state_stats_without_tracking_error
+from factr.utils import lowdim_command_start as _lowdim_command_start
+from factr.utils import lowdim_filter_state_features as _lowdim_filter_state_features
+from factr.utils import lowdim_state_stats_without_features as _lowdim_state_stats_without_features
 from factr.utils_plot import relative_chunk_from_absolute
 from hydra.utils import instantiate
 from omegaconf import OmegaConf
@@ -31,6 +35,11 @@ try:
     import factr.misc
 except ImportError:
     pass
+
+
+def _progress(message: str) -> None:
+    """Print an immediately visible heartbeat around potentially slow stages."""
+    print(f"[{time.strftime('%H:%M:%S')}] {message}", flush=True)
 
 
 def register_if_not_exists(name, resolver):
@@ -346,7 +355,9 @@ def _apply_controller_topic_fallbacks(entries: Dict, timestamps: Optional[Dict],
         print(f"Topic fallback: {expected_topic} <- {fallback_topic}")
 
 
-def load_episode_arrays(episode_path: Path, rollout_cfg: Dict) -> Tuple[np.ndarray, np.ndarray, Optional[np.ndarray], Optional[np.ndarray]]:
+def load_episode_arrays(
+    episode_path: Path, rollout_cfg: Dict
+) -> Tuple[np.ndarray, np.ndarray, Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray]]:
     with open(episode_path, "rb") as f:
         raw = pickle.load(f)
 
@@ -375,6 +386,8 @@ def load_episode_arrays(episode_path: Path, rollout_cfg: Dict) -> Tuple[np.ndarr
     stiffness_thresholds = stiffness_cfg.get("norm_thresholds")
     stiffness_classes_cfg = stiffness_cfg.get("classes")
     arrangement_topic = obs_cfg.get("arrangement_topic")
+    goal_topics = list(obs_cfg.get("goal_topics", []))
+    goal_topic = goal_topics[0] if goal_topics else None
     mode_topic = obs_cfg.get("mode_topic")
 
     if isinstance(stiffness_classes_cfg, (list, tuple)) and len(stiffness_classes_cfg) > 0:
@@ -389,6 +402,8 @@ def load_episode_arrays(episode_path: Path, rollout_cfg: Dict) -> Tuple[np.ndarr
         topics.append(stiffness_topic)
     if arrangement_topic is not None:
         topics.append(arrangement_topic)
+    if goal_topic is not None:
+        topics.append(goal_topic)
     if mode_topic is not None:
         topics.append(mode_topic)
     topics = list(dict.fromkeys(topics))
@@ -448,6 +463,13 @@ def load_episode_arrays(episode_path: Path, rollout_cfg: Dict) -> Tuple[np.ndarr
             for msg in synced[arrangement_topic]
         ]).astype(np.float32)
 
+    goal_vectors = None
+    if goal_topic is not None:
+        goal_vectors = np.stack([
+            goal_label_to_group_one_hot(_extract_vector(msg, ["goal", "data"], 1))
+            for msg in synced[goal_topic]
+        ]).astype(np.float32)
+
     count = min(len(states), len(actions))
     if classes is not None:
         count = min(count, len(classes))
@@ -455,6 +477,9 @@ def load_episode_arrays(episode_path: Path, rollout_cfg: Dict) -> Tuple[np.ndarr
     if arrangement_vectors is not None:
         count = min(count, len(arrangement_vectors))
         arrangement_vectors = arrangement_vectors[:count]
+    if goal_vectors is not None:
+        count = min(count, len(goal_vectors))
+        goal_vectors = goal_vectors[:count]
 
     states = states[:count]
     actions = actions[:count]
@@ -462,7 +487,7 @@ def load_episode_arrays(episode_path: Path, rollout_cfg: Dict) -> Tuple[np.ndarr
     if count == 0:
         raise ValueError(f"No synchronized samples in episode: {episode_path}")
 
-    return states, actions, classes, arrangement_vectors
+    return states, actions, classes, arrangement_vectors, goal_vectors
 
 
 def normalize_episode(states: np.ndarray, actions: np.ndarray, rollout_cfg: Dict) -> Tuple[np.ndarray, np.ndarray]:
@@ -474,7 +499,9 @@ def normalize_episode(states: np.ndarray, actions: np.ndarray, rollout_cfg: Dict
     return norm_states, norm_actions
 
 
-def build_windows(states, actions, classes, arrangements, obs_window: int, ac_chunk: int, action_index_offset: int = 1):
+def build_windows(
+    states, actions, classes, arrangements, goals, obs_window: int, ac_chunk: int, action_index_offset: int = 1
+):
     total_steps = len(actions)
     start_t = obs_window - 1
     end_t = total_steps - action_index_offset - ac_chunk
@@ -486,6 +513,7 @@ def build_windows(states, actions, classes, arrangements, obs_window: int, ac_ch
     action_chunks = []
     class_list = [] if classes is not None else None
     arrangement_list = [] if arrangements is not None else None
+    goal_list = [] if goals is not None else None
 
     for t in range(start_t, end_t + 1):
         obs_windows.append(states[t - obs_window + 1 : t + 1])
@@ -494,17 +522,20 @@ def build_windows(states, actions, classes, arrangements, obs_window: int, ac_ch
             class_list.append(int(classes[t]))
         if arrangement_list is not None:
             arrangement_list.append(arrangements[t])
+        if goal_list is not None:
+            goal_list.append(goals[t])
 
     obs_np = np.asarray(obs_windows, dtype=np.float32)
     act_np = np.asarray(action_chunks, dtype=np.float32)
     cls_np = np.asarray(class_list, dtype=np.int64) if class_list is not None else None
     arrangement_np = np.asarray(arrangement_list, dtype=np.float32) if arrangement_list is not None else None
+    goal_np = np.asarray(goal_list, dtype=np.float32) if goal_list is not None else None
 
-    return obs_np, act_np, cls_np, arrangement_np
+    return obs_np, act_np, cls_np, arrangement_np, goal_np
 
 
 @torch.no_grad()
-def extract_z_params(policy, obs_np, act_np, cls_np, arrangement_np, device: torch.device):
+def extract_z_params(policy, obs_np, act_np, cls_np, arrangement_np, goal_np, device: torch.device):
     if not hasattr(policy, "_build_context_tokens") or not hasattr(policy, "_prior") or not hasattr(policy, "posterior"):
         raise TypeError("Policy does not expose low-dim CVAE internals (_build_context_tokens/_prior/posterior).")
 
@@ -512,9 +543,10 @@ def extract_z_params(policy, obs_np, act_np, cls_np, arrangement_np, device: tor
     act_tensor = torch.from_numpy(act_np).to(device)
     cls_tensor = torch.from_numpy(cls_np).to(device) if cls_np is not None else None
     arrangement_tensor = torch.from_numpy(arrangement_np).to(device) if arrangement_np is not None else None
+    goal_tensor = torch.from_numpy(goal_np).to(device) if goal_np is not None else None
 
     context_tokens_with_command = policy._build_context_tokens(
-        obs_tensor, class_labels=cls_tensor, arrangement_vectors=arrangement_tensor
+        obs_tensor, class_labels=cls_tensor, arrangement_vectors=arrangement_tensor, goal_vectors=goal_tensor
     )
     # Match policy.forward(): the command token is decoder-only and is always last.
     context_tokens = context_tokens_with_command[:, :-1]
@@ -564,12 +596,68 @@ def extract_z_params(policy, obs_np, act_np, cls_np, arrangement_np, device: tor
 
 
 def visualize_z_statistics(dists_data: Dict, save_dir: Path, ep_name: str):
+    if dists_data.get("goal_comparison", False):
+        _visualize_goal_comparison_statistics(dists_data, save_dir, ep_name)
+        return
     latent_distribution = str(dists_data.get("latent_distribution", "gaussian")).lower()
     if latent_distribution == "categorical":
         visualize_z_statistics_categorical(dists_data, save_dir, ep_name)
         return
 
     visualize_z_statistics_gaussian(dists_data, save_dir, ep_name)
+
+
+def _visualize_goal_comparison_statistics(dists_data: Dict, save_dir: Path, ep_name: str):
+    conditions = dists_data["conditions"]
+    real_goal = dists_data.get("real_goal_title")
+    latent_distribution = str(dists_data["latent_distribution"]).lower()
+    colors = ["tab:blue", "tab:orange", "tab:green"]
+
+    if latent_distribution == "categorical":
+        first = next(iter(conditions.values()))
+        time_steps, num_variables, _ = first["Prior"][0].shape
+        fig, axes = plt.subplots(
+            num_variables * 3, 2, figsize=(16, max(3.0 * num_variables * 3, 8)), sharex=True, squeeze=False
+        )
+        for goal_idx, (goal_name, values) in enumerate(conditions.items()):
+            for var_idx in range(num_variables):
+                row = goal_idx * num_variables + var_idx
+                for col, key in enumerate(("Prior", "Posterior")):
+                    probs = values[key][0]
+                    image = axes[row, col].imshow(
+                        probs[:, var_idx, :].T, aspect="auto", origin="lower", interpolation="nearest",
+                        vmin=0.0, vmax=1.0, cmap="viridis"
+                    )
+                    axes[row, col].set_ylabel(f"{goal_name}\nVar {var_idx}")
+                    if row == 0:
+                        axes[row, col].set_title(key)
+        axes[-1, 0].set_xlabel("Time Index")
+        axes[-1, 1].set_xlabel("Time Index")
+        fig.colorbar(image, ax=axes, fraction=0.012, pad=0.01, label="Probability")
+        fig.suptitle(f"Categorical Z Goal Comparison: {ep_name}" + (f" | {real_goal}" if real_goal else ""))
+    else:
+        first = next(iter(conditions.values()))
+        time_steps, z_dim = first["Prior"][0].shape
+        x = np.arange(time_steps)
+        fig, axes = plt.subplots(z_dim, 2, figsize=(16, max(2.5 * z_dim, 8)), sharex=True, squeeze=False)
+        for goal_idx, (goal_name, values) in enumerate(conditions.items()):
+            for key, linestyle in (("Prior", "--"), ("Posterior", "-")):
+                mu, std, _ = values[key]
+                for dim in range(z_dim):
+                    axes[dim, 0].plot(x, mu[:, dim], color=colors[goal_idx], linestyle=linestyle,
+                                      label=f"{goal_name} {key}" if dim == 0 else None)
+                    axes[dim, 1].plot(x, std[:, dim] ** 2, color=colors[goal_idx], linestyle=linestyle)
+                    axes[dim, 0].set_ylabel(f"Dim {dim} mean")
+                    axes[dim, 1].set_ylabel(f"Dim {dim} variance")
+        axes[0, 0].legend(fontsize=8)
+        axes[-1, 0].set_xlabel("Time Index")
+        axes[-1, 1].set_xlabel("Time Index")
+        fig.suptitle(f"Z Goal Comparison: {ep_name}" + (f" | {real_goal}" if real_goal else ""))
+
+    save_path = save_dir / f"{ep_name}_z_distr.png"
+    fig.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"✅ Saved: {save_path}")
 
 
 def visualize_z_statistics_gaussian(dists_data: Dict, save_dir: Path, ep_name: str):
@@ -698,12 +786,98 @@ def _gaussian_pdf(x: np.ndarray, mu: float, std: float) -> np.ndarray:
 def visualize_distributions_video(
     dists_data: Dict, save_path: Path, ep_name: str, fps: int = 15, dpi: int = 80, frame_stride: int = 1, x_points: int = 80, x_std_mult: float = 4.0
 ):
+    if dists_data.get("goal_comparison", False):
+        _visualize_goal_comparison_video(
+            dists_data, save_path, ep_name, fps=fps, dpi=dpi, frame_stride=frame_stride,
+            x_points=x_points, x_std_mult=x_std_mult
+        )
+        return
     latent_distribution = str(dists_data.get("latent_distribution", "gaussian")).lower()
     if latent_distribution == "categorical":
         visualize_distributions_video_categorical(dists_data, save_path, ep_name, fps=fps, dpi=dpi, frame_stride=frame_stride)
         return
 
     visualize_distributions_video_gaussian(dists_data, save_path, ep_name, fps=fps, dpi=dpi, frame_stride=frame_stride, x_points=x_points, x_std_mult=x_std_mult)
+
+
+def _visualize_goal_comparison_video(
+    dists_data, save_path, ep_name, fps=15, dpi=80, frame_stride=1, x_points=80, x_std_mult=4.0
+):
+    conditions = dists_data["conditions"]
+    real_goal = dists_data.get("real_goal_title")
+    colors = ["tab:blue", "tab:orange", "tab:green"]
+    first = next(iter(conditions.values()))
+    latent_distribution = str(dists_data["latent_distribution"]).lower()
+
+    if latent_distribution == "categorical":
+        time_steps, num_variables, num_categories = first["Prior"][0].shape
+        fig, axes = plt.subplots(3, num_variables, figsize=(max(4 * num_variables, 8), 8), squeeze=False)
+        x_idx = np.arange(num_categories)
+        bars = {}
+        for goal_idx, (goal_name, _) in enumerate(conditions.items()):
+            for var_idx in range(num_variables):
+                ax = axes[goal_idx, var_idx]
+                prior = ax.bar(x_idx - 0.2, np.zeros(num_categories), 0.4, color="blue", alpha=0.55)
+                posterior = ax.bar(x_idx + 0.2, np.zeros(num_categories), 0.4, color="red", alpha=0.75)
+                ax.set_ylim(0, 1)
+                ax.set_title(f"{goal_name} · Var {var_idx}")
+                bars[(goal_idx, var_idx)] = (prior, posterior)
+        axes[0, 0].legend([bars[(0, 0)][0][0], bars[(0, 0)][1][0]], ["Prior", "Posterior"])
+    else:
+        time_steps, z_dim = first["Prior"][0].shape
+        ncols = int(np.ceil(np.sqrt(z_dim)))
+        nrows = int(np.ceil(z_dim / ncols))
+        fig, axes = plt.subplots(nrows, ncols, figsize=(ncols * 3.2, nrows * 3.0), squeeze=False)
+        axes = axes.reshape(-1)
+        all_values = [values[key][:2] for values in conditions.values() for key in ("Prior", "Posterior")]
+        all_mu = np.concatenate([value[0].reshape(-1) for value in all_values])
+        all_std = np.concatenate([value[1].reshape(-1) for value in all_values])
+        x_min = float(np.min(all_mu - x_std_mult * np.clip(all_std, 1e-6, None)))
+        x_max = float(np.max(all_mu + x_std_mult * np.clip(all_std, 1e-6, None)))
+        x_vals = np.linspace(x_min, x_max, max(20, int(x_points)))
+        lines = {}
+        for dim, ax in enumerate(axes):
+            if dim >= z_dim:
+                ax.axis("off")
+                continue
+            ax.set_title(f"Dim {dim}")
+            ax.set_xlim(x_min, x_max)
+            for goal_idx, goal_name in enumerate(conditions):
+                for key, linestyle in (("Prior", "--"), ("Posterior", "-")):
+                    line, = ax.plot([], [], color=colors[goal_idx], linestyle=linestyle,
+                                    label=f"{goal_name} {key}")
+                    lines[(dim, goal_idx, key)] = line
+        axes[0].legend(fontsize=7)
+
+    frame_indices = np.arange(0, time_steps, max(1, int(frame_stride)), dtype=np.int64)
+    if frame_indices[-1] != time_steps - 1:
+        frame_indices = np.append(frame_indices, time_steps - 1)
+    writer = animation.FFMpegWriter(fps=int(fps), metadata={"artist": "factr"}, bitrate=2200)
+    with writer.saving(fig, str(save_path), dpi=int(dpi)):
+        for t in tqdm(frame_indices, desc=f"Rendering {ep_name}"):
+            fig.suptitle(f"Z Goal Comparison: {ep_name} · t={t}/{time_steps}" + (f" | {real_goal}" if real_goal else ""))
+            if latent_distribution == "categorical":
+                for goal_idx, values in enumerate(conditions.values()):
+                    for var_idx in range(num_variables):
+                        prior_probs = values["Prior"][0][t, var_idx]
+                        post_probs = values["Posterior"][0][t, var_idx]
+                        prior_bars, post_bars = bars[(goal_idx, var_idx)]
+                        for cat_idx in range(num_categories):
+                            prior_bars[cat_idx].set_height(float(prior_probs[cat_idx]))
+                            post_bars[cat_idx].set_height(float(post_probs[cat_idx]))
+            else:
+                for goal_idx, values in enumerate(conditions.values()):
+                    for key in ("Prior", "Posterior"):
+                        mu, std, _ = values[key]
+                        for dim in range(z_dim):
+                            lines[(dim, goal_idx, key)].set_data(
+                                x_vals, _gaussian_pdf(x_vals, mu[t, dim], std[t, dim])
+                            )
+                            axes[dim].relim()
+                            axes[dim].autoscale_view(scalex=False, scaley=True)
+            writer.grab_frame()
+    plt.close(fig)
+    print(f"✅ Saved: {save_path}")
 
 
 def visualize_distributions_video_gaussian(
@@ -967,13 +1141,17 @@ def render_episode_outputs(
 ) -> Tuple[str, Optional[str]]:
     try:
         if save_static_plots:
+            _progress(f"[{ep_name}] Rendering static Z plots...")
             visualize_z_statistics(dists, save_dir, ep_name)
+            _progress(f"[{ep_name}] Static Z plots finished")
 
         if save_video:
             video_path = save_dir / f"{ep_name}_z_distr.mp4"
+            _progress(f"[{ep_name}] Rendering Z video -> {video_path}")
             visualize_distributions_video(
                 dists, video_path, ep_name, fps=video_fps, dpi=video_dpi, frame_stride=video_frame_stride, x_points=video_x_points, x_std_mult=video_x_std_mult
             )
+            _progress(f"[{ep_name}] Z video finished")
         return ep_name, None
     except Exception as e:
         return ep_name, str(e)
@@ -1020,7 +1198,9 @@ def main():
     with open(rollout_cfg_path, "r") as f:
         rollout_cfg = yaml.safe_load(f)
 
+    _progress(f"Loading checkpoint on {device}: {ckpt_path}")
     policy, cfg = load_model(ckpt_path, device)
+    _progress("Checkpoint loaded successfully")
     obs_window = int(getattr(policy, "obs_window", 8))
     ac_chunk = int(getattr(policy, "ac_chunk", 30))
 
@@ -1058,15 +1238,25 @@ def main():
 
     for ep_id, ep_path in tqdm(episode_items, desc="Episodes"):
         ep_name = plot_file_stem(ep_id)
-        print(f"\nProcessing {ep_id} -> {ep_path}")
+        _progress(f"Starting episode {ep_id} -> {ep_path}")
 
         try:
-            states, actions, classes, arrangements = load_episode_arrays(ep_path, rollout_cfg)
+            _progress(f"[{ep_name}] Loading and synchronizing raw topics...")
+            states, actions, classes, arrangements, goals = load_episode_arrays(ep_path, rollout_cfg)
+            _progress(f"[{ep_name}] Loaded {len(states)} synchronized steps")
+            include_velocity = bool(OmegaConf.select(cfg, "include_velocity", default=OmegaConf.select(cfg, "agent.include_velocity", default=True)))
             include_tracking_error = bool(OmegaConf.select(cfg, "include_tracking_error", default=OmegaConf.select(cfg, "agent.include_tracking_error", default=True)))
             state_stats = rollout_cfg.get("norm_stats", {}).get("state", None)
-            if (not include_tracking_error) and states.shape[-1] >= 36:
-                states = np.concatenate([states[:, :21], states[:, 27:]], axis=-1)
-                state_stats = _state_stats_without_tracking_error(state_stats)
+            states = _lowdim_filter_state_features(
+                states,
+                include_velocity=include_velocity,
+                include_tracking_error=include_tracking_error,
+            )
+            state_stats = _lowdim_state_stats_without_features(
+                state_stats,
+                include_velocity=include_velocity,
+                include_tracking_error=include_tracking_error,
+            )
 
             action_stats = rollout_cfg.get("norm_stats", {}).get("action", None)
             action_pose_mode = _infer_action_pose_mode(cfg, rollout_cfg, action_stats)
@@ -1076,16 +1266,21 @@ def main():
                 actions = rel_actions
             action_chunk_mode = _canonical_action_mode(OmegaConf.select(cfg, "action_chunk_mode", default="absolute"))
             action_index_offset = int(OmegaConf.select(cfg, "task.test_buffer.action_index_offset", default=1))
-            obs_np, act_np, cls_np, arrangement_np = build_windows(
-                states, actions, classes, arrangements,
+            _progress(f"[{ep_name}] Building windows (W={obs_window}, T={ac_chunk})...")
+            obs_np, act_np, cls_np, arrangement_np, goal_np = build_windows(
+                states, actions, classes, arrangements, goals,
                 obs_window=obs_window,
                 ac_chunk=ac_chunk,
                 action_index_offset=action_index_offset,
             )
+            _progress(f"[{ep_name}] Built {len(obs_np)} evaluation windows")
             obs_raw_np = obs_np
             obs_np, _ = _ensure_normalized(obs_np, state_stats, NORMALIZATION_MODE, "state")
             if action_chunk_mode == "relative":
-                cmd_start = 27 if include_tracking_error else 21
+                cmd_start = _lowdim_command_start(
+                    include_velocity=include_velocity,
+                    include_tracking_error=include_tracking_error,
+                )
                 act_np = relative_chunk_from_absolute(
                     act_np, obs_raw_np[:, -1, cmd_start : cmd_start + 9]
                 )
@@ -1101,7 +1296,35 @@ def main():
                 raise ValueError("Checkpoint requires arrangement conditioning, but episode has no arrangement topic.")
             if not use_arrangement:
                 arrangement_np = None
-            dists = extract_z_params(policy, obs_np, act_np, cls_np, arrangement_np, device=device)
+            use_goal_label = bool(OmegaConf.select(
+                cfg, "agent.goal_label",
+                default=OmegaConf.select(cfg, "goal_label", default=False),
+            ))
+            if use_goal_label and goal_np is None:
+                raise ValueError("Checkpoint requires goal-label conditioning, but episode has no /goal topic.")
+            if not use_goal_label:
+                goal_np = None
+            if use_goal_label:
+                conditions = {}
+                for goal_index in range(3):
+                    _progress(f"[{ep_name}] Computing Z distributions for goal group {goal_index + 1}/3...")
+                    condition = np.eye(3, dtype=np.float32)[goal_index]
+                    condition_np = np.repeat(condition[None, :], obs_np.shape[0], axis=0)
+                    conditions[f"Goal group {goal_index + 1}"] = extract_z_params(
+                        policy, obs_np, act_np, cls_np, arrangement_np, condition_np, device=device
+                    )
+                dists = {
+                    "goal_comparison": True,
+                    "real_goal_title": format_real_goal_groups(goal_np),
+                    "latent_distribution": next(iter(conditions.values()))["latent_distribution"],
+                    "conditions": conditions,
+                }
+            else:
+                _progress(f"[{ep_name}] Computing Z distributions...")
+                dists = extract_z_params(
+                    policy, obs_np, act_np, cls_np, arrangement_np, None, device=device
+                )
+            _progress(f"[{ep_name}] Z inference complete; queued for rendering")
         except Exception as e:
             print(f"Skip {ep_name}: {e}")
             continue
@@ -1122,6 +1345,7 @@ def main():
         return
 
     if max_workers <= 1:
+        _progress(f"Rendering {len(render_jobs)} episode output set(s) sequentially")
         for ep_name, dists, save_dir in render_jobs:
             _, err = render_episode_outputs(dists, save_dir, ep_name, SAVE_STATIC_PLOTS, SAVE_VIDEO, VIDEO_FPS, VIDEO_DPI, VIDEO_FRAME_STRIDE, VIDEO_X_POINTS, VIDEO_X_STD_MULT)
             if err is not None:
@@ -1129,6 +1353,7 @@ def main():
         return
 
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        _progress(f"Submitting {len(render_jobs)} render job(s) to {max_workers} workers")
         futures = [
             executor.submit(
                 render_episode_outputs, dists, save_dir, ep_name, SAVE_STATIC_PLOTS, SAVE_VIDEO, VIDEO_FPS, VIDEO_DPI, VIDEO_FRAME_STRIDE, VIDEO_X_POINTS, VIDEO_X_STD_MULT

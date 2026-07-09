@@ -162,7 +162,9 @@ class BehaviorCloning(BaseTrainer):
         self.diversity_smoothing = float(diversity_smoothing)
         self.diversity_debug = bool(diversity_debug)
 
-    def _sample_actions_prior_with_grad(self, model, imgs, obs, labels, arrangement_vectors=None):
+    def _sample_actions_prior_with_grad(
+        self, model, imgs, obs, labels, arrangement_vectors=None, goal_vectors=None
+    ):
         if all(
             hasattr(model, name)
             for name in (
@@ -178,6 +180,7 @@ class BehaviorCloning(BaseTrainer):
                 obs,
                 class_labels=labels,
                 arrangement_vectors=arrangement_vectors,
+                goal_vectors=goal_vectors,
             )
             # The command token is last and is decoder-only for the latent context.
             z_context = model._build_z_context(context_tokens[:, :-1])
@@ -194,20 +197,32 @@ class BehaviorCloning(BaseTrainer):
             obs,
             class_labels=labels,
             arrangement_vectors=arrangement_vectors,
+            goal_vectors=goal_vectors,
             sample=True,
             num_samples=self.diversity_num_samples,
         )
 
     def training_step(self, batch, global_step):
-        if len(batch) == 5:
-            (imgs, obs), actions, mask, labels, arrangement_vectors = batch
+        arrangement_vectors = None
+        goal_vectors = None
+        if len(batch) == 6:
+            (imgs, obs), actions, mask, labels, arrangement_vectors, goal_vectors = batch
+        elif len(batch) == 5:
+            (imgs, obs), actions, mask, labels, condition_vectors = batch
+            if condition_vectors.shape[-1] == 9:
+                arrangement_vectors = condition_vectors
+            elif condition_vectors.shape[-1] == 3:
+                goal_vectors = condition_vectors
+            else:
+                raise ValueError(f"Unknown conditioning vector width {condition_vectors.shape[-1]}.")
         else:
             (imgs, obs), actions, mask, labels = batch
-            arrangement_vectors = None
         imgs = {k: v.to(self.device_id) for k, v in imgs.items()}
         obs, actions, mask, labels = [ar.to(self.device_id) for ar in (obs, actions, mask, labels)]
         if arrangement_vectors is not None:
             arrangement_vectors = arrangement_vectors.to(self.device_id)
+        if goal_vectors is not None:
+            goal_vectors = goal_vectors.to(self.device_id)
 
         ac_flat = actions.reshape((actions.shape[0], -1))
         mask_flat = mask.reshape((mask.shape[0], -1))
@@ -219,6 +234,7 @@ class BehaviorCloning(BaseTrainer):
             mask_flat,
             class_labels=labels,
             arrangement_vectors=arrangement_vectors,
+            goal_vectors=goal_vectors,
         )
 
         def reduce_loss(t):
@@ -237,6 +253,7 @@ class BehaviorCloning(BaseTrainer):
                     obs,
                     labels,
                     arrangement_vectors=arrangement_vectors,
+                    goal_vectors=goal_vectors,
                 )
                 # endpoint_position_div = _pairwise_endpoint_position_diversity(sampled_actions, mask)
                 endpoint_position_div = _pairwise_trajectory_position_diversity(

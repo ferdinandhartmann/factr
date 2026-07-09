@@ -111,11 +111,16 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         ac_dim=9,
         ac_chunk=30,
         obs_window=8,
+        include_velocity=True,
         include_tracking_error=True,
         use_cls_token=True,
         stiffness_classes=3,
         use_stiffness_conditioning=True,
         use_arrangement_conditioning=False,
+        goal_label=False,
+        use_adaptive_layer_norm=False,
+        use_stiffness_goal_adaln_gate=False,
+        goal_adaln_gate_min=0.1,
         d_z=32,
         latent_distribution="gaussian",
         categorical_num_variables=2,
@@ -137,19 +142,39 @@ class LowdimStiffnessCVAEAgent(nn.Module):
     ):
         super().__init__()
 
+        self.include_velocity = bool(include_velocity)
         self.include_tracking_error = bool(include_tracking_error)
         self.use_cls_token = bool(use_cls_token)
         base_obs_dim = int(obs_dim)
-        if not self.include_tracking_error and base_obs_dim >= 36:
-            self._obs_dim = base_obs_dim - 6
-        else:
-            self._obs_dim = base_obs_dim
+        self._obs_dim = base_obs_dim
+        if base_obs_dim >= 36:
+            if not self.include_velocity:
+                self._obs_dim -= 6
+            if not self.include_tracking_error:
+                self._obs_dim -= 6
         self._ac_dim = int(ac_dim)
         self._ac_chunk = int(ac_chunk)
         self.obs_window = int(obs_window)
         self.stiffness_classes = int(stiffness_classes)
         self.use_stiffness_conditioning = bool(use_stiffness_conditioning)
         self.use_arrangement_conditioning = bool(use_arrangement_conditioning)
+        self.goal_label = bool(goal_label)
+        self.use_adaptive_layer_norm = bool(use_adaptive_layer_norm)
+        self.use_stiffness_goal_adaln_gate = bool(use_stiffness_goal_adaln_gate)
+        self.goal_adaln_gate_min = float(goal_adaln_gate_min)
+        if self.use_adaptive_layer_norm and not (self.use_arrangement_conditioning or self.goal_label):
+            raise ValueError(
+                "use_adaptive_layer_norm=True requires arrangement or goal conditioning to be enabled."
+            )
+        if self.use_stiffness_goal_adaln_gate and not (
+            self.use_adaptive_layer_norm and self.goal_label and self.use_stiffness_conditioning
+        ):
+            raise ValueError(
+                "use_stiffness_goal_adaln_gate=True requires adaptive LayerNorm, goal labels, "
+                "and stiffness conditioning."
+            )
+        if not 0.0 <= self.goal_adaln_gate_min <= 1.0:
+            raise ValueError(f"goal_adaln_gate_min must be in [0, 1], got {self.goal_adaln_gate_min}.")
         self.beta = float(beta)
         self.free_bits = free_bits
         self.kl_balance_alpha = float(kl_balance_alpha)
@@ -165,7 +190,11 @@ class LowdimStiffnessCVAEAgent(nn.Module):
             f"Initializing LowdimStiffnessCVAEAgent with obs_dim={self._obs_dim}, ac_dim={self._ac_dim}, ac_chunk={self._ac_chunk}, "
             f"obs_window={self.obs_window}, stiffness_classes={self.stiffness_classes}, "
             f"use_stiffness_conditioning={self.use_stiffness_conditioning}, d_z={d_z}, "
+            f"include_velocity={self.include_velocity}, include_tracking_error={self.include_tracking_error}, "
             f"use_arrangement_conditioning={self.use_arrangement_conditioning}, "
+            f"goal_label={self.goal_label}, "
+            f"use_adaptive_layer_norm={self.use_adaptive_layer_norm}, "
+            f"use_stiffness_goal_adaln_gate={self.use_stiffness_goal_adaln_gate}, "
             f"latent_distribution={self.latent_distribution}, "
         )
 
@@ -197,26 +226,31 @@ class LowdimStiffnessCVAEAgent(nn.Module):
             self._latent_sample_dim = self._categorical_flat_dim
             self._free_bits_dims = self.categorical_num_variables
 
+        # Build the compact state layout after optional slices have been removed upstream.
+        cursor = 0
+        self.state_slices = {"pose": slice(cursor, cursor + 9)}
+        cursor += 9
+        if self.include_velocity:
+            self.state_slices["velocity"] = slice(cursor, cursor + 6)
+            cursor += 6
+        self.state_slices["wrench"] = slice(cursor, cursor + 6)
+        cursor += 6
         if self.include_tracking_error:
-            self.state_slices = {
-                "pose": slice(0, 9),
-                "velocity": slice(9, 15),
-                "wrench": slice(15, 21),
-                "tracking": slice(21, 27),
-                "cmd": slice(27, 36),
-            }
-            num_tokens = 5
-        else:
-            self.state_slices = {
-                "pose": slice(0, 9),
-                "velocity": slice(9, 15),
-                "wrench": slice(15, 21),
-                "cmd": slice(21, 30),
-            }
-            num_tokens = 4
+            self.state_slices["tracking"] = slice(cursor, cursor + 6)
+            cursor += 6
+        self.state_slices["cmd"] = slice(cursor, cursor + 9)
+        cursor += 9
+        if cursor != self._obs_dim:
+            raise ValueError(
+                f"Low-dim state layout expects obs_dim={cursor}, got {self._obs_dim}. "
+                "Check include_velocity/include_tracking_error and task.obs_dim."
+            )
+        num_tokens = 3 + int(self.include_velocity) + int(self.include_tracking_error)
         if self.use_stiffness_conditioning:
             num_tokens += 1
-        if self.use_arrangement_conditioning:
+        if self.use_arrangement_conditioning and not self.use_adaptive_layer_norm:
+            num_tokens += 1
+        if self.goal_label and not self.use_adaptive_layer_norm:
             num_tokens += 1
         if self.use_cls_token:
             num_tokens += 1
@@ -240,7 +274,7 @@ class LowdimStiffnessCVAEAgent(nn.Module):
             )
 
         self.pose_encoder = make_group_encoder(9)
-        self.vel_encoder = make_group_encoder(6)
+        self.vel_encoder = make_group_encoder(6) if self.include_velocity else None
         self.wrench_encoder = make_group_encoder(6)
         self.track_encoder = make_group_encoder(6) if self.include_tracking_error else None
         # Stiffness/mode can be fully disabled for unconditioned policy training.
@@ -250,7 +284,14 @@ class LowdimStiffnessCVAEAgent(nn.Module):
             else None
         )
         self.arrangement_encoder = (
-            nn.Linear(9, token_dim, bias=False) if self.use_arrangement_conditioning else None
+            nn.Linear(9, token_dim, bias=False)
+            if self.use_arrangement_conditioning and not self.use_adaptive_layer_norm
+            else None
+        )
+        self.goal_encoder = (
+            nn.Linear(3, token_dim, bias=False)
+            if self.goal_label and not self.use_adaptive_layer_norm
+            else None
         )
         self.cmd_encoder = make_group_encoder(9)  ###
 
@@ -264,6 +305,17 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         )
         self.context_encoder = nn.TransformerEncoder(encoder_layer, num_layers=encoder_layers)
         self.context_norm = nn.LayerNorm(token_dim)
+        self.adaln_modulation = None
+        if self.use_adaptive_layer_norm:
+            condition_dim = (9 if self.use_arrangement_conditioning else 0) + (3 if self.goal_label else 0)
+            self.adaln_modulation = nn.Sequential(
+                nn.Linear(condition_dim, token_dim),
+                nn.GELU(),
+                nn.Linear(token_dim, 2 * token_dim),
+            )
+            # Begin exactly as ordinary LayerNorm and learn conditioning gradually.
+            nn.init.zeros_(self.adaln_modulation[-1].weight)
+            nn.init.zeros_(self.adaln_modulation[-1].bias)
 
         context_dim = (num_tokens - 1) * token_dim
 
@@ -364,23 +416,43 @@ class LowdimStiffnessCVAEAgent(nn.Module):
             raise ValueError(f"Expected obs_dim={self._obs_dim}, got {dim}.")
         return batch_size
 
-    def _build_context_tokens(self, obs, class_labels, arrangement_vectors=None):
+    def _stiffness_goal_gate(self, stiffness_one_hot):
+        """Map the lowest stiffness/mode class to a weak goal gate and the highest to 1."""
+        if self.stiffness_classes == 1:
+            return torch.ones(
+                stiffness_one_hot.shape[0], 1, device=stiffness_one_hot.device, dtype=stiffness_one_hot.dtype
+            )
+        class_strength = torch.linspace(
+            self.goal_adaln_gate_min,
+            1.0,
+            self.stiffness_classes,
+            device=stiffness_one_hot.device,
+            dtype=stiffness_one_hot.dtype,
+        )
+        return (stiffness_one_hot * class_strength.unsqueeze(0)).sum(dim=-1, keepdim=True)
+
+    def _build_context_tokens(self, obs, class_labels, arrangement_vectors=None, goal_vectors=None):
         batch_size = self._prepare_obs(obs)
 
         pose = obs[:, :, self.state_slices["pose"]].reshape(batch_size, -1)
-        vel = obs[:, :, self.state_slices["velocity"]].reshape(batch_size, -1)
         wrench = obs[:, :, self.state_slices["wrench"]].reshape(batch_size, -1)
         cmd = obs[:, :, self.state_slices["cmd"]].reshape(batch_size, -1)  ### add command as part of the context tokens
 
         pose_token = self.pose_encoder(pose)
-        vel_token = self.vel_encoder(vel)
         wrench_token = self.wrench_encoder(wrench)
         cmd_token = self.cmd_encoder(cmd)  ### Command token
         token_list = []
+        adaptive_conditions = []
+        stiffness_one_hot = None
         if self.use_cls_token:
             cls_token = self.cls_token.expand(batch_size, -1, -1).squeeze(1)
             token_list.append(cls_token)
-        token_list.extend([pose_token, vel_token, wrench_token])
+        token_list.append(pose_token)
+        if self.include_velocity:
+            vel = obs[:, :, self.state_slices["velocity"]].reshape(batch_size, -1)
+            vel_token = self.vel_encoder(vel)
+            token_list.append(vel_token)
+        token_list.append(wrench_token)
 
         if self.include_tracking_error:
             track = obs[:, :, self.state_slices["tracking"]].reshape(batch_size, -1)
@@ -407,13 +479,36 @@ class LowdimStiffnessCVAEAgent(nn.Module):
                 raise ValueError(
                     f"Expected arrangement_vectors shape ({batch_size}, 9), got {tuple(arrangement_vectors.shape)}."
                 )
-            arrangement_token = self.arrangement_encoder(arrangement_vectors)
-            token_list.append(arrangement_token)
+            if self.use_adaptive_layer_norm:
+                adaptive_conditions.append(arrangement_vectors)
+            else:
+                arrangement_token = self.arrangement_encoder(arrangement_vectors)
+                token_list.append(arrangement_token)
+        if self.goal_label:
+            if goal_vectors is None:
+                raise ValueError("goal_label=True requires goal_vectors with shape (B, 3).")
+            goal_vectors = goal_vectors.to(device=obs.device, dtype=obs.dtype)
+            if goal_vectors.ndim == 1 and batch_size == 1 and goal_vectors.shape[0] == 3:
+                goal_vectors = goal_vectors.unsqueeze(0)
+            if goal_vectors.shape != (batch_size, 3):
+                raise ValueError(f"Expected goal_vectors shape ({batch_size}, 3), got {tuple(goal_vectors.shape)}.")
+            if self.use_adaptive_layer_norm:
+                # Following mode retains only weak goal influence; leading mode gets the full goal vector.
+                if self.use_stiffness_goal_adaln_gate:
+                    goal_vectors = goal_vectors * self._stiffness_goal_gate(stiffness_one_hot)
+                adaptive_conditions.append(goal_vectors)
+            else:
+                goal_token = self.goal_encoder(goal_vectors)
+                token_list.append(goal_token)
         token_list.append(cmd_token)
         tokens = torch.stack(token_list, dim=1)
         tokens = tokens + self.positional_tokens
         tokens = self.context_encoder(tokens)
         tokens = self.context_norm(tokens)
+        if self.use_adaptive_layer_norm:
+            condition = torch.cat(adaptive_conditions, dim=-1)
+            scale, shift = self.adaln_modulation(condition).chunk(2, dim=-1)
+            tokens = tokens * (1.0 + scale.unsqueeze(1)) + shift.unsqueeze(1)
         if not self._printed_context_encoder_output_shape:
             print(f"Context encoder output shape: {tuple(tokens.shape)}")
             self._printed_context_encoder_output_shape = True
@@ -583,14 +678,16 @@ class LowdimStiffnessCVAEAgent(nn.Module):
             return action_tensor
         raise ValueError(f"Unsupported action tensor shape: {tuple(action_tensor.shape)}")
 
-    def forward(self, imgs, obs, ac_flat, mask_flat, class_labels=None, arrangement_vectors=None, **kwargs):
+    def forward(
+        self, imgs, obs, ac_flat, mask_flat, class_labels=None, arrangement_vectors=None, goal_vectors=None, **kwargs
+    ):
         del imgs, kwargs
 
         target_actions = self._reshape_actions(ac_flat)
         mask = self._reshape_actions(mask_flat)
 
         context_tokens = self._build_context_tokens(
-            obs, class_labels=class_labels, arrangement_vectors=arrangement_vectors
+            obs, class_labels=class_labels, arrangement_vectors=arrangement_vectors, goal_vectors=goal_vectors
         )
         context_tokens_withcmd = context_tokens
         # Exclude command token for latent prior/posterior context; command is always appended last.
@@ -627,10 +724,12 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         }
 
     @torch.no_grad()
-    def get_actions_base(self, imgs, obs, class_labels=None, arrangement_vectors=None, sample=False, **kwargs):
+    def get_actions_base(
+        self, imgs, obs, class_labels=None, arrangement_vectors=None, goal_vectors=None, sample=False, **kwargs
+    ):
         del imgs, kwargs, sample
         context_tokens = self._build_context_tokens(
-            obs, class_labels=class_labels, arrangement_vectors=arrangement_vectors
+            obs, class_labels=class_labels, arrangement_vectors=arrangement_vectors, goal_vectors=goal_vectors
         )
         context_tokens_no_cmd = context_tokens[:, :-1]
         z_context = self._build_z_context(context_tokens_no_cmd)
@@ -646,6 +745,7 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         obs,
         class_labels=None,
         arrangement_vectors=None,
+        goal_vectors=None,
         sample=True,
         num_samples=1,
         return_weights=False,
@@ -653,7 +753,7 @@ class LowdimStiffnessCVAEAgent(nn.Module):
     ):
         del imgs
         context_tokens = self._build_context_tokens(
-            obs, class_labels=class_labels, arrangement_vectors=arrangement_vectors
+            obs, class_labels=class_labels, arrangement_vectors=arrangement_vectors, goal_vectors=goal_vectors
         )
         context_tokens_no_cmd = context_tokens[:, :-1]
         z_context = self._build_z_context(context_tokens_no_cmd)
@@ -680,6 +780,7 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         target_action,
         class_labels=None,
         arrangement_vectors=None,
+        goal_vectors=None,
         num_samples=1,
         sample=True,
         **kwargs,
@@ -687,7 +788,7 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         del imgs
         target_action = self._reshape_actions(target_action)
         context_tokens = self._build_context_tokens(
-            obs, class_labels=class_labels, arrangement_vectors=arrangement_vectors
+            obs, class_labels=class_labels, arrangement_vectors=arrangement_vectors, goal_vectors=goal_vectors
         )
         context_tokens_no_cmd = context_tokens[:, :-1]
 

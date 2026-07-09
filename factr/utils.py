@@ -441,11 +441,15 @@ def load_processing_config_from_buffer_path(buffer_path):
     return dict(cfg.get("processing_config") or {})
 
 
-def state_stats_without_tracking_error(stats: dict):
-    """Shift grouped state-stat indices after removing state[21:27]."""
+LOWDIM_VELOCITY_SLICE = (9, 15)
+LOWDIM_TRACKING_ERROR_SLICE = (21, 27)
+
+
+def _state_stats_without_ranges(stats: dict, removed_ranges, removed_names=()):
     if not stats or stats.get("mode") != "grouped":
         return stats
-    if int(stats.get("state_dim", 36)) <= 30:
+    removed_ranges = [(int(start), int(stop)) for start, stop in removed_ranges]
+    if not removed_ranges:
         return stats
     adjusted = copy.deepcopy(stats)
     groups = []
@@ -455,13 +459,78 @@ def state_stats_without_tracking_error(stats: dict):
             groups.append(group)
             continue
         start, stop = map(int, indices)
-        # This feature no longer exists in the reduced 30D observation.
-        if (start, stop) == (21, 27) or group.get("name") == "tracking_error":
+        if (start, stop) in removed_ranges or group.get("name") in removed_names:
             continue
-        if start >= 27:
-            group["indices"] = [start - 6, stop - 6]
+        shift = sum(r_stop - r_start for r_start, r_stop in removed_ranges if start >= r_stop)
+        if shift:
+            group["indices"] = [start - shift, stop - shift]
         groups.append(group)
     adjusted["groups"] = groups
     if "state_dim" in adjusted:
-        adjusted["state_dim"] = int(adjusted["state_dim"]) - 6
+        adjusted["state_dim"] = int(adjusted["state_dim"]) - sum(stop - start for start, stop in removed_ranges)
     return adjusted
+
+
+def state_stats_without_tracking_error(stats: dict):
+    """Shift grouped state-stat indices after removing state[21:27]."""
+    if not stats or int(stats.get("state_dim", 36)) <= 30:
+        return stats
+    return _state_stats_without_ranges(
+        stats,
+        [LOWDIM_TRACKING_ERROR_SLICE],
+        removed_names=("tracking_error",),
+    )
+
+
+def lowdim_removed_state_slices(include_velocity: bool = True, include_tracking_error: bool = True):
+    """Return raw 36D state slices removed by the low-dim observation config."""
+    removed = []
+    if not include_velocity:
+        removed.append(LOWDIM_VELOCITY_SLICE)
+    if not include_tracking_error:
+        removed.append(LOWDIM_TRACKING_ERROR_SLICE)
+    return sorted(removed)
+
+
+def lowdim_filter_state_features(states, include_velocity: bool = True, include_tracking_error: bool = True):
+    """Remove disabled low-dim features from a raw state array along the last axis."""
+    removed = lowdim_removed_state_slices(include_velocity, include_tracking_error)
+    if not removed:
+        return states
+    arr = np.asarray(states)
+    expected_dim = 36 - sum(stop - start for start, stop in removed)
+    if arr.shape[-1] == expected_dim:
+        return states
+    if arr.shape[-1] != 36:
+        raise ValueError(
+            f"Expected raw low-dim state dim 36 before feature removal, got {arr.shape[-1]}."
+        )
+    keep_parts = []
+    cursor = 0
+    for start, stop in removed:
+        if cursor < start:
+            keep_parts.append(arr[..., cursor:start])
+        cursor = stop
+    if cursor < arr.shape[-1]:
+        keep_parts.append(arr[..., cursor:])
+    return np.concatenate(keep_parts, axis=-1)
+
+
+def lowdim_state_stats_without_features(stats: dict, include_velocity: bool = True, include_tracking_error: bool = True):
+    """Shift grouped state-stat indices after removing disabled low-dim features."""
+    removed = lowdim_removed_state_slices(include_velocity, include_tracking_error)
+    removed_names = []
+    if not include_velocity:
+        removed_names.extend(("ee_velocity", "velocity"))
+    if not include_tracking_error:
+        removed_names.append("tracking_error")
+    return _state_stats_without_ranges(
+        stats,
+        removed,
+        removed_names=tuple(removed_names),
+    )
+
+
+def lowdim_command_start(include_velocity: bool = True, include_tracking_error: bool = True) -> int:
+    """Command pose starts after pose, optional velocity, wrench, and optional tracking error."""
+    return 9 + (6 if include_velocity else 0) + 6 + (6 if include_tracking_error else 0)

@@ -4,6 +4,8 @@ Current project status:
 - The actively used pipeline is the FACTR low-dimensional BC/CVAE policy path.
 - `factr/world_model/` exists, but the world model is currently **not used** in the active workflow unless explicitly requested.
 
+Dont make test files.
+
 FACTR quick map (active path):
 - Training entrypoint: `factr/factr/train_bc_policy.py` (Hydra default config: `train_bc_lowdim.yaml`)
 - Main training config: `factr/factr/cfg/train_bc_lowdim.yaml`

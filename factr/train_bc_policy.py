@@ -160,7 +160,12 @@ def train_bc(cfg: DictConfig):
 
             # handle the image transform on GPU if specified
             if gpu_transform is not None:
-                if len(batch) == 5:
+                if len(batch) == 6:
+                    (imgs, obs), actions, mask, labels, arrangement_vectors, goal_vectors = batch
+                    imgs = {k: v.to(trainer.device_id) for k, v in imgs.items()}
+                    imgs = {k: gpu_transform(v) for k, v in imgs.items()}
+                    batch = ((imgs, obs), actions, mask, labels, arrangement_vectors, goal_vectors)
+                elif len(batch) == 5:
                     (imgs, obs), actions, mask, labels, arrangement_vectors = batch
                     imgs = {k: v.to(trainer.device_id) for k, v in imgs.items()}
                     imgs = {k: gpu_transform(v) for k, v in imgs.items()}

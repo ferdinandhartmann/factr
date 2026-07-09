@@ -1,34 +1,34 @@
 shared:
-  dataset_name: boxlift_12_abs_perdim
+  dataset_name: boxlift_12_relative_perdim
   dataset_project_prefix: ""
   buffer_set_name: auto
-  run_name: c_fp_b001_v4k4_ofs1_t64_obs4_d12_arr_rel #c_vp_b100_v4k4_ofs1_t128_ac20_d12_arr_rel
-  
+  run_name: c_fp_b02_v4k2_ofs1_obs2_arr_g_aln
+
   checkpoint_name: latest_ckpt.ckpt
   normalization_mode: apply # options: skip, apply, #
   gpu_id: 2
-  
+
   use_episode_list: true
   episode_file_name: ep_52_stiff.pkl
   episode_index: 0 # index in sorted *.pkl files
   list_episodes_only: false
   
   episode_lists:
-    boxlift_12_abs_perdim:
+    boxlift_12_relative_perdim:
     # - boxlift_1_follow/ep_06
     # - boxlift_1_follow/ep_25
-    # - boxlift_1_follow/ep_29
+    - boxlift_1_follow/ep_29
     # - boxlift_1_follow/ep_34
     # - boxlift_1_follow/ep_36
-    - boxlift_1_follow/ep_38
-    # - boxlift_1_follow/ep_41
+    # - boxlift_1_follow/ep_38
+    - boxlift_1_follow/ep_41
     # - boxlift_1_follow/ep_42
-    - boxlift_1_follow/ep_45
+    # - boxlift_1_follow/ep_45
     # - boxlift_1_lead/ep_08
-    # - boxlift_1_lead/ep_21
+    - boxlift_1_lead/ep_21
     # - boxlift_1_lead/ep_25
     # - boxlift_1_lead/ep_29
-    - boxlift_1_lead/ep_55
+    # - boxlift_1_lead/ep_55
     # - boxlift_2_lead/ep_34
     # - boxlift_2_lead/ep_44
     - boxlift_2_lead/ep_48
@@ -163,16 +163,25 @@ shared:
       # - ep_260_stiff
 
 eval_single_episode_lowdim:
+  # With goal conditioning, evaluation samples floor(num_samples / 3) per goal group.
   num_samples: 40
   action_source: prior # options: prior, posterior
   sample: true # true samples latent predictions; false repeats deterministic mean/mode predictions
   stiffness_label: 2 # mode 0 -> class 1, mode 1 -> class 2 null infers from episode; otherwise use 1-based label, e.g. 1=soft, 2=medium, 3=stiff
-  prediction_stride: 50
+  prediction_stride: 25
+  
+  save_attention_video: true
+  attention_video_fps: 10
+  attention_video_dpi: 80
+  attention_frame_stride: 5 # use every Nth episode window as a video frame
+  
   view_elev: 24
   view_azim: -60
   show_plot: false # shows also 3d plot
+  
   enable_train_background: true
   train_background_only_medium: false
+  
   rpy_subtract_pi: true # If true, subtract pi from one selected RPY axis for plotting.
   rpy_subtract_pi_axis: 0 # 0=roll, 1=pitch, 2=yaw
   rpy_plot_unit: deg  # "rad" or "deg"

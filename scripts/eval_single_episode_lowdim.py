@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 import argparse
 import sys
+import time
 import warnings
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import matplotlib
+import matplotlib.animation as animation
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -13,12 +15,23 @@ import numpy as np
 import torch
 import yaml
 from factr.arrangement import arrangement_id_to_one_hot
+from factr.goal_label import equal_goal_group_samples, format_real_goal_groups, goal_label_to_group_one_hot
 from factr.transforms import get_transform_by_name
 from factr.utils import apply_grouped_transform as _apply_grouped_transform
 from factr.utils import canonical_action_mode as _canonical_action_mode
 from factr.utils import ensure_normalized as _ensure_normalized
-from factr.utils import state_stats_without_tracking_error as _state_stats_without_tracking_error
-from factr.utils_plot import RPYPlotConfig, build_pose_3d_figure, build_pose_comparison_figure, build_pose_fan_figure, pose_chunks_for_plot, relative_chunk_from_absolute, relative_chunk_to_absolute
+from factr.utils import lowdim_command_start as _lowdim_command_start
+from factr.utils import lowdim_filter_state_features as _lowdim_filter_state_features
+from factr.utils import lowdim_state_stats_without_features as _lowdim_state_stats_without_features
+from factr.utils_plot import (
+    RPYPlotConfig,
+    build_pose_3d_figure,
+    build_pose_comparison_figure,
+    build_pose_fan_figure,
+    pose_chunks_for_plot,
+    relative_chunk_from_absolute,
+    relative_chunk_to_absolute,
+)
 from hydra.utils import instantiate
 from omegaconf import OmegaConf
 
@@ -28,6 +41,11 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
+
+def _progress(message: str) -> None:
+    """Print an immediately visible heartbeat around potentially slow stages."""
+    print(f"[{time.strftime('%H:%M:%S')}] {message}", flush=True)
 
 DEFAULT_CONFIG_PATH = SCRIPT_DIR / "eval_params.yaml"
 
@@ -71,6 +89,11 @@ def _materialize_globals(config_path: Path):
         "STIFFNESS_LABEL": cfg["stiffness_label"],
         "NORMALIZATION_MODE": cfg["normalization_mode"],
         "PREDICTION_STRIDE": int(cfg["prediction_stride"]),
+        # Defaults keep older per-user eval config files compatible.
+        "SAVE_ATTENTION_VIDEO": bool(cfg.get("save_attention_video", False)),
+        "ATTENTION_VIDEO_FPS": int(cfg.get("attention_video_fps", 10)),
+        "ATTENTION_VIDEO_DPI": int(cfg.get("attention_video_dpi", 80)),
+        "ATTENTION_FRAME_STRIDE": int(cfg.get("attention_frame_stride", 2)),
         "VIEW_ELEV": int(cfg["view_elev"]),
         "VIEW_AZIM": int(cfg["view_azim"]),
         "SHOW_PLOT": bool(cfg["show_plot"]),
@@ -324,7 +347,14 @@ def _extract_state_from_buffer_obs(obs) -> Optional[np.ndarray]:
     return None
 
 
-def _load_train_buffer_background(buf_path: Path, action_stats: Optional[dict], state_stats: Optional[dict], action_pose_mode: str) -> List[np.ndarray]:
+def _load_train_buffer_background(
+    buf_path: Path,
+    action_stats: Optional[dict],
+    state_stats: Optional[dict],
+    action_pose_mode: str,
+    include_velocity: bool,
+    include_tracking_error: bool,
+) -> List[np.ndarray]:
     import pickle
 
     with open(buf_path, "rb") as f:
@@ -367,7 +397,10 @@ def _load_train_buffer_background(buf_path: Path, action_stats: Optional[dict], 
                 if len(states) != len(actions_arr):
                     continue
                 states_arr = np.stack(states, axis=0)
-                cmd_start = 27 if states_arr.shape[-1] >= 36 else 21
+                cmd_start = _lowdim_command_start(
+                    include_velocity=include_velocity,
+                    include_tracking_error=include_tracking_error,
+                )
                 anchors = states_arr[:, cmd_start : cmd_start + pose_dim]
                 pose_seq = relative_chunk_to_absolute(actions_arr[..., :pose_dim], anchors)[:, 0]
             else:
@@ -529,6 +562,8 @@ def _load_raw_episode_to_arrays(episode_file: Path, rollout_cfg) -> Dict:
     stiffness_key = stiffness_info.get("key", "stiffness")
     stiffness_thresholds = stiffness_info.get("norm_thresholds")
     arrangement_topic = obs_cfg.get("arrangement_topic", None)
+    goal_topics = list(obs_cfg.get("goal_topics", []))
+    goal_topic = goal_topics[0] if goal_topics else None
     mode_topic = obs_cfg.get("mode_topic", None)
 
     topics_for_sync = list(state_topics) + [action_topic]
@@ -536,6 +571,8 @@ def _load_raw_episode_to_arrays(episode_file: Path, rollout_cfg) -> Dict:
         topics_for_sync.append(stiffness_topic)
     if arrangement_topic:
         topics_for_sync.append(arrangement_topic)
+    if goal_topic:
+        topics_for_sync.append(goal_topic)
     if mode_topic:
         topics_for_sync.append(mode_topic)
     # Deduplicate topics while preserving order. This avoids double-processing
@@ -604,11 +641,19 @@ def _load_raw_episode_to_arrays(episode_file: Path, rollout_cfg) -> Dict:
         )
         arrangement_vector = arrangement_id_to_one_hot(raw_arrangement)
 
+    goal_vectors = None
+    if goal_topic:
+        goal_vectors = np.stack([
+            goal_label_to_group_one_hot(_extract_fixed_vector(msg, ["goal", "data"], 1, None))
+            for msg in synced[goal_topic][:num_steps]
+        ]).astype(np.float32)
+
     return {
         "states": states,
         "actions": actions,
         "episode_label": int(episode_label),
         "arrangement_vector": arrangement_vector,
+        "goal_vectors": goal_vectors,
         "num_steps": int(num_steps),
     }
 
@@ -699,6 +744,7 @@ def _build_fan_figure_with_measured(
     prediction_stride: int,
     action_source: str,
     background_actions: Optional[List[np.ndarray]] = None,
+    real_goal_title: Optional[str] = None,
 ):
     rpy_cfg = RPYPlotConfig(subtract_pi=bool(RPY_SUBTRACT_PI), subtract_pi_axis=int(RPY_SUBTRACT_PI_AXIS), unit=str(RPY_PLOT_UNIT))
     return build_pose_fan_figure(
@@ -710,7 +756,11 @@ def _build_fan_figure_with_measured(
         measured_pose=measured_pose,
         background_actions=background_actions,
         max_plot_steps=None,
-        title=(f"Sampled {_action_source_title(action_source)} Fan + Measured Pose + Ground-Truth Command Pose " f"(full episode, stride={max(1, int(prediction_stride))})"),
+        title=(
+            f"Sampled {_action_source_title(action_source)} Fan + Measured Pose + Ground-Truth Command Pose "
+            f"(full episode, stride={max(1, int(prediction_stride))})"
+            + (f" | {real_goal_title}" if real_goal_title else "")
+        ),
         plot_ground_truth_reconstructed=True,
         plot_geodesic_subplot=bool(PLOT_GEODESIC_SUBPLOT),
         rpy_config=rpy_cfg,
@@ -725,6 +775,7 @@ def _summarize_metrics(
     mask_norm: np.ndarray,
     labels: np.ndarray,
     arrangement_vectors: Optional[np.ndarray],
+    goal_vectors: Optional[np.ndarray],
     num_samples: int,
     action_source: str,
     sample: bool,
@@ -738,6 +789,7 @@ def _summarize_metrics(
         if arrangement_vectors is not None
         else None
     )
+    goal_t = torch.from_numpy(goal_vectors).float().to(device) if goal_vectors is not None else None
 
     ac_flat = actions_t.reshape(actions_t.shape[0], -1)
     mask_flat = mask_t.reshape(mask_t.shape[0], -1)
@@ -750,18 +802,20 @@ def _summarize_metrics(
             mask_flat,
             class_labels=labels_t,
             arrangement_vectors=arrangement_t,
+            goal_vectors=goal_t,
         )
         if action_source == "prior":
             pred_det = model.get_actions_prior(
-                {}, obs_t, class_labels=labels_t, arrangement_vectors=arrangement_t, sample=sample, num_samples=1
+                {}, obs_t, class_labels=labels_t, arrangement_vectors=arrangement_t, goal_vectors=goal_t,
+                sample=sample, num_samples=1
             )
-            pred_samples = model.get_actions_prior(
-                {},
-                obs_t,
-                class_labels=labels_t,
-                arrangement_vectors=arrangement_t,
-                sample=sample,
-                num_samples=num_samples,
+            pred_samples = equal_goal_group_samples(
+                lambda condition, count: model.get_actions_prior(
+                    {}, obs_t, class_labels=labels_t, arrangement_vectors=arrangement_t,
+                    goal_vectors=condition, sample=sample, num_samples=count
+                ),
+                goal_t,
+                num_samples,
             )
         else:
             pred_det = model.get_actions_pos(
@@ -770,17 +824,17 @@ def _summarize_metrics(
                 actions_t,
                 class_labels=labels_t,
                 arrangement_vectors=arrangement_t,
+                goal_vectors=goal_t,
                 sample=sample,
                 num_samples=1,
             )
-            pred_samples = model.get_actions_pos(
-                {},
-                obs_t,
-                actions_t,
-                class_labels=labels_t,
-                arrangement_vectors=arrangement_t,
-                sample=sample,
-                num_samples=num_samples,
+            pred_samples = equal_goal_group_samples(
+                lambda condition, count: model.get_actions_pos(
+                    {}, obs_t, actions_t, class_labels=labels_t, arrangement_vectors=arrangement_t,
+                    goal_vectors=condition, sample=sample, num_samples=count
+                ),
+                goal_t,
+                num_samples,
             )
 
         if pred_det.ndim == 4:
@@ -809,6 +863,207 @@ def _summarize_metrics(
     return metrics, pred_det.detach().cpu().numpy(), pred_samples.detach().cpu().numpy()
 
 
+def _decoder_memory_token_labels(model) -> List[str]:
+    """Return labels in the same order used to build decoder memory."""
+    labels = ["z"]
+    if model.use_cls_token:
+        labels.append("cls")
+    labels.append("pose")
+    if getattr(model, "include_velocity", True):
+        labels.append("velocity")
+    labels.append("wrench")
+    if model.include_tracking_error:
+        labels.append("tracking")
+    if model.use_stiffness_conditioning:
+        labels.append("stiffness")
+    uses_condition_tokens = not getattr(model, "use_adaptive_layer_norm", False)
+    if model.use_arrangement_conditioning and uses_condition_tokens:
+        labels.append("arrangement")
+    if model.goal_label and uses_condition_tokens:
+        labels.append("goal")
+    labels.append("command")
+    return labels
+
+
+def _collect_decoder_cross_attention(
+    model,
+    obs: torch.Tensor,
+    actions: torch.Tensor,
+    labels: torch.Tensor,
+    arrangement_vectors: Optional[torch.Tensor],
+    action_source: str,
+    goal_vectors: Optional[torch.Tensor] = None,
+) -> np.ndarray:
+    """Run one sampled prediction and collect every decoder cross-attention head."""
+    captured = [None] * len(model.decoder.layers)
+    handles = []
+
+    def request_per_head_weights(module, args, kwargs):
+        # TransformerDecoderLayer normally disables weight output. Override only
+        # for this temporary diagnostic pass and retain individual heads.
+        kwargs = dict(kwargs)
+        kwargs["need_weights"] = True
+        kwargs["average_attn_weights"] = False
+        return args, kwargs
+
+    def save_weights(layer_index):
+        def hook(module, args, kwargs, output):
+            del module, args, kwargs
+            weights = output[1]
+            if weights is None:
+                raise RuntimeError("Decoder cross-attention did not return attention weights.")
+            captured[layer_index] = weights.detach().cpu()
+
+        return hook
+
+    try:
+        for layer_index, layer in enumerate(model.decoder.layers):
+            cross_attention = layer.multihead_attn
+            handles.append(cross_attention.register_forward_pre_hook(request_per_head_weights, with_kwargs=True))
+            handles.append(cross_attention.register_forward_hook(save_weights(layer_index), with_kwargs=True))
+
+        with torch.no_grad():
+            if action_source == "prior":
+                model.get_actions_prior(
+                    {}, obs, class_labels=labels, arrangement_vectors=arrangement_vectors,
+                    goal_vectors=goal_vectors,
+                    sample=True, num_samples=1,
+                )
+            elif action_source == "posterior":
+                model.get_actions_pos(
+                    {}, obs, actions, class_labels=labels, arrangement_vectors=arrangement_vectors,
+                    goal_vectors=goal_vectors,
+                    sample=True, num_samples=1,
+                )
+            else:
+                raise ValueError(f"Unsupported action_source={action_source!r}.")
+    finally:
+        # Never leave diagnostic hooks attached to the policy used by evaluation.
+        for handle in handles:
+            handle.remove()
+
+    if any(weights is None for weights in captured):
+        missing = [index for index, weights in enumerate(captured) if weights is None]
+        raise RuntimeError(f"Failed to capture decoder cross-attention for layers: {missing}")
+
+    # Individual layer tensors are (B, heads, action_tokens, memory_tokens).
+    shape = captured[0].shape
+    if any(weights.shape != shape for weights in captured):
+        raise ValueError(f"Decoder layers returned inconsistent attention shapes: {[tuple(x.shape) for x in captured]}")
+    attention = torch.stack(captured, dim=1).numpy()
+    expected_memory_tokens = len(_decoder_memory_token_labels(model))
+    if attention.shape[-1] != expected_memory_tokens:
+        raise ValueError(
+            "Decoder memory label mismatch: "
+            f"captured {attention.shape[-1]} tokens but built {expected_memory_tokens} labels."
+        )
+    return attention
+
+
+def _save_decoder_attention_video(
+    attention: np.ndarray,
+    memory_labels: List[str],
+    source_steps: np.ndarray,
+    output_path: Path,
+    episode_id: str,
+    action_source: str,
+    fps: int,
+    dpi: int,
+    frame_stride: int,
+) -> None:
+    if attention.ndim != 5:
+        raise ValueError(f"Expected attention shape (steps, layers, heads, action_tokens, memory_tokens), got {attention.shape}.")
+    num_steps, num_layers, num_heads, num_action_tokens, num_memory_tokens = attention.shape
+    if num_steps != len(source_steps):
+        raise ValueError(f"Attention/source-step mismatch: {num_steps} != {len(source_steps)}.")
+    if num_memory_tokens != len(memory_labels):
+        raise ValueError(f"Attention/token-label mismatch: {num_memory_tokens} != {len(memory_labels)}.")
+    if fps < 1 or dpi < 1 or frame_stride < 1:
+        raise ValueError("Attention video fps, dpi, and frame stride must all be >= 1.")
+
+    # One row per decoder layer, with all heads plus their mean. The final row
+    # contains one summary averaged across every layer and head.
+    num_plot_columns = num_heads + 1
+    fig, axes = plt.subplots(
+        num_layers + 1,
+        num_plot_columns,
+        figsize=(max(3.0 * num_plot_columns, 7.0), max(3.2 * (num_layers + 1), 4.0)),
+        squeeze=False,
+        constrained_layout=False,
+    )
+    # Fixed spacing is much faster than recomputing constrained layout for every video frame.
+    fig.subplots_adjust(left=0.04, right=0.955, bottom=0.16, top=0.90, wspace=0.25, hspace=0.40)
+    images = []
+    for layer_index in range(num_layers):
+        layer_images = []
+        for head_index in range(num_heads):
+            ax = axes[layer_index, head_index]
+            image = ax.imshow(attention[0, layer_index, head_index], aspect="auto", vmin=0.0, vmax=1.0, cmap="turbo")
+            ax.set_title(f"Layer {layer_index} · Head {head_index}", fontsize=9)
+            ax.set_xticks(np.arange(num_memory_tokens), labels=memory_labels, rotation=55, ha="right", fontsize=7)
+            if head_index == 0:
+                ax.set_ylabel("Action token")
+                ax.set_yticks(np.arange(num_action_tokens))
+            else:
+                ax.set_yticks([])
+            layer_images.append(image)
+        mean_ax = axes[layer_index, -1]
+        mean_image = mean_ax.imshow(
+            attention[0, layer_index].mean(axis=0),
+            aspect="auto",
+            vmin=0.0,
+            vmax=1.0,
+            cmap="turbo",
+        )
+        mean_ax.set_title(f"Layer {layer_index} · Head mean", fontsize=9)
+        mean_ax.set_xticks(np.arange(num_memory_tokens), labels=memory_labels, rotation=55, ha="right", fontsize=7)
+        mean_ax.set_yticks([])
+        layer_images.append(mean_image)
+        images.append(layer_images)
+
+    total_column = num_plot_columns // 2
+    for column_index in range(num_plot_columns):
+        if column_index != total_column:
+            axes[-1, column_index].axis("off")
+    total_ax = axes[-1, total_column]
+    total_image = total_ax.imshow(
+        attention[0].mean(axis=(0, 1)),
+        aspect="auto",
+        vmin=0.0,
+        vmax=1.0,
+        cmap="turbo",
+    )
+    total_ax.set_title("Total mean · all layers and heads", fontsize=9)
+    total_ax.set_xlabel("Decoder memory token")
+    total_ax.set_ylabel("Action token")
+    total_ax.set_xticks(np.arange(num_memory_tokens), labels=memory_labels, rotation=55, ha="right", fontsize=7)
+    total_ax.set_yticks(np.arange(num_action_tokens))
+
+    # Use a fixed colorbar axis to avoid Matplotlib reserving a large empty
+    # region on the right side of this wide multi-panel figure.
+    colorbar_ax = fig.add_axes([0.972, 0.18, 0.012, 0.68])
+    fig.colorbar(images[0][0], cax=colorbar_ax, label="Cross-attention weight")
+    title = fig.suptitle("")
+
+    writer = animation.FFMpegWriter(fps=int(fps), metadata={"artist": "FACTR"}, bitrate=2400)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with writer.saving(fig, str(output_path), dpi=int(dpi)):
+            for frame_index in range(0, num_steps, int(frame_stride)):
+                for layer_index in range(num_layers):
+                    for head_index in range(num_heads):
+                        images[layer_index][head_index].set_data(attention[frame_index, layer_index, head_index])
+                    images[layer_index][-1].set_data(attention[frame_index, layer_index].mean(axis=0))
+                total_image.set_data(attention[frame_index].mean(axis=(0, 1)))
+                title.set_text(
+                    f"{episode_id} · {_action_source_title(action_source)} decoder cross-attention · "
+                    f"episode step {int(source_steps[frame_index])}"
+                )
+                writer.grab_frame()
+    finally:
+        plt.close(fig)
+
+
 def main():
     global DATASET_NAME, DATASET_PROJECT_PREFIX, BUFFER_SET_NAME, RUN_NAME
     global CHECKPOINT_NAME, USE_EPISODE_LIST, EPISODE_FILE_NAME, EPISODE_INDEX, EPISODE_LIST
@@ -817,6 +1072,7 @@ def main():
     global SHOW_PLOT, ENABLE_TRAIN_BACKGROUND, TRAIN_BACKGROUND_ONLY_MEDIUM, RPY_SUBTRACT_PI
     global RPY_SUBTRACT_PI_AXIS, RPY_PLOT_UNIT, PLOT_GEODESIC_SUBPLOT, GPU_ID
     global GLOBAL_AXIS_LIMITS, GOAL_FRAMES, OUT_DIR_OVERRIDE
+    global SAVE_ATTENTION_VIDEO, ATTENTION_VIDEO_FPS, ATTENTION_VIDEO_DPI, ATTENTION_FRAME_STRIDE
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, default=str(DEFAULT_CONFIG_PATH))
@@ -873,6 +1129,8 @@ def main():
     state_stats = rollout_cfg.get("norm_stats", {}).get("state", None)
     action_stats = rollout_cfg.get("norm_stats", {}).get("action", None)
     action_pose_mode = _infer_action_pose_mode(cfg, rollout_cfg, action_stats)
+    include_velocity = bool(OmegaConf.select(cfg, "include_velocity", default=OmegaConf.select(cfg, "agent.include_velocity", default=True)))
+    include_tracking_error = bool(OmegaConf.select(cfg, "include_tracking_error", default=OmegaConf.select(cfg, "agent.include_tracking_error", default=True)))
 
     if not buffer_path.exists():
         print(f"Buffer not found; raw rollout evaluation will continue: {buffer_path}")
@@ -914,18 +1172,34 @@ def main():
     if ENABLE_TRAIN_BACKGROUND:
         train_buf_path = _resolve_train_buffer_path(rollout_cfg, buffer_path)
         if train_buf_path.exists():
-            train_background = _load_train_buffer_background(train_buf_path, action_stats=action_stats, state_stats=state_stats, action_pose_mode=action_pose_mode)
+            _progress(f"Loading train-background trajectories from {train_buf_path}...")
+            background_state_stats = _lowdim_state_stats_without_features(
+                state_stats,
+                include_velocity=include_velocity,
+                include_tracking_error=include_tracking_error,
+            )
+            train_background = _load_train_buffer_background(
+                train_buf_path,
+                action_stats=action_stats,
+                state_stats=background_state_stats,
+                action_pose_mode=action_pose_mode,
+                include_velocity=include_velocity,
+                include_tracking_error=include_tracking_error,
+            )
             print(f"Loaded train background trajectories: {len(train_background)} | {train_buf_path}")
         else:
             print(f"Train buffer not found for background: {train_buf_path}")
             train_items = _resolve_rollout_episodes(_get_required_split_episodes(rollout_cfg, "train"), raw_dirs)
+            _progress(f"Loading train-background trajectories from {len(train_items)} raw episodes...")
             train_background = _load_raw_background_trajectories(train_items, rollout_cfg)
             print(f"Loaded train background trajectories from raw split: {len(train_background)}")
 
     for episode_id, episode_file in selected:
-        print(f"Selected episode file: {episode_id} -> {episode_file}")
+        _progress(f"Starting episode {episode_id} -> {episode_file}")
 
+        _progress("Loading and synchronizing raw episode topics...")
         raw_ep = _load_raw_episode_to_arrays(episode_file, rollout_cfg)
+        _progress(f"Raw episode ready: {raw_ep['num_steps']} synchronized steps")
         raw_actions = raw_ep["actions"]
         if action_pose_mode == "delta" and raw_actions.shape[0] > 1:
             rel_actions = np.zeros_like(raw_actions)
@@ -934,11 +1208,18 @@ def main():
         obs_window = int(cfg.obs_window)
         ac_chunk = int(cfg.ac_chunk)
         action_index_offset = int(OmegaConf.select(cfg, "task.test_buffer.action_index_offset", default=1))
-        include_tracking_error = bool(OmegaConf.select(cfg, "include_tracking_error", default=OmegaConf.select(cfg, "agent.include_tracking_error", default=True)))
         states = raw_ep["states"]
-        if (not include_tracking_error) and states.shape[-1] >= 36:
-            states = np.concatenate([states[:, :21], states[:, 27:]], axis=-1)
-            state_stats = _state_stats_without_tracking_error(state_stats)
+        states = _lowdim_filter_state_features(
+            states,
+            include_velocity=include_velocity,
+            include_tracking_error=include_tracking_error,
+        )
+        state_stats = _lowdim_state_stats_without_features(
+            state_stats,
+            include_velocity=include_velocity,
+            include_tracking_error=include_tracking_error,
+        )
+        _progress(f"Building observation windows and action chunks (W={obs_window}, T={ac_chunk})...")
         ep_data = _build_eval_samples_from_raw_episode(
             states=states,
             actions=raw_actions,
@@ -958,6 +1239,7 @@ def main():
         mask_arr = ep_data["mask"]
         labels_arr = ep_data["labels"]
         steps_arr = ep_data["steps"]
+        _progress(f"Evaluation tensors ready: {len(steps_arr)} windows")
         stiffness_arr = labels_arr
         use_arrangement_conditioning = bool(OmegaConf.select(
             cfg, "agent.use_arrangement_conditioning",
@@ -975,9 +1257,24 @@ def main():
                 axis=0,
             ).astype(np.float32)
 
+        use_goal_label = bool(OmegaConf.select(
+            cfg, "agent.goal_label",
+            default=OmegaConf.select(cfg, "goal_label", default=False),
+        ))
+        goal_vectors = None
+        if use_goal_label:
+            if raw_ep["goal_vectors"] is None:
+                raise ValueError(
+                    "This checkpoint enables goal-label conditioning, but the raw episode has no /goal topic."
+                )
+            goal_vectors = raw_ep["goal_vectors"][steps_arr].astype(np.float32)
+
         obs_norm, obs_applied = _ensure_normalized(obs_arr, state_stats, NORMALIZATION_MODE, "state")
         if action_chunk_mode == "relative":
-            cmd_start = 27 if include_tracking_error else 21
+            cmd_start = _lowdim_command_start(
+                include_velocity=include_velocity,
+                include_tracking_error=include_tracking_error,
+            )
             command_anchor = obs_arr[:, -1, cmd_start : cmd_start + 9]
             actions_relative = relative_chunk_from_absolute(actions_arr, command_anchor)
             actions_norm = _apply_grouped_transform(actions_relative, action_stats, inverse=False)
@@ -996,7 +1293,9 @@ def main():
             device = torch.device("cuda:0")
         else:
             device = torch.device("cpu")
+        _progress(f"Loading checkpoint on {device}: {ckpt_path.name}")
         model = _load_model(cfg, ckpt_path, device)
+        _progress("Checkpoint loaded; running deterministic metrics and sampled predictions...")
 
         metrics, pred_det_norm, pred_samples_norm = _summarize_metrics(
             model=model,
@@ -1006,10 +1305,12 @@ def main():
             mask_norm=mask_arr,
             labels=labels_arr,
             arrangement_vectors=arrangement_vectors,
+            goal_vectors=goal_vectors,
             num_samples=int(NUM_SAMPLES),
             action_source=action_source,
             sample=sample_predictions,
         )
+        _progress(f"Inference complete: generated {pred_samples_norm.shape[1]} samples per window")
 
         if action_applied:
             actions_denorm = _apply_grouped_transform(actions_norm, action_stats, inverse=True)
@@ -1029,7 +1330,10 @@ def main():
         pose_dim = min(9, ac_dim)
 
         measured_first = obs_denorm[:, -1, :pose_dim]
-        cmd_start = 27 if include_tracking_error else 21
+        cmd_start = _lowdim_command_start(
+            include_velocity=include_velocity,
+            include_tracking_error=include_tracking_error,
+        )
         command_first = obs_denorm[:, -1, cmd_start : cmd_start + pose_dim]
         plot_anchor = command_first if plot_pose_mode == "relative" else measured_first
         actions_plot = pose_chunks_for_plot(actions_denorm[:, :, :pose_dim], plot_anchor, plot_pose_mode)
@@ -1041,6 +1345,7 @@ def main():
         mask_first = mask_arr[:, 0, :pose_dim]
 
         episode_name = episode_file.stem
+        real_goal_title = format_real_goal_groups(goal_vectors)
         output_stem = _plot_file_stem(episode_id)
         split_label = _get_split_label(rollout_cfg, episode_id)
         out_suffix = "episode_eval_test" if split_label == "test" else "episode_eval_train"
@@ -1050,10 +1355,46 @@ def main():
             out_dir = Path(out_dir_override) / out_suffix
         out_dir.mkdir(parents=True, exist_ok=True)
 
+        if SAVE_ATTENTION_VIDEO:
+            _progress("Collecting decoder cross-attention...")
+            obs_t = torch.from_numpy(obs_norm).float().to(device)
+            actions_t = torch.from_numpy(actions_norm).float().to(device)
+            labels_t = torch.from_numpy(labels_arr).long().to(device)
+            arrangement_t = (
+                torch.from_numpy(arrangement_vectors).float().to(device)
+                if arrangement_vectors is not None
+                else None
+            )
+            goal_t = torch.from_numpy(goal_vectors).float().to(device) if goal_vectors is not None else None
+            cross_attention = _collect_decoder_cross_attention(
+                model=model,
+                obs=obs_t,
+                actions=actions_t,
+                labels=labels_t,
+                arrangement_vectors=arrangement_t,
+                goal_vectors=goal_t,
+                action_source=action_source,
+            )
+            attention_path = out_dir / f"{output_stem}_decoder_cross_attention.mp4"
+            _progress(f"Rendering attention video -> {attention_path}")
+            _save_decoder_attention_video(
+                attention=cross_attention,
+                memory_labels=_decoder_memory_token_labels(model),
+                source_steps=steps_arr,
+                output_path=attention_path,
+                episode_id=(f"{episode_id} | {real_goal_title}" if real_goal_title else episode_id),
+                action_source=action_source,
+                fps=ATTENTION_VIDEO_FPS,
+                dpi=ATTENTION_VIDEO_DPI,
+                frame_stride=ATTENTION_FRAME_STRIDE,
+            )
+            print(f"✅ Saved: {attention_path}")
+
         print(
             f"Episode {episode_file.name} | steps={len(steps_arr)} | "
             f"stiffness={int(stiffness_arr[0])} | inferred_stiffness={int(raw_ep['episode_label'])} | "
             f"sample={sample_predictions} | raw_episode_length={raw_ep['num_steps']}"
+            + (f" | {real_goal_title}" if real_goal_title else "")
         )
         print(
             "Metrics | "
@@ -1081,6 +1422,7 @@ def main():
         # print(f"Saved: {pose_path}")
         # plt.close(fig_pose)
 
+        _progress("Building trajectory fan figure...")
         fig_fan = _build_fan_figure_with_measured(
             true_action_chunks=actions_plot,
             pred_action_chunks=pred_samples_plot,
@@ -1090,12 +1432,15 @@ def main():
             prediction_stride=max(1, int(PREDICTION_STRIDE)),
             action_source=action_source,
             background_actions=(train_background if (ENABLE_TRAIN_BACKGROUND and train_background) and (not TRAIN_BACKGROUND_ONLY_MEDIUM or "medium" in episode_name) else None),
+            real_goal_title=real_goal_title,
         )
         fan_path = out_dir / f"{output_stem}_predictions.png"
+        _progress(f"Saving trajectory fan -> {fan_path}")
         fig_fan.savefig(fan_path, dpi=300, bbox_inches="tight")
         print(f"✅ Saved: {fan_path}")
 
         if pose_dim >= 9:
+            _progress("Building 3D trajectory figure...")
             fig_3d = build_pose_3d_figure(
                 measured_pose=measured_first,
                 true_pose=true_first,
@@ -1113,7 +1458,11 @@ def main():
                 view_azim=float(VIEW_AZIM),
                 show_plot=SHOW_PLOT,
             )
+            if real_goal_title and len(fig_3d.axes) > 0:
+                current_title = fig_3d.axes[0].get_title()
+                fig_3d.axes[0].set_title(f"{current_title}\n{real_goal_title}")
             plot3d_path = out_dir / f"{output_stem}_predictions_3d.png"
+            _progress(f"Saving 3D trajectory figure -> {plot3d_path}")
             fig_3d.savefig(plot3d_path, dpi=300, bbox_inches="tight")
             print(f"✅ Saved: {plot3d_path}")
         else:
@@ -1128,6 +1477,7 @@ def main():
 
         if fig_fan is not None:
             plt.close(fig_fan)
+        _progress(f"Finished episode {episode_id}")
         if pose_dim >= 9:
             plt.close(fig_3d)
 
