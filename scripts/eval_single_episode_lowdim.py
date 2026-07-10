@@ -57,6 +57,10 @@ def _load_script_config(config_path: Path):
     script_cfg = cfg["eval_single_episode_lowdim"]
     merged = dict(shared)
     merged.update(script_cfg)
+    # Boxlift has its own nine physical goal frames; other datasets keep the
+    # original four-goal plotting configuration.
+    if str(merged["dataset_name"]).lower().startswith("boxlift"):
+        merged["goal_frames"] = merged["boxlift_goal_frames"]
     return merged
 
 

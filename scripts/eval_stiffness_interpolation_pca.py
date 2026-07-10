@@ -83,6 +83,7 @@ def predict_and_reencode(
     target_actions: torch.Tensor,
     condition: torch.Tensor,
     arrangement: Optional[torch.Tensor],
+    goal_vectors: Optional[torch.Tensor],
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     # Decode the posterior mode/mean so reconstruction comparisons contain no sampling noise.
     predicted = model.get_actions_pos(
@@ -91,13 +92,19 @@ def predict_and_reencode(
         target_actions,
         class_labels=condition,
         arrangement_vectors=arrangement,
+        goal_vectors=goal_vectors,
         sample=False,
         num_samples=1,
     )
     if predicted.ndim != 4 or predicted.shape[1] != 1:
         raise ValueError(f"Expected posterior prediction shape (B, 1, T, A), got {tuple(predicted.shape)}.")
     predicted = predicted[:, 0]
-    context = model._build_context_tokens(obs, class_labels=condition, arrangement_vectors=arrangement)
+    context = model._build_context_tokens(
+        obs,
+        class_labels=condition,
+        arrangement_vectors=arrangement,
+        goal_vectors=goal_vectors,
+    )
     return predicted, posterior_features(model, context, predicted)
 
 
@@ -327,16 +334,31 @@ def main() -> None:
                 raise ValueError(f"Episode {episode_id} has no arrangement vector required by the checkpoint.")
             arrangement = torch.from_numpy(np.repeat(raw_episode["arrangement_vector"][None], len(obs), axis=0)).float().to(device)
 
+        goal_vectors = None
+        if bool(getattr(model, "goal_label", False)):
+            if raw_episode["goal_vectors"] is None:
+                raise ValueError(f"Episode {episode_id} has no goal labels required by the checkpoint.")
+            # Samples are indexed by the final timestep of each observation window.
+            goal_np = raw_episode["goal_vectors"][samples["steps"]].astype(np.float32)
+            goal_vectors = torch.from_numpy(goal_np).float().to(device)
+
         feature_groups = []
         prediction_groups = []
         for condition_np in conditions:
             condition = torch.from_numpy(np.repeat(condition_np[None], len(obs), axis=0)).float().to(device)
-            predictions, features = predict_and_reencode(model, obs, actions, condition, arrangement)
+            predictions, features = predict_and_reencode(
+                model, obs, actions, condition, arrangement, goal_vectors
+            )
             prediction_groups.append(predictions.cpu().numpy())
             feature_groups.append(features.cpu().numpy())
 
         hard_labels = torch.full((len(obs),), actual_label, dtype=torch.long, device=device)
-        gt_context = model._build_context_tokens(obs, class_labels=hard_labels, arrangement_vectors=arrangement)
+        gt_context = model._build_context_tokens(
+            obs,
+            class_labels=hard_labels,
+            arrangement_vectors=arrangement,
+            goal_vectors=goal_vectors,
+        )
         gt_features = posterior_features(model, gt_context, actions).cpu().numpy()
         all_features = np.concatenate(feature_groups + [gt_features], axis=0)
         scores, _, explained = fit_pca_2d(all_features)

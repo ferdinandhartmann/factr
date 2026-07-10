@@ -128,6 +128,7 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         categorical_temperature=1.0,
         categorical_straight_through=True,
         fixed_prior=False,
+        posterior_include_command=False,
         token_dim=256,
         hidden_dim=512,
         beta=1.0,
@@ -194,6 +195,7 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         self.z_context_mode = z_context_mode
         self.latent_distribution = str(latent_distribution).lower()
         self.fixed_prior = bool(fixed_prior)
+        self.posterior_include_command = bool(posterior_include_command)
         self.categorical_num_variables = int(categorical_num_variables)
         self.categorical_num_categories = int(categorical_num_categories)
         self.categorical_temperature = float(categorical_temperature)
@@ -208,6 +210,7 @@ class LowdimStiffnessCVAEAgent(nn.Module):
             f"goal_label={self.goal_label}, "
             f"use_adaptive_layer_norm={self.use_adaptive_layer_norm}, "
             f"use_stiffness_goal_adaln_gate={self.use_stiffness_goal_adaln_gate}, "
+            f"posterior_include_command={self.posterior_include_command}, "
             f"variable_beta={self.variable_beta}, "
             f"latent_distribution={self.latent_distribution}, "
         )
@@ -720,6 +723,12 @@ class LowdimStiffnessCVAEAgent(nn.Module):
             return action_tensor
         raise ValueError(f"Unsupported action tensor shape: {tuple(action_tensor.shape)}")
 
+    def _posterior_context(self, context_tokens):
+        """Optionally keep the final command token in the posterior context."""
+        if self.posterior_include_command:
+            return context_tokens
+        return context_tokens[:, :-1]
+
     def forward(
         self, imgs, obs, ac_flat, mask_flat, class_labels=None, arrangement_vectors=None, goal_vectors=None, **kwargs
     ):
@@ -728,21 +737,19 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         target_actions = self._reshape_actions(ac_flat)
         mask = self._reshape_actions(mask_flat)
 
-        context_tokens = self._build_context_tokens(
+        context_tokens_all = self._build_context_tokens(
             obs, class_labels=class_labels, arrangement_vectors=arrangement_vectors, goal_vectors=goal_vectors
         )
-        context_tokens_withcmd = context_tokens
-        # Exclude command token for latent prior/posterior context; command is always appended last.
-        context_tokens = context_tokens[:, :-1]
-        z_context = self._build_z_context(context_tokens)
+        # The prior keeps its existing no-command context; only the posterior is configurable.
+        context_tokens_no_cmd = context_tokens_all[:, :-1]
+        z_context = self._build_z_context(context_tokens_no_cmd)
 
         prior_params = self._prior(z_context)
-        # posterior_params = self.posterior(context_tokens.detach(), target_actions)
-        posterior_params = self.posterior(context_tokens, target_actions)
+        posterior_params = self.posterior(self._posterior_context(context_tokens_all), target_actions)
 
         z = self._sample_train_latent(posterior_params)
         z = self._prepare_decoder_latent(z)
-        pred_actions = self._decode_actions(context_tokens_withcmd, z)
+        pred_actions = self._decode_actions(context_tokens_all, z)
 
         recon = F.l1_loss(pred_actions, target_actions, reduction="none")
         recon = (recon * mask).sum() / torch.clamp(mask.sum(), min=1.0)
@@ -847,9 +854,7 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         context_tokens = self._build_context_tokens(
             obs, class_labels=class_labels, arrangement_vectors=arrangement_vectors, goal_vectors=goal_vectors
         )
-        context_tokens_no_cmd = context_tokens[:, :-1]
-
-        posterior_params = self.posterior(context_tokens_no_cmd, target_action)
+        posterior_params = self.posterior(self._posterior_context(context_tokens), target_action)
         z = self._sample_latent_batch(posterior_params, sample=sample, num_samples=num_samples)
         z = self._prepare_decoder_latent(z)
         batch_size, _, z_dim = z.shape

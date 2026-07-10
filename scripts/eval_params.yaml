@@ -2,7 +2,7 @@ shared:
   dataset_name: boxlift_124_relative_perdim
   dataset_project_prefix: ""
   buffer_set_name: auto
-  run_name: h4l4_g_fp_vb01_1_v3k3_obs4_g
+  run_name: h4l4_c_fp_vb00001_02_v4k4_obs4_g_alng02
 
   checkpoint_name: latest_ckpt.ckpt
   normalization_mode: apply # options: skip, apply, #
@@ -225,6 +225,25 @@ eval_single_episode_lowdim:
       pose: [0.439, -0.239, -0.043, 0.905, -0.425, 0.023, -0.426, -0.904, 0.028]
     - name: goal 4
       pose: [0.591, -0.336, -0.038, 0.907, -0.421, 0.037, -0.421, -0.907, 0.006]
+  boxlift_goal_frames:
+    - name: Boxlift goal 1
+      pose: [0.392, -0.042, 0.043, 0.999, -0.004, -0.018, -0.004, -1.000, -0.002]
+    - name: Boxlift goal 2
+      pose: [0.401, -0.062, 0.170, 0.999, -0.024, -0.011, -0.024, -0.999, -0.003]
+    - name: Boxlift goal 3
+      pose: [0.393, -0.059, 0.307, 0.999, -0.031, -0.004, -0.031, -0.999, -0.018]
+    - name: Boxlift goal 4
+      pose: [0.541, -0.350, 0.063, 0.999, 0.019, -0.018, 0.019, -0.999, 0.004]
+    - name: Boxlift goal 5
+      pose: [0.552, -0.366, 0.189, 0.999, 0.005, -0.019, 0.005, -0.999, 0.021]
+    - name: Boxlift goal 6
+      pose: [0.548, -0.362, 0.331, 0.999, 0.003, 0.001, 0.002, -0.999, 0.034]
+    - name: Boxlift goal 7
+      pose: [0.265, -0.374, 0.046, 0.997, 0.013, -0.053, 0.015, -0.997, 0.053]
+    - name: Boxlift goal 8
+      pose: [0.262, -0.379, 0.180, 0.999, 0.025, 0.002, 0.025, -0.998, 0.031]
+    - name: Boxlift goal 9
+      pose: [0.280, -0.344, 0.318, 0.999, -0.001, -0.013, -0.001, -0.999, -0.024]
 
 eval_z_distr:
   save_dir_override: null
