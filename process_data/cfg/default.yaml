@@ -5,7 +5,8 @@ input_paths:
   # - /home/ferdinand/activeinference/factr/process_data/data_to_process/boxlift_1_lead_trimmed/data
   - /home/ferdinand/activeinference/factr/process_data/data_to_process/boxlift_2_lead/data
   # - /home/ferdinand/activeinference/factr/process_data/data_to_process/boxlift_2_follow_stopping/data
-output_path: /home/ferdinand/activeinference/factr/process_data/processed_data/boxlift_12_relative_perdim
+  - /home/ferdinand/activeinference/factr/process_data/data_to_process/boxlift_4_follow/data
+output_path: /home/ferdinand/activeinference/factr/process_data/processed_data/boxlift_124_relative_perdim
 
 downsample: False
 data_frequency: 50.0

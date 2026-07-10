@@ -10,10 +10,10 @@ use_stiffness_conditioning: ${oc.select:use_stiffness_conditioning,true}
 use_arrangement_conditioning: ${oc.select:use_arrangement_conditioning,false}
 goal_label: ${oc.select:goal_label,false}
 override_stiffness_with_mode: ${oc.select:override_stiffness_with_mode,false}
-eval_plot_max_steps: 800
+eval_plot_max_steps: 1200
 eval_plot_prediction_stride: 25
 # With goal conditioning, evaluation samples floor(eval_plot_num_samples / 3) per goal group.
-eval_plot_num_samples: 40
+eval_plot_num_samples: 39
 eval_plot_pose_mode: ${action_chunk_mode}
 eval_traj_variance_w_start: 0.0
 eval_traj_variance_w_end: 1.0

@@ -6,27 +6,29 @@ defaults:
 
 hydra:
   run:
-    dir: /home/ferdinand/activeinference/factr/checkpoints/boxlift_12_relative_perdim/${exp_name}
+    dir: /home/ferdinand/activeinference/factr/checkpoints/${dataset_name}/${exp_name}
   job:
     env_set:
       CUDA_VISIBLE_DEVICES: "2"
 
 # dataset_project_prefix:
-dataset_name: boxlift_12_relative_perdim
+dataset_name: boxlift_124_relative_perdim
 sweep_pose_tag: rel
 
 # Stiffness conditioning accepts 1-based scalar labels (1..C) or direct one-hot vectors (B, C).
 use_stiffness_conditioning: true # (and mode if mode override is enabled)
-use_arrangement_conditioning: true # condition on the three goal-height arrangement
+use_arrangement_conditioning: false # condition on the three goal-height arrangement
 goal_label: true # condition on grouped goals: 1-3, 4-6, and 7-9
 # If true, active arrangement/goal conditions modulate context LayerNorm instead of adding tokens.
 use_adaptive_layer_norm: true
 # class 1/mode 0 weakly uses the goal; class 2/mode 1 uses it fully.
 use_stiffness_goal_adaln_gate: true
-goal_adaln_gate_min: 0.0
+goal_adaln_gate_min: 0.02
 override_stiffness_with_mode: true
 base_stiffness_classes: 1
 stiffness_classes: ${stiffness_class_count:${use_stiffness_conditioning},${override_stiffness_with_mode},${base_stiffness_classes}}
+# If true, class 1/mode 0 uses upper beta and the highest class/mode uses lower beta.
+# With the current mode override: mode 0 -> 0.1, mode 1 -> 0.02.
 include_velocity: true # if false, automatically reduces obs_dim -6 and removes the velocity token
 include_tracking_error: false # if false, atuomatically reduces obs_dim -6
 
@@ -35,7 +37,8 @@ buffer_path: /home/ferdinand/activeinference/factr/process_data/processed_data/$
 # episodes. task.py separates their eval plots using each sample's mode label.
 test_buffer_path: /home/ferdinand/activeinference/factr/process_data/processed_data/${dataset_name}/buf_test.pkl
 
-exp_name: h4l4_c_fp_b005_v3k3_obs4_arr_g_alngz
+exp_name: h4l4_g_fp_vb015_1_v2k2_obs4_g_alngz
+# exp_name: h4l4_c_fp_vb00008_04_v2k2_obs4_g_alng02
 
 batch_size: 180
 num_workers: 2
@@ -70,7 +73,7 @@ diversity_debug: false
 
 wandb:
   name: ${exp_name}
-  project: boxlift_12_relative_perdim
+  project: ${dataset_name}
   group: bc
   debug: False
   entity: None

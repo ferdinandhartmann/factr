@@ -1,8 +1,8 @@
 shared:
-  dataset_name: boxlift_12_relative_perdim
+  dataset_name: boxlift_124_relative_perdim
   dataset_project_prefix: ""
   buffer_set_name: auto
-  run_name: c_fp_b02_v4k2_ofs1_obs2_arr_g_aln
+  run_name: h4l4_g_fp_vb01_1_v3k3_obs4_g
 
   checkpoint_name: latest_ckpt.ckpt
   normalization_mode: apply # options: skip, apply, #
@@ -14,6 +14,31 @@ shared:
   list_episodes_only: false
   
   episode_lists:
+    boxlift_124_relative_perdim:
+    # - boxlift_1_follow/ep_06
+    # - boxlift_1_follow/ep_25
+    - boxlift_1_follow/ep_29
+    # - boxlift_1_follow/ep_34
+    # - boxlift_1_follow/ep_36
+    # - boxlift_1_follow/ep_38
+    - boxlift_1_follow/ep_41
+    # - boxlift_1_follow/ep_42
+    # - boxlift_1_follow/ep_45
+    # - boxlift_1_lead/ep_08
+    # - boxlift_1_lead/ep_09
+    - boxlift_1_lead/ep_21
+    # - boxlift_1_lead/ep_25
+    # - boxlift_1_lead/ep_29
+    # - boxlift_1_lead/ep_55
+    # - boxlift_2_lead/ep_34
+    - boxlift_2_lead/ep_48
+    # - boxlift_4_follow/ep_03
+    # - boxlift_4_follow/ep_32
+    # - boxlift_4_follow/ep_39
+    - boxlift_4_follow/ep_43
+    # - boxlift_4_follow/ep_45
+    # - boxlift_4_follow/ep_56
+    # - boxlift_4_follow/ep_59
     boxlift_12_relative_perdim:
     # - boxlift_1_follow/ep_06
     # - boxlift_1_follow/ep_25

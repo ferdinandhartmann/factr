@@ -131,6 +131,9 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         token_dim=256,
         hidden_dim=512,
         beta=1.0,
+        variable_beta=False,
+        variable_beta_lower=0.02,
+        variable_beta_upper=0.1,
         free_bits=None,
         kl_balance_alpha=0.5,
         z_context_mode="cls_all_obs",
@@ -176,6 +179,16 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         if not 0.0 <= self.goal_adaln_gate_min <= 1.0:
             raise ValueError(f"goal_adaln_gate_min must be in [0, 1], got {self.goal_adaln_gate_min}.")
         self.beta = float(beta)
+        self.variable_beta = bool(variable_beta)
+        self.variable_beta_lower = float(variable_beta_lower)
+        self.variable_beta_upper = float(variable_beta_upper)
+        if self.variable_beta and not self.use_stiffness_conditioning:
+            raise ValueError("variable_beta=True requires use_stiffness_conditioning=True.")
+        if self.variable_beta_lower < 0.0 or self.variable_beta_upper < 0.0:
+            raise ValueError(
+                "variable_beta_lower and variable_beta_upper must be non-negative, "
+                f"got {self.variable_beta_lower} and {self.variable_beta_upper}."
+            )
         self.free_bits = free_bits
         self.kl_balance_alpha = float(kl_balance_alpha)
         self.z_context_mode = z_context_mode
@@ -195,6 +208,7 @@ class LowdimStiffnessCVAEAgent(nn.Module):
             f"goal_label={self.goal_label}, "
             f"use_adaptive_layer_norm={self.use_adaptive_layer_norm}, "
             f"use_stiffness_goal_adaln_gate={self.use_stiffness_goal_adaln_gate}, "
+            f"variable_beta={self.variable_beta}, "
             f"latent_distribution={self.latent_distribution}, "
         )
 
@@ -431,6 +445,30 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         )
         return (stiffness_one_hot * class_strength.unsqueeze(0)).sum(dim=-1, keepdim=True)
 
+    def _stiffness_beta(self, class_labels, batch_size, device, dtype):
+        """Map low stiffness/mode to upper beta and high stiffness/mode to lower beta."""
+        stiffness_one_hot = self._labels_to_one_hot(
+            class_labels,
+            batch_size=batch_size,
+            device=device,
+            dtype=dtype,
+        )
+        if self.stiffness_classes == 1:
+            return torch.full(
+                (batch_size,),
+                self.variable_beta_upper,
+                device=device,
+                dtype=dtype,
+            )
+        class_beta = torch.linspace(
+            self.variable_beta_upper,
+            self.variable_beta_lower,
+            self.stiffness_classes,
+            device=device,
+            dtype=dtype,
+        )
+        return (stiffness_one_hot * class_beta.unsqueeze(0)).sum(dim=-1)
+
     def _build_context_tokens(self, obs, class_labels, arrangement_vectors=None, goal_vectors=None):
         batch_size = self._prepare_obs(obs)
 
@@ -560,30 +598,34 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         kl_floor = float(self.free_bits) * float(self._free_bits_dims)
         return torch.clamp(kl_values, min=kl_floor)
 
-    def _compute_kl(self, posterior_params, prior_params):
+    def _compute_kl(self, posterior_params, prior_params, reduction="mean"):
         if self.latent_distribution == "gaussian":
             mu_q, logvar_q = posterior_params["mu"], posterior_params["logvar"]
             mu_p, logvar_p = prior_params["mu"], prior_params["logvar"]
             if math.isclose(self.kl_balance_alpha, 0.5):
                 kl = _kl_diag_gaussians(mu_q, logvar_q, mu_p, logvar_p)
-                return self._apply_free_bits(kl).mean()
+                kl = self._apply_free_bits(kl)
+                return kl.mean() if reduction == "mean" else kl
 
             kl_prior = _kl_diag_gaussians(mu_q.detach(), logvar_q.detach(), mu_p, logvar_p)
             kl_post = _kl_diag_gaussians(mu_q, logvar_q, mu_p.detach(), logvar_p.detach())
             kl_prior = self._apply_free_bits(kl_prior)
             kl_post = self._apply_free_bits(kl_post)
-            return (self.kl_balance_alpha * kl_prior + (1.0 - self.kl_balance_alpha) * kl_post).mean()
+            kl = self.kl_balance_alpha * kl_prior + (1.0 - self.kl_balance_alpha) * kl_post
+            return kl.mean() if reduction == "mean" else kl
 
         logits_q, logits_p = posterior_params["logits"], prior_params["logits"]
         if math.isclose(self.kl_balance_alpha, 0.5):
             kl = _kl_categorical(logits_q, logits_p)
-            return self._apply_free_bits(kl).mean()
+            kl = self._apply_free_bits(kl)
+            return kl.mean() if reduction == "mean" else kl
 
         kl_prior = _kl_categorical(logits_q.detach(), logits_p)
         kl_post = _kl_categorical(logits_q, logits_p.detach())
         kl_prior = self._apply_free_bits(kl_prior)
         kl_post = self._apply_free_bits(kl_post)
-        return (self.kl_balance_alpha * kl_prior + (1.0 - self.kl_balance_alpha) * kl_post).mean()
+        kl = self.kl_balance_alpha * kl_prior + (1.0 - self.kl_balance_alpha) * kl_post
+        return kl.mean() if reduction == "mean" else kl
 
     def _sample_train_latent(self, posterior_params):
         if self.latent_distribution == "gaussian":
@@ -706,17 +748,32 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         recon = (recon * mask).sum() / torch.clamp(mask.sum(), min=1.0)
 
         # Keep KL-balance and free-bits behavior shared across latent families.
-        kl = self._compute_kl(posterior_params, prior_params)
+        if self.variable_beta:
+            kl_per_sample = self._compute_kl(posterior_params, prior_params, reduction="none")
+            beta_per_sample = self._stiffness_beta(
+                class_labels,
+                batch_size=target_actions.shape[0],
+                device=target_actions.device,
+                dtype=target_actions.dtype,
+            )
+            kl = kl_per_sample.mean()
+            kl_loss = (beta_per_sample * kl_per_sample).mean()
+        else:
+            kl = self._compute_kl(posterior_params, prior_params)
+            beta_per_sample = None
+            kl_loss = self.beta * kl
         prior_std_mean, posterior_std_mean, prior_entropy, posterior_entropy = self._latent_metrics(
             posterior_params, prior_params
         )
 
-        total_loss = recon + self.beta * kl
+        total_loss = recon + kl_loss
         return {
             "total_loss": total_loss,
             "l1_loss": recon,
             # "l2_loss": recon_l2,
             "kl": kl,
+            "kl_loss": kl_loss,
+            "beta_mean": beta_per_sample.mean() if beta_per_sample is not None else torch.tensor(self.beta, device=recon.device),
             "prior_std_mean": prior_std_mean,
             "posterior_std_mean": posterior_std_mean,
             "prior_entropy": prior_entropy,

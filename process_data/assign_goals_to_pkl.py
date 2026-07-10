@@ -21,7 +21,7 @@ ROBOT_STATE_TOPIC = "/franka_robot_state_broadcaster/robot_state"
 ARRANGEMENT_TOPIC = "/arrangement"
 MODE_TOPIC = "/mode"
 
-PKL_FOLDER = Path("~/activeinference/factr/process_data/data_to_process/boxlift_2_follow_stopping/data").expanduser()
+PKL_FOLDER = Path("~/activeinference/factr/process_data/data_to_process/boxlift_4_follow/data").expanduser()
 XLSX_PATH = Path(
     "~/activeinference/factr/process_data/data_to_process/boxlift_1_follow/boxlift_1_follow_goalconfig.xlsx"
 ).expanduser()

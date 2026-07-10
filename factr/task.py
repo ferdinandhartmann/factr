@@ -211,6 +211,40 @@ def _build_missing_stiffness_figure(
     return fig
 
 
+def _figure_to_rgb_array(fig):
+    """Render a Matplotlib figure to an RGB image array for composition."""
+    fig.canvas.draw()
+    width, height = fig.canvas.get_width_height()
+    rgba = np.frombuffer(fig.canvas.buffer_rgba(), dtype=np.uint8).reshape(height, width, 4)
+    return rgba[:, :, :3].copy()
+
+
+def _build_side_by_side_figure(left_fig, right_fig, left_title, right_title, title):
+    """Place two rendered figures into one logged image."""
+    left_img = _figure_to_rgb_array(left_fig)
+    right_img = _figure_to_rgb_array(right_fig)
+    max_h = max(left_img.shape[0], right_img.shape[0])
+    max_w = max(left_img.shape[1], right_img.shape[1])
+
+    def pad_to_canvas(img):
+        canvas = np.full((max_h, max_w, 3), 255, dtype=np.uint8)
+        canvas[: img.shape[0], : img.shape[1], :] = img
+        return canvas
+
+    fig, axes = plt.subplots(1, 2, figsize=(18, 9))
+    for ax, img, subtitle in zip(
+        axes,
+        [pad_to_canvas(left_img), pad_to_canvas(right_img)],
+        [left_title, right_title],
+    ):
+        ax.imshow(img)
+        ax.set_title(subtitle, fontsize=12)
+        ax.axis("off")
+    fig.suptitle(title, fontsize=14)
+    fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.95])
+    return fig
+
+
 def _extract_plot_metadata(dataset, sample_index, sample_label=None):
     meta = {}
     if dataset is not None and hasattr(dataset, "get_sample_metadata"):
@@ -886,13 +920,16 @@ class BCTask(DefaultTask):
         label_candidates,
         label_measured_candidates,
         available_labels,
+        log_images=True,
+        deterministic_decode=False,
     ):
         condition_key = _eval_condition_key(
             stiffness_label=stiffness_label,
             override_stiffness_with_mode=self.override_stiffness_with_mode,
             use_stiffness_conditioning=self.use_stiffness_conditioning,
         )
-        fan_log_key = "eval/prior_fan" if condition_key is None else f"eval/prior_fan_{condition_key}"
+        fan_prefix = "deterministic_fan" if deterministic_decode else "prior_fan"
+        fan_log_key = f"eval/{fan_prefix}" if condition_key is None else f"eval/{fan_prefix}_{condition_key}"
         selected_candidates = _select_episode_plot_candidates(
             label_candidates,
             max_steps=self.eval_plot_max_steps,
@@ -904,9 +941,10 @@ class BCTask(DefaultTask):
                 override_stiffness_with_mode=self.override_stiffness_with_mode,
                 use_stiffness_conditioning=self.use_stiffness_conditioning,
             )
-            wandb.log({fan_log_key: wandb.Image(fig_missing)}, step=global_step)
-            plt.close(fig_missing)
-            return
+            if log_images:
+                wandb.log({fan_log_key: wandb.Image(fig_missing)}, step=global_step)
+                plt.close(fig_missing)
+            return {"fan": fig_missing, "fan3d": None, "condition_key": condition_key}
 
         bundle = _stack_plot_candidates(selected_candidates, device=device)
         measured_candidates = _select_episode_plot_candidates(
@@ -915,15 +953,17 @@ class BCTask(DefaultTask):
         )
         measured_bundle = _stack_measured_plot_candidates(measured_candidates, device=device)
 
-        sampled_actions = self._sample_actions_for_plot(
-            model=model,
-            imgs=bundle["imgs"],
-            obs=bundle["obs"],
-            labels=bundle["labels"],
-            num_samples=self.eval_plot_num_samples,
-            arrangement_vectors=bundle.get("arrangement_vectors"),
-            goal_vectors=bundle.get("goal_vectors"),
-        )
+        sampled_actions = None
+        if not deterministic_decode:
+            sampled_actions = self._sample_actions_for_plot(
+                model=model,
+                imgs=bundle["imgs"],
+                obs=bundle["obs"],
+                labels=bundle["labels"],
+                num_samples=self.eval_plot_num_samples,
+                arrangement_vectors=bundle.get("arrangement_vectors"),
+                goal_vectors=bundle.get("goal_vectors"),
+            )
         pred_actions = self._predict_actions(
             model=model,
             imgs=bundle["imgs"],
@@ -936,7 +976,8 @@ class BCTask(DefaultTask):
         pose_dim = 9
         assert bundle["actions"].shape[-1] == pose_dim
         assert bundle["mask"].shape[-1] == pose_dim
-        assert sampled_actions.shape[-1] == pose_dim
+        if sampled_actions is not None:
+            assert sampled_actions.shape[-1] == pose_dim
         assert pred_actions.shape[-1] == pose_dim
         assert bundle["obs"].shape[-1] >= pose_dim
 
@@ -946,15 +987,19 @@ class BCTask(DefaultTask):
             self._eval_plot_action_stats,
             self.eval_plot_pose_mode,
         )
-        sampled_np = _decode_action_values(
-            sampled_actions.detach().cpu().numpy(),
-            self._eval_plot_action_stats,
-            self.eval_plot_pose_mode,
-        )
         pred_np = _decode_action_values(
             pred_actions.detach().cpu().numpy(),
             self._eval_plot_action_stats,
             self.eval_plot_pose_mode,
+        )
+        sampled_np = (
+            _decode_action_values(
+                sampled_actions.detach().cpu().numpy(),
+                self._eval_plot_action_stats,
+                self.eval_plot_pose_mode,
+            )
+            if sampled_actions is not None
+            else pred_np[:, None, :, :]
         )
         obs_np = _apply_grouped_transform(
             bundle["obs"].detach().cpu().numpy(),
@@ -1010,6 +1055,16 @@ class BCTask(DefaultTask):
         )
         pred_plot = pose_chunks_for_plot(pred_np[:, :, :pose_dim], plot_anchor, self.eval_plot_pose_mode)
         mask_np = bundle["mask"].detach().cpu().numpy()[:, :, :pose_dim]
+        fan_title = _build_eval_fan_title(
+            stiffness_label=stiffness_label,
+            global_step=global_step,
+            override_stiffness_with_mode=self.override_stiffness_with_mode,
+            use_stiffness_conditioning=self.use_stiffness_conditioning,
+            arrangement_vectors=bundle.get("arrangement_vectors"),
+            goal_vectors=bundle.get("goal_vectors"),
+        )
+        if deterministic_decode:
+            fan_title = fan_title.replace("Sampled Prior Trajectories", "Deterministic Decode Trajectories")
 
         fig_fan = _build_eval_trajectory_fan_figure(
             true_action_chunks=actions_plot,
@@ -1021,19 +1076,13 @@ class BCTask(DefaultTask):
             stiffness_label=int(stiffness_label) if self.use_stiffness_conditioning else None,
             source_time_index=bundle["time_index"],
             global_step=global_step,
-            title=_build_eval_fan_title(
-                stiffness_label=stiffness_label,
-                global_step=global_step,
-                override_stiffness_with_mode=self.override_stiffness_with_mode,
-                use_stiffness_conditioning=self.use_stiffness_conditioning,
-                arrangement_vectors=bundle.get("arrangement_vectors"),
-                goal_vectors=bundle.get("goal_vectors"),
-            ),
+            title=fan_title,
             plot_geodesic_subplot=self.eval_plot_geodesic_subplot,
             rpy_config=self.eval_plot_rpy_config,
         )
-        wandb.log({fan_log_key: wandb.Image(fig_fan)}, step=global_step)
-        plt.close(fig_fan)
+        if log_images:
+            wandb.log({fan_log_key: wandb.Image(fig_fan)}, step=global_step)
+            plt.close(fig_fan)
 
         fig_3d = build_pose_3d_figure(
             measured_pose=measured_pose,
@@ -1062,11 +1111,130 @@ class BCTask(DefaultTask):
             current_title = fig_3d.axes[0].get_title()
             fig_3d.axes[0].set_title(f"{current_title}\n{' | '.join(extra_titles)}")
         action_key = str(self.eval_plot_action_source).strip().lower() or "prior"
+        fan3d_prefix = "deterministic_fan3d" if deterministic_decode else f"{action_key}_fan3d"
         fan3d_log_key = (
-            f"eval/{action_key}_fan3d" if condition_key is None else f"eval/{action_key}_fan3d_{condition_key}"
+            f"eval/{fan3d_prefix}" if condition_key is None else f"eval/{fan3d_prefix}_{condition_key}"
         )
-        wandb.log({fan3d_log_key: wandb.Image(fig_3d)}, step=global_step)
-        plt.close(fig_3d)
+        if log_images:
+            wandb.log({fan3d_log_key: wandb.Image(fig_3d)}, step=global_step)
+            plt.close(fig_3d)
+        return {"fan": fig_fan, "fan3d": fig_3d, "condition_key": condition_key}
+
+    def _log_eval_low_high_plots(
+        self,
+        model,
+        device,
+        global_step,
+        plot_candidates,
+        plot_measured_candidates,
+        available_labels,
+    ):
+        low_label = 1
+        high_label = max(1, int(self.stiffness_classes))
+        label_pair = [low_label] if high_label == low_label else [low_label, high_label]
+
+        sampled_results = []
+        deterministic_results = []
+        for label in label_pair:
+            label_candidates = [item for item in plot_candidates if int(item["stiffness_label"]) == int(label)]
+            label_measured_candidates = [
+                item for item in plot_measured_candidates if int(item["stiffness_label"]) == int(label)
+            ]
+            sampled_results.append(
+                self._log_eval_plots_for_stiffness(
+                    model=model,
+                    device=device,
+                    global_step=global_step,
+                    stiffness_label=label,
+                    label_candidates=label_candidates,
+                    label_measured_candidates=label_measured_candidates,
+                    available_labels=available_labels,
+                    log_images=False,
+                )
+            )
+            deterministic_results.append(
+                self._log_eval_plots_for_stiffness(
+                    model=model,
+                    device=device,
+                    global_step=global_step,
+                    stiffness_label=label,
+                    label_candidates=label_candidates,
+                    label_measured_candidates=label_measured_candidates,
+                    available_labels=available_labels,
+                    log_images=False,
+                    deterministic_decode=True,
+                )
+            )
+
+        if len(sampled_results) == 1:
+            wandb.log(
+                {
+                    "eval/prior_fan3d_low_high": wandb.Image(
+                        sampled_results[0]["fan3d"] or sampled_results[0]["fan"]
+                    ),
+                    "eval/deterministic_fan_low_high": wandb.Image(deterministic_results[0]["fan"]),
+                    "eval/deterministic_fan3d_low_high": wandb.Image(
+                        deterministic_results[0]["fan3d"] or deterministic_results[0]["fan"]
+                    ),
+                },
+                step=global_step,
+            )
+            for result in sampled_results + deterministic_results:
+                plt.close(result["fan"])
+                if result["fan3d"] is not None:
+                    plt.close(result["fan3d"])
+            return
+
+        left_title = _eval_condition_label(
+            low_label,
+            override_stiffness_with_mode=self.override_stiffness_with_mode,
+            use_stiffness_conditioning=self.use_stiffness_conditioning,
+        )
+        right_title = _eval_condition_label(
+            high_label,
+            override_stiffness_with_mode=self.override_stiffness_with_mode,
+            use_stiffness_conditioning=self.use_stiffness_conditioning,
+        )
+        left_title = "low stiffness" if left_title is None else f"low stiffness / {left_title}"
+        right_title = "high stiffness" if right_title is None else f"high stiffness / {right_title}"
+
+        combined_sampled_fan3d = _build_side_by_side_figure(
+            sampled_results[0]["fan3d"] or sampled_results[0]["fan"],
+            sampled_results[1]["fan3d"] or sampled_results[1]["fan"],
+            left_title=left_title,
+            right_title=right_title,
+            title=f"Eval prior 3D fan low vs high | step={global_step}",
+        )
+        combined_deterministic_fan = _build_side_by_side_figure(
+            deterministic_results[0]["fan"],
+            deterministic_results[1]["fan"],
+            left_title=left_title,
+            right_title=right_title,
+            title=f"Eval deterministic decode fan low vs high | step={global_step}",
+        )
+        combined_deterministic_fan3d = _build_side_by_side_figure(
+            deterministic_results[0]["fan3d"] or deterministic_results[0]["fan"],
+            deterministic_results[1]["fan3d"] or deterministic_results[1]["fan"],
+            left_title=left_title,
+            right_title=right_title,
+            title=f"Eval deterministic decode 3D fan low vs high | step={global_step}",
+        )
+        wandb.log(
+            {
+                "eval/prior_fan3d_low_high": wandb.Image(combined_sampled_fan3d),
+                "eval/deterministic_fan_low_high": wandb.Image(combined_deterministic_fan),
+                "eval/deterministic_fan3d_low_high": wandb.Image(combined_deterministic_fan3d),
+            },
+            step=global_step,
+        )
+
+        for result in sampled_results + deterministic_results:
+            plt.close(result["fan"])
+            if result["fan3d"] is not None:
+                plt.close(result["fan3d"])
+        plt.close(combined_sampled_fan3d)
+        plt.close(combined_deterministic_fan)
+        plt.close(combined_deterministic_fan3d)
 
     def eval(self, trainer, global_step, generate_plots=True):
         losses = []
@@ -1440,26 +1608,22 @@ class BCTask(DefaultTask):
 
             if generate_plots and len(selected_all_candidates) > 0:
                 available_labels = sorted({int(item["stiffness_label"]) for item in plot_candidates})
-                plot_labels = range(1, self.stiffness_classes + 1) if self.use_stiffness_conditioning else [None]
-                for stiffness_label in plot_labels:
-                    if self.use_stiffness_conditioning:
-                        label_candidates = [
-                            item for item in plot_candidates if int(item["stiffness_label"]) == int(stiffness_label)
-                        ]
-                        label_measured_candidates = [
-                            item
-                            for item in plot_measured_candidates
-                            if int(item["stiffness_label"]) == int(stiffness_label)
-                        ]
-                    else:
-                        label_candidates = plot_candidates
-                        label_measured_candidates = plot_measured_candidates
+                if self.use_stiffness_conditioning:
+                    self._log_eval_low_high_plots(
+                        model=model,
+                        device=trainer.device_id,
+                        global_step=global_step,
+                        plot_candidates=plot_candidates,
+                        plot_measured_candidates=plot_measured_candidates,
+                        available_labels=available_labels,
+                    )
+                else:
                     self._log_eval_plots_for_stiffness(
                         model=model,
                         device=trainer.device_id,
                         global_step=global_step,
-                        stiffness_label=stiffness_label,
-                        label_candidates=label_candidates,
-                        label_measured_candidates=label_measured_candidates,
+                        stiffness_label=None,
+                        label_candidates=plot_candidates,
+                        label_measured_candidates=plot_measured_candidates,
                         available_labels=available_labels,
                     )
