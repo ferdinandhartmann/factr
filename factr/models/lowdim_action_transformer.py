@@ -167,9 +167,7 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         self.use_stiffness_goal_adaln_gate = bool(use_stiffness_goal_adaln_gate)
         self.goal_adaln_gate_min = float(goal_adaln_gate_min)
         if self.use_adaptive_layer_norm and not (self.use_arrangement_conditioning or self.goal_label):
-            raise ValueError(
-                "use_adaptive_layer_norm=True requires arrangement or goal conditioning to be enabled."
-            )
+            raise ValueError("use_adaptive_layer_norm=True requires arrangement or goal conditioning to be enabled.")
         if self.use_stiffness_goal_adaln_gate and not (
             self.use_adaptive_layer_norm and self.goal_label and self.use_stiffness_conditioning
         ):
@@ -296,9 +294,7 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         self.track_encoder = make_group_encoder(6) if self.include_tracking_error else None
         # Stiffness/mode can be fully disabled for unconditioned policy training.
         self.stiffness_encoder = (
-            nn.Linear(self.stiffness_classes, token_dim, bias=False)
-            if self.use_stiffness_conditioning
-            else None
+            nn.Linear(self.stiffness_classes, token_dim, bias=False) if self.use_stiffness_conditioning else None
         )
         self.arrangement_encoder = (
             nn.Linear(9, token_dim, bias=False)
@@ -306,9 +302,7 @@ class LowdimStiffnessCVAEAgent(nn.Module):
             else None
         )
         self.goal_encoder = (
-            nn.Linear(3, token_dim, bias=False)
-            if self.goal_label and not self.use_adaptive_layer_norm
-            else None
+            nn.Linear(3, token_dim, bias=False) if self.goal_label and not self.use_adaptive_layer_norm else None
         )
         self.cmd_encoder = make_group_encoder(9)  ###
 
@@ -510,9 +504,7 @@ class LowdimStiffnessCVAEAgent(nn.Module):
             token_list.append(stiffness_token)
         if self.use_arrangement_conditioning:
             if arrangement_vectors is None:
-                raise ValueError(
-                    "use_arrangement_conditioning=True requires arrangement_vectors with shape (B, 9)."
-                )
+                raise ValueError("use_arrangement_conditioning=True requires arrangement_vectors with shape (B, 9).")
             arrangement_vectors = arrangement_vectors.to(device=obs.device, dtype=obs.dtype)
             if arrangement_vectors.ndim == 1 and batch_size == 1 and arrangement_vectors.shape[0] == 9:
                 arrangement_vectors = arrangement_vectors.unsqueeze(0)
@@ -780,14 +772,16 @@ class LowdimStiffnessCVAEAgent(nn.Module):
             # "l2_loss": recon_l2,
             "kl": kl,
             "kl_loss": kl_loss,
-            "beta_mean": beta_per_sample.mean() if beta_per_sample is not None else torch.tensor(self.beta, device=recon.device),
+            "beta_mean": beta_per_sample.mean()
+            if beta_per_sample is not None
+            else torch.tensor(self.beta, device=recon.device),
             "prior_std_mean": prior_std_mean,
             "posterior_std_mean": posterior_std_mean,
             "prior_entropy": prior_entropy,
             "posterior_entropy": posterior_entropy,
         }
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def get_actions_base(
         self, imgs, obs, class_labels=None, arrangement_vectors=None, goal_vectors=None, sample=False, **kwargs
     ):
@@ -802,7 +796,7 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         z = self._prepare_decoder_latent(z)
         return self._decode_actions(context_tokens, z)
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def get_actions_prior(
         self,
         imgs,
@@ -836,7 +830,44 @@ class LowdimStiffnessCVAEAgent(nn.Module):
             return action_pred, None
         return action_pred
 
-    @torch.no_grad()
+    @torch.inference_mode()
+    def get_action_candidates(
+        self,
+        obs,
+        candidate_context_indices,
+        class_labels=None,
+        arrangement_vectors=None,
+        goal_vectors=None,
+        sample=True,
+        add_deterministic=False,
+    ):
+        context_tokens = self._build_context_tokens(
+            obs,
+            class_labels=class_labels,
+            arrangement_vectors=arrangement_vectors,
+            goal_vectors=goal_vectors,
+        )
+        prior_params = self._prior(self._build_z_context(context_tokens[:, :-1]))
+        indices = candidate_context_indices.long()
+        candidate_context = context_tokens.index_select(0, indices)
+        candidate_prior = {key: value.index_select(0, indices) for key, value in prior_params.items()}
+        z = self._sample_latent_batch(candidate_prior, sample=sample, num_samples=1).squeeze(1)
+        z = self._prepare_decoder_latent(z)
+
+        if add_deterministic:
+            deterministic_index = indices[:1]
+            deterministic_prior = {
+                key: value.index_select(0, deterministic_index) for key, value in prior_params.items()
+            }
+            deterministic_z = self._prepare_decoder_latent(self._deterministic_latent(deterministic_prior))
+            candidate_context = torch.cat(
+                (context_tokens.index_select(0, deterministic_index), candidate_context), dim=0
+            )
+            z = torch.cat((deterministic_z, z), dim=0)
+
+        return self._decode_actions(candidate_context, z)
+
+    @torch.inference_mode()
     def get_actions_pos(
         self,
         imgs,
