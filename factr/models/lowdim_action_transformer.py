@@ -839,7 +839,7 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         arrangement_vectors=None,
         goal_vectors=None,
         sample=True,
-        add_deterministic=False,
+        deterministic_context_index=None,
     ):
         context_tokens = self._build_context_tokens(
             obs,
@@ -854,8 +854,8 @@ class LowdimStiffnessCVAEAgent(nn.Module):
         z = self._sample_latent_batch(candidate_prior, sample=sample, num_samples=1).squeeze(1)
         z = self._prepare_decoder_latent(z)
 
-        if add_deterministic:
-            deterministic_index = indices[:1]
+        if deterministic_context_index is not None:
+            deterministic_index = deterministic_context_index.long().reshape(1)
             deterministic_prior = {
                 key: value.index_select(0, deterministic_index) for key, value in prior_params.items()
             }
