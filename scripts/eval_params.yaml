@@ -2,43 +2,43 @@ shared:
   dataset_name: boxlift_124_relative_perdim
   dataset_project_prefix: ""
   buffer_set_name: auto
-  run_name: h4l4_c_fp_vb00001_02_v4k4_obs4_g_alng02
+  run_name: h4l4_g_fp_fb2_v3k3_obs4_g_cmdp # h4l4_g_fp_fb02_v3k3_obs4_g_cmdp
 
   checkpoint_name: latest_ckpt.ckpt
   normalization_mode: apply # options: skip, apply, #
   gpu_id: 2
 
   use_episode_list: true
-  episode_file_name: ep_52_stiff.pkl
+  episode_file_name: boxlift_1_lead/ep_21.pkl
   episode_index: 0 # index in sorted *.pkl files
   list_episodes_only: false
   
   episode_lists:
     boxlift_124_relative_perdim:
-    # - boxlift_1_follow/ep_06
-    # - boxlift_1_follow/ep_25
-    - boxlift_1_follow/ep_29
-    # - boxlift_1_follow/ep_34
-    # - boxlift_1_follow/ep_36
-    # - boxlift_1_follow/ep_38
-    - boxlift_1_follow/ep_41
-    # - boxlift_1_follow/ep_42
-    # - boxlift_1_follow/ep_45
-    # - boxlift_1_lead/ep_08
-    # - boxlift_1_lead/ep_09
+    # # - boxlift_1_follow/ep_06
+    # # - boxlift_1_follow/ep_25
+    # - boxlift_1_follow/ep_29
+    # # - boxlift_1_follow/ep_34
+    # # - boxlift_1_follow/ep_36
+    # # - boxlift_1_follow/ep_38
+    # - boxlift_1_follow/ep_41
+    # # - boxlift_1_follow/ep_42
+    # # - boxlift_1_follow/ep_45
+    # # - boxlift_1_lead/ep_08
+    # # - boxlift_1_lead/ep_09
     - boxlift_1_lead/ep_21
-    # - boxlift_1_lead/ep_25
-    # - boxlift_1_lead/ep_29
-    # - boxlift_1_lead/ep_55
-    # - boxlift_2_lead/ep_34
-    - boxlift_2_lead/ep_48
-    # - boxlift_4_follow/ep_03
-    # - boxlift_4_follow/ep_32
-    # - boxlift_4_follow/ep_39
-    - boxlift_4_follow/ep_43
-    # - boxlift_4_follow/ep_45
-    # - boxlift_4_follow/ep_56
-    # - boxlift_4_follow/ep_59
+    # # - boxlift_1_lead/ep_25
+    # # - boxlift_1_lead/ep_29
+    # # - boxlift_1_lead/ep_55
+    # # - boxlift_2_lead/ep_34
+    # - boxlift_2_lead/ep_48
+    # # - boxlift_4_follow/ep_03
+    # # - boxlift_4_follow/ep_32
+    # # - boxlift_4_follow/ep_39
+    # - boxlift_4_follow/ep_43
+    # # - boxlift_4_follow/ep_45
+    # # - boxlift_4_follow/ep_56
+    # # - boxlift_4_follow/ep_59
     boxlift_12_relative_perdim:
     # - boxlift_1_follow/ep_06
     # - boxlift_1_follow/ep_25
@@ -196,9 +196,9 @@ eval_single_episode_lowdim:
   prediction_stride: 25
   
   save_attention_video: true
-  attention_video_fps: 10
-  attention_video_dpi: 80
-  attention_frame_stride: 5 # use every Nth episode window as a video frame
+  attention_video_fps: 15
+  attention_video_dpi: 200
+  attention_frame_stride: 4 # use every Nth episode window as a video frame
   
   view_elev: 24
   view_azim: -60
@@ -244,6 +244,24 @@ eval_single_episode_lowdim:
       pose: [0.262, -0.379, 0.180, 0.999, 0.025, 0.002, 0.025, -0.998, 0.031]
     - name: Boxlift goal 9
       pose: [0.280, -0.344, 0.318, 0.999, -0.001, -0.013, -0.001, -0.999, -0.024]
+
+# Single-episode model evaluation with the thesis 3D and latent plot styling.
+# Relative paths are resolved from the repository root.
+eval_single_episode_thesis:
+  # Model, episode filename, checkpoint, and GPU are inherited from shared.
+  run_dir: null # derived from shared.dataset_name and shared.run_name
+  raw_episode_dir: process_data/data_to_process
+  rollout_config_path: null # inferred from the derived run_dir
+  num_samples: 39
+  sample_goal_groups_equally: true # goal groups G1-G3, G4-G6, G7-G9; num_samples must divide by 3
+  prediction_anchors: 10
+  samples_per_anchor: 0 # 0 displays all sampled policies at each anchor
+  plot_average_attention: true
+  output_stem: null # derived from run_dir and episode_file_name
+  save_pdf: true
+  dpi: 300
+  view_elev: 25
+  view_azim: -55
 
 eval_z_distr:
   save_dir_override: null

@@ -30,14 +30,15 @@ stiffness_classes: ${stiffness_class_count:${use_stiffness_conditioning},${overr
 # If true, class 1/mode 0 uses upper beta and the highest class/mode uses lower beta.
 # With the current mode override: mode 0 -> 0.1, mode 1 -> 0.02.
 include_velocity: true # if false, automatically reduces obs_dim -6 and removes the velocity token
-include_tracking_error: false # if false, atuomatically reduces obs_dim -6
+include_tracking_error: false # if false, automatically reduces obs_dim -6
 
 buffer_path: /home/ferdinand/activeinference/factr/process_data/processed_data/${dataset_name}/buf_train.pkl
 # This combined test buffer contains both follow (mode 0) and leading (mode 1)
 # episodes. task.py separates their eval plots using each sample's mode label.
 test_buffer_path: /home/ferdinand/activeinference/factr/process_data/processed_data/${dataset_name}/buf_test.pkl
 
-exp_name: h4l4_g_fp_fb02_v3k3_obs4_g_cmdp
+exp_name: h4l4_g_fp_fb02_v3k3_obs4_g_cmdp_2
+# exp_name: h4l4_g_fp_fb025_v3k3_obs4_g_cmdp_36
 # exp_name: h4l4_c_fp_vb00002_018_v4k3_obs4_g_alng02_cmdp
 
 batch_size: 180

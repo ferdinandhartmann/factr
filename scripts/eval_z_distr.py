@@ -645,14 +645,21 @@ def _visualize_goal_comparison_statistics(dists_data: Dict, save_dir: Path, ep_n
                 mu, std, _ = values[key]
                 for dim in range(z_dim):
                     axes[dim, 0].plot(x, mu[:, dim], color=colors[goal_idx], linestyle=linestyle,
-                                      label=f"{goal_name} {key}" if dim == 0 else None)
-                    axes[dim, 1].plot(x, std[:, dim] ** 2, color=colors[goal_idx], linestyle=linestyle)
-                    axes[dim, 0].set_ylabel(f"Dim {dim} mean")
-                    axes[dim, 1].set_ylabel(f"Dim {dim} variance")
-        axes[0, 0].legend(fontsize=8)
-        axes[-1, 0].set_xlabel("Time Index")
-        axes[-1, 1].set_xlabel("Time Index")
-        fig.suptitle(f"Z Goal Comparison: {ep_name}" + (f" | {real_goal}" if real_goal else ""))
+                                      linewidth=2.5, label=f"{goal_name} {key}" if dim == 0 else None)
+                    axes[dim, 1].plot(x, std[:, dim] ** 2, color=colors[goal_idx], linestyle=linestyle,
+                                      linewidth=2.5)
+                    axes[dim, 0].set_ylabel(f"Dim {dim} mean", fontsize=14)
+                    axes[dim, 1].set_ylabel(f"Dim {dim} variance", fontsize=14)
+                    axes[dim, 0].tick_params(labelsize=12)
+                    axes[dim, 1].tick_params(labelsize=12)
+        handles, labels = axes[0, 0].get_legend_handles_labels()
+        fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.955),
+                   ncol=len(labels), fontsize=13, frameon=False)
+        axes[-1, 0].set_xlabel("Time Index", fontsize=14)
+        axes[-1, 1].set_xlabel("Time Index", fontsize=14)
+        fig.suptitle(f"Z Goal Comparison: {ep_name}" + (f" | {real_goal}" if real_goal else ""),
+                     fontsize=17, y=0.995)
+        fig.subplots_adjust(top=0.89)
 
     save_path = save_dir / f"{ep_name}_z_distr.png"
     fig.savefig(save_path, dpi=150, bbox_inches="tight")
@@ -688,29 +695,33 @@ def visualize_z_statistics_gaussian(dists_data: Dict, save_dir: Path, ep_name: s
     if z_dim == 1:
         axes = axes.reshape(1, 2)
 
-    plt.subplots_adjust(top=0.96, bottom=0.03, left=0.08, right=0.95, hspace=0.35, wspace=0.2)
-    fig.suptitle(f"Z Statistics: {ep_name} (Dims 0-{z_dim - 1})", fontsize=16)
+    plt.subplots_adjust(top=0.90, bottom=0.04, left=0.09, right=0.97, hspace=0.35, wspace=0.2)
+    fig.suptitle(f"Z Statistics: {ep_name} (Dims 0-{z_dim - 1})", fontsize=19, y=0.995)
 
     for dim in range(z_dim):
         ax_mean = axes[dim, 0]
         ax_var = axes[dim, 1]
 
-        ax_mean.plot(x, prior_mu[:, dim], label="Prior", color=prior_color, alpha=0.75)
-        ax_mean.plot(x, post_mu[:, dim], label="Posterior", color=post_color, alpha=0.75)
-        ax_mean.set_ylabel(f"Dim {dim} Mean", fontsize=11)
+        ax_mean.plot(x, prior_mu[:, dim], label="Prior", color=prior_color, alpha=0.8, linewidth=2.5)
+        ax_mean.plot(x, post_mu[:, dim], label="Posterior", color=post_color, alpha=0.8, linewidth=2.5)
+        ax_mean.set_ylabel(f"Dim {dim} Mean", fontsize=14)
         ax_mean.set_ylim(mu_ylim)
         ax_mean.grid(True, linestyle="--", alpha=0.4)
-        if dim == 0:
-            ax_mean.legend(loc="upper right")
 
-        ax_var.plot(x, prior_var[:, dim], label="Prior", color=prior_color, alpha=0.75)
-        ax_var.plot(x, post_var[:, dim], label="Posterior", color=post_color, alpha=0.75)
-        ax_var.set_ylabel("Variance", fontsize=11)
+        ax_var.plot(x, prior_var[:, dim], label="Prior", color=prior_color, alpha=0.8, linewidth=2.5)
+        ax_var.plot(x, post_var[:, dim], label="Posterior", color=post_color, alpha=0.8, linewidth=2.5)
+        ax_var.set_ylabel("Variance", fontsize=14)
         ax_var.set_ylim(var_ylim)
         ax_var.grid(True, linestyle="--", alpha=0.4)
+        ax_mean.tick_params(axis="both", labelsize=12)
+        ax_var.tick_params(axis="both", labelsize=12)
 
-    axes[-1, 0].set_xlabel("Time Index", fontsize=12)
-    axes[-1, 1].set_xlabel("Time Index", fontsize=12)
+    # Keep the shared legend outside the axes so it never covers plotted data.
+    handles, labels = axes[0, 0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.96),
+               ncol=len(labels), fontsize=15, frameon=False)
+    axes[-1, 0].set_xlabel("Time Index", fontsize=14)
+    axes[-1, 1].set_xlabel("Time Index", fontsize=14)
 
     save_path = save_dir / f"{ep_name}_z_distr.png"
     plt.savefig(save_path, dpi=150)
@@ -760,15 +771,20 @@ def visualize_z_statistics_categorical(dists_data: Dict, save_dir: Path, ep_name
 
     fig_e, ax_e = plt.subplots(1, 1, figsize=(12, 4))
     x = np.arange(time_steps)
-    ax_e.plot(x, prior_entropy.mean(axis=1), label="Prior entropy", color="blue", alpha=0.8)
-    ax_e.plot(x, post_entropy.mean(axis=1), label="Posterior entropy", color="red", alpha=0.8)
-    ax_e.set_xlabel("Time Index", fontsize=11)
-    ax_e.set_ylabel("Mean entropy across variables", fontsize=11)
+    ax_e.plot(x, prior_entropy.mean(axis=1), label="Prior entropy", color="blue",
+              alpha=0.8, linewidth=2.8)
+    ax_e.plot(x, post_entropy.mean(axis=1), label="Posterior entropy", color="red",
+              alpha=0.8, linewidth=2.8)
+    ax_e.set_xlabel("Time Index", fontsize=14)
+    ax_e.set_ylabel("Mean entropy across variables", fontsize=14)
     ax_e.set_ylim(0.0, np.log(float(max(2, num_categories))) * 1.05)
     ax_e.grid(True, linestyle="--", alpha=0.35)
-    ax_e.legend(loc="upper right")
-    fig_e.suptitle(f"Categorical Z Entropy: {ep_name}", fontsize=13)
-    fig_e.tight_layout(rect=[0, 0, 1, 0.95])
+    ax_e.tick_params(axis="both", labelsize=12)
+    handles, labels = ax_e.get_legend_handles_labels()
+    fig_e.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.89),
+                 ncol=len(labels), fontsize=14, frameon=False)
+    fig_e.suptitle(f"Categorical Z Entropy: {ep_name}", fontsize=17, y=0.99)
+    fig_e.tight_layout(rect=[0, 0, 1, 0.80])
     fig_e.savefig(entropy_path, dpi=150)
     plt.close(fig_e)
 
@@ -812,6 +828,7 @@ def _visualize_goal_comparison_video(
     if latent_distribution == "categorical":
         time_steps, num_variables, num_categories = first["Prior"][0].shape
         fig, axes = plt.subplots(3, num_variables, figsize=(max(4 * num_variables, 8), 8), squeeze=False)
+        fig.subplots_adjust(top=0.82)
         x_idx = np.arange(num_categories)
         bars = {}
         for goal_idx, (goal_name, _) in enumerate(conditions.items()):
@@ -820,14 +837,18 @@ def _visualize_goal_comparison_video(
                 prior = ax.bar(x_idx - 0.2, np.zeros(num_categories), 0.4, color="blue", alpha=0.55)
                 posterior = ax.bar(x_idx + 0.2, np.zeros(num_categories), 0.4, color="red", alpha=0.75)
                 ax.set_ylim(0, 1)
-                ax.set_title(f"{goal_name} · Var {var_idx}")
+                ax.set_title(f"{goal_name} · Var {var_idx}", fontsize=13)
+                ax.tick_params(axis="both", labelsize=11)
                 bars[(goal_idx, var_idx)] = (prior, posterior)
-        axes[0, 0].legend([bars[(0, 0)][0][0], bars[(0, 0)][1][0]], ["Prior", "Posterior"])
+        fig.legend([bars[(0, 0)][0][0], bars[(0, 0)][1][0]], ["Prior", "Posterior"],
+                   loc="upper center", bbox_to_anchor=(0.5, 0.90), ncol=2,
+                   fontsize=14, frameon=False)
     else:
         time_steps, z_dim = first["Prior"][0].shape
         ncols = int(np.ceil(np.sqrt(z_dim)))
         nrows = int(np.ceil(z_dim / ncols))
         fig, axes = plt.subplots(nrows, ncols, figsize=(ncols * 3.2, nrows * 3.0), squeeze=False)
+        fig.subplots_adjust(top=0.80)
         axes = axes.reshape(-1)
         all_values = [values[key][:2] for values in conditions.values() for key in ("Prior", "Posterior")]
         all_mu = np.concatenate([value[0].reshape(-1) for value in all_values])
@@ -840,14 +861,18 @@ def _visualize_goal_comparison_video(
             if dim >= z_dim:
                 ax.axis("off")
                 continue
-            ax.set_title(f"Dim {dim}")
+            ax.set_title(f"Dim {dim}", fontsize=13)
             ax.set_xlim(x_min, x_max)
+            ax.set_ylim(-0.02, 2.0)
+            ax.tick_params(axis="both", labelsize=11)
             for goal_idx, goal_name in enumerate(conditions):
                 for key, linestyle in (("Prior", "--"), ("Posterior", "-")):
                     line, = ax.plot([], [], color=colors[goal_idx], linestyle=linestyle,
-                                    label=f"{goal_name} {key}")
+                                    linewidth=2.8, label=f"{goal_name} {key}")
                     lines[(dim, goal_idx, key)] = line
-        axes[0].legend(fontsize=7)
+        handles, labels = axes[0].get_legend_handles_labels()
+        fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.90),
+                   ncol=len(labels), fontsize=11, frameon=False)
 
     frame_indices = np.arange(0, time_steps, max(1, int(frame_stride)), dtype=np.int64)
     if frame_indices[-1] != time_steps - 1:
@@ -855,7 +880,10 @@ def _visualize_goal_comparison_video(
     writer = animation.FFMpegWriter(fps=int(fps), metadata={"artist": "factr"}, bitrate=2200)
     with writer.saving(fig, str(save_path), dpi=int(dpi)):
         for t in tqdm(frame_indices, desc=f"Rendering {ep_name}"):
-            fig.suptitle(f"Z Goal Comparison: {ep_name} · t={t}/{time_steps}" + (f" | {real_goal}" if real_goal else ""))
+            fig.suptitle(
+                f"Z Goal Comparison: {ep_name} · t={t}/{time_steps}" + (f" | {real_goal}" if real_goal else ""),
+                fontsize=17, y=0.99,
+            )
             if latent_distribution == "categorical":
                 for goal_idx, values in enumerate(conditions.values()):
                     for var_idx in range(num_variables):
@@ -873,8 +901,6 @@ def _visualize_goal_comparison_video(
                             lines[(dim, goal_idx, key)].set_data(
                                 x_vals, _gaussian_pdf(x_vals, mu[t, dim], std[t, dim])
                             )
-                            axes[dim].relim()
-                            axes[dim].autoscale_view(scalex=False, scaley=True)
             writer.grab_frame()
     plt.close(fig)
     print(f"✅ Saved: {save_path}")
@@ -894,7 +920,7 @@ def visualize_distributions_video_gaussian(
     nrows = int(np.ceil(z_dim / ncols))
     fig, axes = plt.subplots(nrows, ncols, figsize=(ncols * 2.5, nrows * 2.5))
     axes = np.asarray(axes).reshape(-1)
-    plt.subplots_adjust(left=0.05, right=0.97, bottom=0.04, top=0.93, hspace=0.38, wspace=0.28)
+    plt.subplots_adjust(left=0.08, right=0.97, bottom=0.07, top=0.84, hspace=0.42, wspace=0.32)
 
     all_stds = np.concatenate([prior_std.reshape(-1), post_std.reshape(-1)], axis=0)
     safe_stds = np.clip(all_stds, 1e-6, None)
@@ -936,18 +962,21 @@ def visualize_distributions_video_gaussian(
             ax.axis("off")
             continue
         ax.set_xlim(x_min, x_max)
-        ax.set_ylim(0.0, y_max)
-        ax.set_title(f"Dim {dim}", fontsize=9)
-        (line_prior,) = ax.plot([], [], color="blue", linewidth=1.5, alpha=0.6, label="Prior")
-        (line_post,) = ax.plot([], [], color="red", linewidth=2.0, alpha=0.9, label="Posterior")
-        if dim == 0:
-            ax.legend(loc="upper right", fontsize=8)
+        ax.set_ylim(-0.02, 2.0)
+        ax.set_title(f"Dim {dim}", fontsize=13)
+        ax.tick_params(axis="both", labelsize=11)
+        (line_prior,) = ax.plot([], [], color="blue", linewidth=2.8, alpha=0.7, label="Prior")
+        (line_post,) = ax.plot([], [], color="red", linewidth=3.2, alpha=0.9, label="Posterior")
         lines[dim] = (line_prior, line_post)
+
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.91),
+               ncol=len(labels), fontsize=14, frameon=False)
 
     writer = animation.FFMpegWriter(fps=int(fps), metadata={"artist": "factr"}, bitrate=1800)
     with writer.saving(fig, str(save_path), dpi=int(dpi)):
         for t in tqdm(frame_indices, desc=f"Rendering {ep_name}"):
-            fig.suptitle(f"Z Dist: {ep_name} (t={t}/{time_steps})", fontsize=15)
+            fig.suptitle(f"Z Dist: {ep_name} (t={t}/{time_steps})", fontsize=18, y=0.99)
             for dim in range(z_dim):
                 line_prior, line_post = lines[dim]
                 y_prior = _gaussian_pdf(x_vals, prior_mu[t, dim], prior_std[t, dim])
@@ -973,7 +1002,7 @@ def visualize_distributions_video_categorical(dists_data: Dict, save_path: Path,
 
     fig, axes = plt.subplots(nrows, ncols, figsize=(ncols * 3.0, nrows * 2.8))
     axes = np.asarray(axes).reshape(-1)
-    plt.subplots_adjust(left=0.05, right=0.97, bottom=0.06, top=0.90, hspace=0.45, wspace=0.35)
+    plt.subplots_adjust(left=0.07, right=0.97, bottom=0.07, top=0.82, hspace=0.48, wspace=0.38)
 
     x_idx = np.arange(num_categories)
     prior_bars = {}
@@ -984,17 +1013,20 @@ def visualize_distributions_video_categorical(dists_data: Dict, save_path: Path,
             ax.axis("off")
             continue
 
-        ax.set_title(f"Var {var_idx}", fontsize=9)
+        ax.set_title(f"Var {var_idx}", fontsize=13)
         ax.set_ylim(0.0, 1.0)
         ax.set_xlim(-0.5, num_categories - 0.5)
         ax.set_xticks(x_idx[:: max(1, num_categories // 8)])
-        ax.set_ylabel("P(cat)", fontsize=8)
+        ax.set_ylabel("P(cat)", fontsize=12)
+        ax.tick_params(axis="both", labelsize=11)
         bars_prior = ax.bar(x_idx - 0.2, np.zeros_like(x_idx, dtype=np.float32), width=0.4, color="blue", alpha=0.55)
         bars_post = ax.bar(x_idx + 0.2, np.zeros_like(x_idx, dtype=np.float32), width=0.4, color="red", alpha=0.75)
-        if var_idx == 0:
-            ax.legend([bars_prior[0], bars_post[0]], ["Prior", "Posterior"], fontsize=8, loc="upper right")
         prior_bars[var_idx] = bars_prior
         post_bars[var_idx] = bars_post
+
+    fig.legend([prior_bars[0][0], post_bars[0][0]], ["Prior", "Posterior"],
+               loc="upper center", bbox_to_anchor=(0.5, 0.90), ncol=2,
+               fontsize=14, frameon=False)
 
     frame_indices = np.arange(0, time_steps, max(1, int(frame_stride)), dtype=np.int64)
     if frame_indices[-1] != (time_steps - 1):
@@ -1003,7 +1035,7 @@ def visualize_distributions_video_categorical(dists_data: Dict, save_path: Path,
     writer = animation.FFMpegWriter(fps=int(fps), metadata={"artist": "factr"}, bitrate=1800)
     with writer.saving(fig, str(save_path), dpi=int(dpi)):
         for t in tqdm(frame_indices, desc=f"Rendering {ep_name}"):
-            fig.suptitle(f"Categorical Z Dist: {ep_name} (t={t}/{time_steps})", fontsize=14)
+            fig.suptitle(f"Categorical Z Dist: {ep_name} (t={t}/{time_steps})", fontsize=18, y=0.99)
             for var_idx in range(num_variables):
                 current_prior = prior_probs[t, var_idx, :]
                 current_post = post_probs[t, var_idx, :]

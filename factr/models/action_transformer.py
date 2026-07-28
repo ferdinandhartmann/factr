@@ -116,12 +116,11 @@ class _TransformerDecoderLayer(nn.Module):
         tgt = tgt + self.dropout1(tgt2)
         tgt = self.norm1(tgt)
 
-        # tgt2, _ = self.multihead_attn(
         tgt2, cross_w = self.multihead_attn(
             query=_with_pos_embed(tgt, query_pos),
             key=_with_pos_embed(memory, pos),
             value=memory,
-            need_weights=True,
+            need_weights=return_weights,
             average_attn_weights=False,
         )
         tgt = tgt + self.dropout2(tgt2)
@@ -169,7 +168,7 @@ class _TransformerDecoder(nn.Module):
                 )
                 all_cross_w.append(cross_w.unsqueeze(0))  # (1, B, H, Tgt, Src)
             else:
-                output = layer(output, memory, pos=pos, query_pos=query_pos)
+                output = layer(output, memory, pos=pos, query_pos=query_pos, return_weights=False, nheads=nheads)
 
             if return_intermediate:
                 intermediate.append(self.norm(output))
@@ -226,6 +225,7 @@ class _ACT(nn.Module):
         query_enc: (Ac_Chunk, Dim)
         target_actions: (B, 30, 7) 追加
         """
+        return_weights = bool(return_weights) and not self.training
 
         input_tokens = input_tokens.transpose(0, 1)
         input_pos = self.pos_helper(input_tokens)
@@ -244,7 +244,6 @@ class _ACT(nn.Module):
         tgt = torch.zeros_like(query_enc)
 
         if return_weights:
-            print(return_weights)
             acs_tokens, cross_w = self.decoder(
                 tgt, memory, input_pos, query_enc, return_weights=True, nheads=self.nhead
             )
@@ -471,9 +470,14 @@ class TransformerAgent(BaseAgent):
 
             ac_flat_hat = actions_hat.reshape((actions_hat.shape[0], -1))
             all_l1 = F.l1_loss(ac_flat_hat, ac_flat, reduction="none")
-            recon = (all_l1 * mask_flat).mean()
+            # recon = (all_l1 * mask_flat).mean()
             all_l2 = F.mse_loss(ac_flat_hat, ac_flat, reduction="none")
-            recon_l2 = (all_l2 * mask_flat).mean()
+            # recon_l2 = (all_l2 * mask_flat).mean()
+
+            # Better because it ignores the padded elements in the loss calculation
+            valid_elements = mask_flat.sum().clamp_min(1.0)
+            recon = (all_l1 * mask_flat).sum() / valid_elements
+            recon_l2 = (all_l2 * mask_flat).sum() / valid_elements
 
             return {
                 "total_loss": recon,
@@ -570,7 +574,6 @@ class TransformerAgent(BaseAgent):
             action_tokens = transformer_out
             cross_w = None
 
-        action_tokens = self.transformer(c_tokens_exp, self.ac_query.weight, z_token=z_token)
         actions_flat = self.ac_proj(action_tokens)  # (B*S, Chunk, Dim)
         action_pred = actions_flat.view(B, num_samples, self.ac_chunk, self.ac_dim)
 

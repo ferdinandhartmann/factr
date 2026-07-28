@@ -4,9 +4,9 @@ input_paths:
   - /home/ferdinand/activeinference/factr/process_data/data_to_process/boxlift_1_lead/data
   # - /home/ferdinand/activeinference/factr/process_data/data_to_process/boxlift_1_lead_trimmed/data
   - /home/ferdinand/activeinference/factr/process_data/data_to_process/boxlift_2_lead/data
-  - /home/ferdinand/activeinference/factr/process_data/data_to_process/boxlift_2_follow_stopping/data
+  # - /home/ferdinand/activeinference/factr/process_data/data_to_process/boxlift_2_follow_stopping/data
   - /home/ferdinand/activeinference/factr/process_data/data_to_process/boxlift_4_follow/data
-output_path: /home/ferdinand/activeinference/factr/process_data/processed_data/boxlift_12s4_abs_groupshared_full
+output_path: /home/ferdinand/activeinference/factr/process_data/processed_data/boxlift_12s4_relative_perdim_36
 
 downsample: False
 data_frequency: 50.0
@@ -35,7 +35,7 @@ pose_topic: /franka_robot_state_broadcaster/robot_state
 # per_dim: every pose dim gets its own std.
 # group_shared: xyz share one position std, and rot6d dims share one rotation std.
 # Other features still use their own normalization: velocity, tracking error, wrench, goals, stiffness labels.
-pose_normalization_mode: group_shared
+pose_normalization_mode: per_dim
 
 pose_clip: 0.0           # set 0 to disable clipping (for observations and actions)
 velocity_clip: 0.0       # set 0 to disable clipping
@@ -48,8 +48,8 @@ action_config:
   # /cartesian_impedance_controller/pose_command: 9
   /cartesian_admittance_controller/pose_command: 9
   # /admittance_offset: 9
-action_pose_mode: absolute  # absolute, delta (step-to-step), relative (whole chunk uses the current command anchor)
-ac_chunk: 20
+action_pose_mode: relative  # absolute, delta (step-to-step), relative (whole chunk uses the current command anchor)
+ac_chunk: 36
 action_index_offset: 1
 relative_chunk_normalized: true  # Fit on valid training targets, then apply the same statistics to train/test.
 
@@ -67,7 +67,7 @@ mode_topic: /mode
 # Optional train/test split at buffer creation time (episode-level random split).
 # When enabled: writes two files in `output_path`, e.g. `buf_train.pkl` and `buf_test.pkl`.
 train_test_split:
-  enabled: false
+  enabled: true
   train_ratio: 0.90
   seed: 45
   train_buffer_name: buf_train
